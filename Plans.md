@@ -40,8 +40,8 @@
 
 | Task | 내용 | DoD | Acceptance | Depends | Status | GH |
 |------|------|-----|------------|---------|--------|----|
-| 2.1 | LocalAI 포크 클론·빌드·기동 (GB10 aarch64) [tdd:skip:build-spike] | 포크 빌드 성공, WebUI가 HTTP 응답, .harness/STATE.md에 포트·빌드법 기록 | curl -sf http://localhost:8080/ >/dev/null | 1.1 | cc:TODO | - |
-| 2.2 | Nemotron-VL-8B Ollama 서빙 가능여부 검증 [tdd:skip:model-spike] | ollama 로드+이미지 캡션 응답 성공 or Llama3.2-Vision 폴백 확정, STATE.md 기록 | - | 1.1 | cc:TODO | - |
+| 2.1 | LocalAI 포크 클론·빌드·기동 (GB10 aarch64) [tdd:skip:build-spike] | 포크 빌드 성공, WebUI가 HTTP 응답, .harness/STATE.md에 포트·빌드법 기록 | curl -sf http://localhost:8094/ >/dev/null | 1.1 | cc:완료 | - |
+| 2.2 | Nemotron-VL-8B Ollama 서빙 가능여부 검증 [tdd:skip:model-spike] | ollama 로드+이미지 캡션 응답 성공 or Llama3.2-Vision 폴백 확정, STATE.md 기록 | - | 1.1 | cc:완료 | - |
 | 2.3 | Nemotron-4B 한국어 씬분할 벤치 [tdd:skip:model-spike] | 한국어 스토리→씬 JSON 품질 눈판정, 미달시 Llama3.1 폴백 결정 STATE.md 기록 | - | 1.1 | cc:TODO | - |
 | 2.4 | 전 모델 상주 OOM 실측 (게이트) [tdd:skip:measure-spike] | 전 모델 동시로드 후 free 실측, 상주 가능여부·언로드 정책 STATE.md 기록 | - | 2.1, 2.2, 2.3 | cc:TODO | - |
 
