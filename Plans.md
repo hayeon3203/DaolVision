@@ -10,7 +10,7 @@
 | Task | 내용 | DoD | Acceptance | Depends | Status | GH |
 |------|------|-----|------------|---------|--------|----|
 | 0.1 | Harness 도입 (기존 프로젝트) | harness.toml·Plans.md·.harness/·agents/·agent-memory 존재, git 초기화됨 | test -f harness.toml && test -f Plans.md && test -d .harness && git rev-parse --git-dir | - | cc:완료 | - |
-| 0.2 | 기존 코드 파악 (파이프라인 4서브시스템) | 각 서브시스템 진입점·포트·데이터흐름을 CLAUDE.md와 대조 확인, 격차 있으면 STATE.md에 기록 | - | 0.1 | cc:완료 | - |
+| 0.2 | 기존 코드 파악 (파이프라인 4서브시스템) | 각 서브시스템 진입점·포트·데이터흐름을 CLAUDE.md와 대조 확인, 격차 있으면 STATE.md에 기록 | - | 0.1 | cc:완료 [41d912d] | - |
 
 ---
 
