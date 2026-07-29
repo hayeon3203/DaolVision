@@ -66,6 +66,23 @@ Week 2 Day1 환경 스파이크(게이트) 진행 중. 2.1·2.2 완료, 2.3 다�
   ollama 직행 가능 → **2.3 씬분할 후보**로 이월(ollama의 Mamba2-하이브리드 arch
   지원 재확인 필요).
 
+## Task 2.3.5 — T2I 모델 확정 (진행 중, 2026-07-29)
+
+R10(전 모델 비중국/NVIDIA)에 따라 T2I 자리(video_generator `:8501` zimage 대체)에
+NVIDIA 공식 모델을 우선 탐색·실측.
+
+- **nvidia/Qwen-Image-Flash: 실측 기각**. transformer 20.43B + 전체 파이프라인
+  28.85B 파라미터. GB10에서 `.to("cuda")`(CPU→GPU 가중치 이전) 도중 시스템 메모리
+  114→118Gi(전체 119Gi)까지 치솟아 생성 시작 전에 강제종료. ComfyUI+anim-agent
+  상주 상태 기준(video_generator에서 실측, 2026-07-29). 성능 비교 이전에 크기부터
+  이 워크스테이션 동시 상주 조건에 안 맞음.
+- **패턴**: NVIDIA 공식/NVIDIA 지원 T2I 모델 중 이 정도로 가볍고 GB10에서
+  다른 서비스와 동시 상주 가능한 옵션을 아직 못 찾음.
+- I2I(Flux Kontext)·I2V(Cosmos-Predict2-2B)는 **아직 미실측** — PRD상 I2I는
+  NVIDIA 후보 시도 자체가 없고(처음부터 Flux Kontext), I2V의 Cosmos-Predict2-2B는
+  "벤치 예정"(Phase 6)이라 여기 기록하지 않음. 실측 후 별도 판단.
+- 비교 대상(SDXL/FLUX.1-schnell) 실측치는 진행 중 — 완료되면 이 섹션에 이어서 기록.
+
 ## Task 0.2 — 기존 코드 파악 (파이프라인 4서브시스템) (2026-07-29, cc:완료)
 
 `video_generator/CLAUDE.md`의 서브시스템 표(hunyuan_server :8500/:8600, langgraph
