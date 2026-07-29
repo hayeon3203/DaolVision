@@ -102,10 +102,14 @@ video_generator 쪽 구현: `hunyuan_server/zimage_server.py` → `flux_server.p
 video_generator@924a10c. `:8501`에서 실제 `/generate` 호출 검증 완료(임시 포트
 18501, 1024×1024 png 10.3s).
 
-⚠️ **알려진 이슈**: `:8501`이 다른 프로젝트(`wafer-fa`/`daol-fascope`)의
-Streamlit 대시보드(2026-07-22부터 상주)와 포트 충돌 중 — `flux.service` 기동
-시도 시 `address already in use`로 실패함(확인 완료, systemd는 정지 상태로
-둠). 실서비스 가동 전 포트 재조정 또는 Streamlit 쪽 포트 변경 필요.
+**포트 충돌 해결됨 (2026-07-29)**: `:8501`을 다른 프로젝트(`daol-fascope`, 구
+`wafer-fa`)의 Streamlit 대시보드가 쓰고 있어서 `flux.service` 기동이
+`address already in use`로 실패했던 문제 — daol-fascope 쪽을 `:8502`로 옮겨서
+해결. 참고: 그 프로세스는 `wafer-fa` 디렉토리가 `daol-fascope`로 rename된 뒤에도
+구 경로(`/home/admin/wafer-fa/.venv/...`)를 그대로 물고 떠 있던 것(rename 후에도
+이미 열린 파일은 유효 — Linux inode 특성), 재기동은 현재 경로
+(`daol-fascope/.venv/bin/python3.12 -m streamlit run app.py --server.port 8502`)로
+함. `flux.service`는 `:8501`에서 정상 기동·health 200 확인 완료.
 
 ## Task 0.2 — 기존 코드 파악 (파이프라인 4서브시스템) (2026-07-29, cc:완료)
 
