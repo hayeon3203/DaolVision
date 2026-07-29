@@ -66,10 +66,41 @@ Week 2 Day1 환경 스파이크(게이트) 진행 중. 2.1·2.2 완료, 2.3 다�
   ollama 직행 가능 → **2.3 씬분할 후보**로 이월(ollama의 Mamba2-하이브리드 arch
   지원 재확인 필요).
 
+## Task 0.2 — 기존 코드 파악 (파이프라인 4서브시스템) (2026-07-29, cc:완료)
+
+`video_generator/CLAUDE.md`의 서브시스템 표(hunyuan_server :8500/:8600, langgraph
+:8700, openwebui —, ComfyUI :8188)를 실제 코드·systemd 유닛과 대조. 검증: `systemctl
+--user list-unit-files`, `ss -ltnp`, 각 run 스크립트의 포트 env, `langgraph/tools.py`
+URL 상수, `langgraph/api.py` 라우트.
+
+**일치 확인**: hunyuan_server(:8500/:8600), langgraph(:8700, `/jobs` 등 문서화된
+라우트 전부 존재), ComfyUI(:8188, 현재 기동 중), openwebui Function 3종 — 문서와 실제
+코드 일치.
+
+**⚠️ 격차 발견 — CLAUDE.md 갱신 필요 (video_generator repo, DaolVision 아님)**:
+1. **5번째 서브시스템 미문서화**: `hunyuan_server/zimage_server.py`(Z-Image-Turbo
+   T2I, `:8501`, systemd `zimage.service` enabled)가 실존·기동 가능하지만
+   CLAUDE.md 서브시스템 표·"네 서비스 systemd 유닛" 문장(4개로 명시)에 빠짐.
+   `langgraph/nodes.py`(M2-2/M2-5)가 `tools.py`의 `ZIMAGE_URL`(:8501)로 정지
+   이미지 앵커를 생성 — S1(우주비행사 여정) 씬 파이프라인에 실제로 관여하는
+   경로라 DaolVision 대시보드 설계(6.x, 포트/데이터흐름 시각화) 시 반드시 포함
+   필요.
+2. **"미구현" 표기 stale**: CLAUDE.md "Not yet implemented (Phase C)"에 "cancel
+   from the agent side"가 있으나, 실제로 `langgraph/api.py`에 `POST
+   /jobs/{job_id}/cancel`이 동작 구현되어 있음(태스크 취소 + `.cancelled` 마커 +
+   metrics 기록). 문서가 뒤처짐.
+
+**DaolVision 영향**: 두 항목 다 video_generator repo의 CLAUDE.md를 갱신해야 할
+사항이지만, 이 repo는 백엔드 코드를 수정하지 않는 원칙(repo 구성 참조)이라 여기서는
+기록만 하고 실제 문서 수정은 video_generator 세션에서 별도 처리. DaolVision 쪽
+대시보드/스텝퍼 설계 시 5개 엔드포인트(:8500/:8501/:8600/:8700/:8188) 기준으로
+진행.
+
 ## 차단 요소
 
 - 없음
 
 ## 최종 갱신
 
-- 2026-07-28, 2.1·2.2 스파이크 완료 후 DaolVision으로 기록 이관.
+- 2026-07-29, Task 0.2 완료(파이프라인 5엔드포인트 확인, zimage :8501 미문서화·cancel
+  구현완료 stale 표기 2건 격차 기록).
