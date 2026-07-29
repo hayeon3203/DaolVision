@@ -77,7 +77,7 @@ UI 플로우: 카테고리 선택 → 스타일 프리셋 선택 → 입력 → 
    ▼
 :8700 FastAPI 게이트웨이  ── 라우팅 · OOM 배치 오케 · 대시보드 메타 집계
    ├─> :11434  Ollama (Nemotron-4B 씬분할 / Nemotron-VL-8B 캡션)
-   ├─> :8501   T2I (Flux.1 / SDXL)
+   ├─> :8501   T2I (Flux.1-schnell)
    ├─> :8188   ComfyUI (I2V: LTX distilled+Face-ID / Cosmos 벤치 / Wan 폴백, I2I: Flux Kontext)
    └─> TTS 서버 (Kokoro)
 ```
@@ -93,7 +93,7 @@ UI 플로우: 카테고리 선택 → 스타일 프리셋 선택 → 입력 → 
 |---|---|---|---|
 | 씬분할(텍스트) | **Nemotron-4B** (GGUF, 2.84GB) | 🇺🇸 NVIDIA | 한국어 성능 Day1 벤치, 미달시 Llama3.1 폴백 |
 | 비전 캡션 | **Nemotron-VL-8B** | 🇺🇸 NVIDIA | 영어출력(한국어 불필요). Ollama 서빙 Day1 확인, 미달시 Llama3.2-Vision 폴백 |
-| T2I 앵커 | **Flux.1 / SDXL** | 🇩🇪 / 🇬🇧 | Z-Image(중국) 대체 |
+| T2I 앵커 | **Flux.1-schnell** | 🇩🇪 | Z-Image(중국) 대체, GB10 실측 확정(2.3.5, SDXL은 legacy UNet이라 FA-4 통로 제외) |
 | I2I 얼굴변환 | **Flux.1 Kontext** | 🇩🇪 | S2 |
 | I2V(주력) | **LTX-Video distilled + LTX-Best-Face-ID LoRA** | 🇮🇱 | 캐릭터+화풍 일관. BFS 커스텀노드. Day2 게이트 |
 | I2V(벤치) | **Cosmos-Predict2-2B-Video2World** | 🇺🇸 NVIDIA | 비교용 |

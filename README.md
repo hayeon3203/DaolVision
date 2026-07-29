@@ -16,7 +16,7 @@
 |---|---|---|
 | 씬분할 | Nemotron-4B | 🇺🇸 NVIDIA |
 | 캡션 | Nemotron-VL-8B | 🇺🇸 NVIDIA |
-| T2I | Flux.1 / SDXL | 🇩🇪 / 🇬🇧 |
+| T2I | Flux.1-schnell | 🇩🇪 |
 | I2I | Flux.1 Kontext | 🇩🇪 |
 | I2V | LTX-Video distilled + Face-ID | 🇮🇱 |
 | I2V 벤치 | Cosmos-Predict2-2B | 🇺🇸 NVIDIA |

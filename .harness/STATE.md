@@ -66,7 +66,7 @@ Week 2 Day1 환경 스파이크(게이트) 진행 중. 2.1·2.2 완료, 2.3 다�
   ollama 직행 가능 → **2.3 씬분할 후보**로 이월(ollama의 Mamba2-하이브리드 arch
   지원 재확인 필요).
 
-## Task 2.3.5 — T2I 모델 확정 (진행 중, 2026-07-29)
+## Task 2.3.5 — T2I 모델 확정 (2026-07-29, cc:완료)
 
 R10(전 모델 비중국/NVIDIA)에 따라 T2I 자리(video_generator `:8501` zimage 대체)에
 NVIDIA 공식 모델을 우선 탐색·실측.
@@ -81,7 +81,31 @@ NVIDIA 공식 모델을 우선 탐색·실측.
 - I2I(Flux Kontext)·I2V(Cosmos-Predict2-2B)는 **아직 미실측** — PRD상 I2I는
   NVIDIA 후보 시도 자체가 없고(처음부터 Flux Kontext), I2V의 Cosmos-Predict2-2B는
   "벤치 예정"(Phase 6)이라 여기 기록하지 않음. 실측 후 별도 판단.
-- 비교 대상(SDXL/FLUX.1-schnell) 실측치는 진행 중 — 완료되면 이 섹션에 이어서 기록.
+
+**최종 확정: FLUX.1-schnell**(Black Forest Labs, 독일). GB10 실측 3종 비교:
+
+| 모델 | 국적 | 파라미터 | load | gen | peak VRAM | 결과 |
+|---|---|---|---|---|---|---|
+| SDXL | 🇬🇧/🇺🇸 | 2.6B | 100s | 12.8s | 9.0GB | 가장 가벼움이지만 채택 안 함 |
+| **FLUX.1-schnell** | 🇩🇪 | 12B | 448s(다운로드) | 11.7s | 33.8GB | **채택** |
+| nvidia/Qwen-Image-Flash | 🇺🇸(원본 Qwen=🇨🇳) | 28.85B | — | — | OOM | 기각(위 항목) |
+
+SDXL이 더 가볍지만(9GB) legacy UNet 구조라 diffusers의 새 attention dispatch
+경로(`dispatch_attention_fn`, 향후 FA-4/Blackwell 최적화 적용 통로)를 못 탐 —
+FLUX는 DiT 구조라 이 통로를 그대로 타서, video_generator의 Wan 영상 파이프라인과
+같은 최적화 경로를 공유할 수 있음. 화질 실측은 `video_generator/hunyuan_server/
+bench_out/{sdxl,flux-schnell}.png`로 눈 비교, 사용성 문제 없음 확인.
+
+video_generator 쪽 구현: `hunyuan_server/zimage_server.py` → `flux_server.py`
+교체, systemd `zimage.service` → `flux.service`, `langgraph/tools.py`
+`ZIMAGE_URL` → `T2I_URL`(env `AGENT_T2I_URL`)로 정리. commit
+video_generator@924a10c. `:8501`에서 실제 `/generate` 호출 검증 완료(임시 포트
+18501, 1024×1024 png 10.3s).
+
+⚠️ **알려진 이슈**: `:8501`이 다른 프로젝트(`wafer-fa`/`daol-fascope`)의
+Streamlit 대시보드(2026-07-22부터 상주)와 포트 충돌 중 — `flux.service` 기동
+시도 시 `address already in use`로 실패함(확인 완료, systemd는 정지 상태로
+둠). 실서비스 가동 전 포트 재조정 또는 Streamlit 쪽 포트 변경 필요.
 
 ## Task 0.2 — 기존 코드 파악 (파이프라인 4서브시스템) (2026-07-29, cc:완료)
 
