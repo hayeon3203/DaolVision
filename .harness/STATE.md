@@ -287,19 +287,31 @@ URL 상수, `langgraph/api.py` 라우트.
 - **산출물**: `video_generator/ComfyUI/output/video/LTX_2.3_ia2v_0000{1..4}_.mp4`
   (얼굴 결과), `video_generator/ComfyUI/output/comparison_0000{1..4}-audio.mp4`
   (참조사진↔결과 비교).
-- **후속 요구사항(스코프 아웃, 5.x 프로덕션 설정 단계로 이관)**:
-  1. **16:9**: 현재 정사각은 `Get_base_resolution`이 width/height에 동일값을
-     공급하는 배선 때문 — width/height를 분리해야 함. 같은 픽셀 예산으로
-     화면비만 바꾸려면 1024×576(768²와 총 픽셀 동일, 속도 저하 없음).
-  2. **더 먼 앵글/화려한 배경**: 워크플로 배선과 무관, 씬 프롬프트 문구
-     문제("medium close-up" → "wide shot, expansive background" 식으로
-     우리가 쓰는 캡션만 바꾸면 됨).
-  3. **90초 영상**: 이 워크플로 duration 파라미터(node 31)를 90으로 올려
-     한 번에 생성하는 건 아님 — `total_frames = ((duration*fps)//8)*8+1`이라
-     90초/24fps는 2161프레임, LTX 단발 생성 실용 범위를 크게 초과(품질 붕괴/
-     실패 위험). PRD 파이프 설계(씬분할→씬별 짧은 클립→TTS mux→최종 mp4,
-     PRD.md 59행)대로 **여러 짧은 클립을 이어붙여 최종 90초를 만드는 것**이
-     맞는 경로 — Week5 5.x(배치 클립 생성)에서 다룰 사안.
+- **16:9 와이드샷 재검증 (2026-07-30, 같은 세션)**: node 100(`EmptyLTXVLatentVideo`)의
+  width/height 링크(94/95, 둘 다 `Get_base_resolution`)를 API 제출 직전에
+  `graphToPrompt()` 결과 JSON에서 리터럴 `1024×576`으로 덮어써 정사각 배선을
+  우회. 프롬프트도 "wide establishing shot ... character small in frame
+  relative to environment" 식으로 교체(발사 씬, 노을 발사대). 제출→완료
+  3분29초 — 768² 대비 총 픽셀 동일이라 **속도 저하 없음**(모델 캐시 유지시
+  s2~s4와 동일 페이스). 결과: 배경(노을·구름·발사탑) 화려하게 살아남, 얼굴은
+  클로즈업보다 작지만 눈썹·헤어스타일 참조와 일치 유지. 산출물:
+  `video_generator/ComfyUI/output/video/LTX_2.3_ia2v_00005_.mp4`.
+- **새 기본값 확정(3.2 이후 모든 LTX Face-ID 씬 생성에 적용)**:
+  - 해상도: **1024×576**(16:9, 768² 동일 픽셀 예산 — width/height를
+    `graphToPrompt()` 후 API 프롬프트 JSON에서 리터럴로 덮어써야 함, UI
+    그래프 자체는 여전히 정사각 배선이라 매 제출마다 override 필요.
+    영구 배선 분리는 하지 않음, override 방식 유지가 더 단순).
+  - 씬 프롬프트 톤: 인물 축소·배경 확장 지향("wide/establishing shot",
+    "expansive background", "character small in frame") — 클로즈업
+    문구("medium close-up") 지양.
+  - 나머지(5초/24fps/8-step distill/Face-ID LoRA strength 1.0)는 3.2 원래
+    설정 유지.
+  - **90초 영상은 이 기본값과 별개**: duration 파라미터(node 31)를 90으로
+    올려 한 번에 생성하는 게 아님 — `total_frames = ((duration*fps)//8)*8+1`
+    이라 90초/24fps는 2161프레임, LTX 단발 생성 실용 범위를 크게 초과(품질
+    붕괴/실패 위험). PRD 파이프 설계(씬분할→씬별 짧은 클립→TTS mux→최종
+    mp4, PRD.md 59행)대로 **여러 짧은 클립을 이어붙여 최종 90초를 만드는
+    것**이 맞는 경로 — Week5 5.x(배치 클립 생성)에서 다룰 사안, 아직 미착수.
 
 ## 차단 요소
 
@@ -307,5 +319,6 @@ URL 상수, `langgraph/api.py` 라우트.
 
 ## 최종 갱신
 
-- 2026-07-30, Task 3.2 완료(Face-ID 4씬 눈판정 PASS, Wan 폴백 불필요. 16:9·
-  와이드앵글·90초 후속 요구사항은 5.x로 스코프아웃).
+- 2026-07-30, Task 3.2 완료(Face-ID 4씬 눈판정 PASS, Wan 폴백 불필요) +
+  16:9(1024×576)·와이드샷 프롬프트 톤을 새 기본값으로 확정. 90초 최종영상은
+  5.x 배치 클립 이어붙이기로 스코프아웃(미착수).
