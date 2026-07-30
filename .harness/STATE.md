@@ -343,6 +343,31 @@ URL 상수, `langgraph/api.py` 라우트.
 - **커밋**: video_generator repo `6548985`(DaolVision은 백엔드 코드를 갖지
   않으므로 커밋도 video_generator repo 자체 git에 있음 — 3.1/3.2와 동일 관례).
 
+## Task 3.3 — LTX I2V 파이프라인 병목 프로파일링 (2026-07-30, cc:완료)
+
+상세 근거는 [docs/spikes/3.3-ltx-bottleneck-profile.md](../docs/spikes/3.3-ltx-bottleneck-profile.md).
+
+- **클린 측정 총 소요: 523.44초(8분43초)** — 모델로드 189.9초(36.3%) / 8-step
+  샘플링 232.9초(44.5%, 스텝당 ~29.1초) / 디코드+후처리 100.6초(19.2%, 이 중
+  텍스트인코더 불필요 재로드 26.4초 포함).
+- **1차 시도는 측정 실패**: 사용자가 별도로 띄운 `flux_server.py`(T2I)와
+  ComfyUI GGUF 로드가 GB10 통합메모리를 동시 경합 → 스왑 스래싱으로 GGUF
+  dequant 스레드가 24분+ 사실상 정지(disk read 거의 0). 시스템 mem free
+  1.7Gi/swap free 630Mi까지 하락, earlyoom SIGKILL 문턱 근접. `flux_server.py`
+  kill -9로 해소, ComfyUI는 `/interrupt`가 안 먹혀(노드 내부 C-level 루프)
+  `systemctl --user restart comfyui.service`로 재기동 후 재측정.
+- **4.4(OOM 오케스트레이터)에 주는 시사점**: 동시 상주 경합은 "느려짐"이 아니라
+  "사실상 정지"(동일 작업 92초 vs 24분+, 40배 이상 차) — 설계 목표를 "감내"가
+  아니라 "정지 방지"로 잡아야 함.
+- **3.4/3.5 baseline 확정**: 샘플링(44.5%)이 최대 병목 → step 수·attention
+  backend가 최우선 레버. 모델로드(36.3%)의 GGUF dequant는 정상 조건에서
+  92초로 자체는 과도하지 않음(1차 시도의 이상 지연은 경합 탓).
+- **산출물**: `video_generator/langgraph/tests/probe_ltx_profile.py`(변환+제출,
+  3.4/3.5 재사용 예정), `tests/probe_ltx_watch.py`(재제출 없이 관찰 재개용),
+  격리 venv `/home/admin/comfyui-bench-venv`(Playwright — 프로덕션 ComfyUI
+  venv `/home/admin/.venv`와 분리 유지, 3.1의 numpy/opencv 오염 전례 반복
+  방지).
+
 ## 차단 요소
 
 - 없음
