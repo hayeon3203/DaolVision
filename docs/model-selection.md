@@ -1,26 +1,19 @@
 # 모델 선택 정리 (2026-07-30 기준)
 
-목적: GB10(Grace-Blackwell, 119GB unified memory, 단일 워크스테이션) 위에서
-돌아갈 파이프라인 모델 스택을 확정하기 위한 파라미터/GPU메모리/peak 메모리
-비교 자료. 확정분은 실측(2.1~2.4), 미확정분은 웹 리서치(2026-07-30, HF
-모델카드·공식 발표 기준) — **실측 아님, 출처 링크 확인 필수**.
+목적: GB10(Grace-Blackwell, 119GB unified memory, 단일 워크스테이션) 위에서 돌아갈 파이프라인 모델 스택을 확정하기 위한 파라미터/GPU메모리/peak 메모리
+HW 환경: torch 2.12.1+cu130, transformers 5.12.1
+비교 자료. 확정분은 실측(2.1~2.4), 미확정분은 웹 리서치(2026-07-30, HF 모델카드·공식 발표 기준) — **실측 아님, 출처 링크 확인 필수**.
 
 ## 선택 조건 (요구사항)
 
-- **최우선**: 기존 LangGraph 아키텍처(`video_generator/langgraph`)에 맞아야
-  함, 코드 수정 최소. 퀄리티도 필요.
-- **Peak GPU 메모리**가 특히 중요 — "로드시" 아니라 "생성 중 peak"이 진짜
-  제약(2.4에서 실증: baseline+3모델 합이 로드 직후엔 82Gi였다가 FLUX 생성
-  중 118Gi까지 감).
+- **최우선**: 기존 LangGraph 아키텍처(`video_generator/langgraph`)에 맞아야함, 코드 수정 최소. 퀄리티도 필요.
+- **Peak GPU 메모리**가 특히 중요 — "로드시" 아니라 "생성 중 peak"이 진짜 제약(2.4에서 실증: baseline+3모델 합이 로드 직후엔 82Gi였다가 FLUX 생성 중 118Gi까지 감).
 - FA-4(Blackwell 가속) 쓰고 싶은데 성능 트레이드오프 우려.
 - 비중국 경량 모델 선호.
-- **선택 우선순위**: ① nvidia 자체 모델(Cosmos, Nemotron류) → ② 비중국
-  모델 → ③ nvidia 공식지원(중국 원산 포함, 예: Qwen 계열 NVIDIA 리패키지).
-- ComfyUI 워크플로우는 HuggingFace에서 이미 나온 것(얼굴유지 I2V, 테마별
-  I2I 등) 빠르게 가져다 붙이는 걸 선호. 사용자 참고 링크: Krea 계열
+- **선택 우선순위**: ① nvidia 자체 모델(Cosmos, Nemotron류) → ② 비중국   모델 → ③ nvidia 공식지원(중국 원산 포함, 예: Qwen 계열 NVIDIA 리패키지).
+- ComfyUI 워크플로우는 HuggingFace에서 이미 나온 것(얼굴유지 I2V, 테마별 I2I 등) 빠르게 가져다 붙이는 걸 선호. 사용자 참고 링크: Krea 계열
   (`https://huggingface.co/buckets/hanna3203/Krea-2-bucket`).
-- 전반적 관찰: 로봇·의료 특화 모델은 많은데, 일반 사용자용 12B 이하
-  경량 멀티모달은 선택지가 적음(특히 T2I/I2V 대비 멀티모달 LLM 쪽).
+- 전반적 관찰: 로봇·의료 특화 모델은 많은데, 일반 사용자용 12B 이하 경량 멀티모달은 선택지가 적음(특히 T2I/I2V 대비 멀티모달 LLM 쪽).
 
 ---
 
