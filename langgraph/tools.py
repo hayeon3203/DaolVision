@@ -1,0 +1,853 @@
+"""
+실제 인프라 호출부 (GB10 실서버 배선).
+
+- LLM: Ollama 네이티브 chat API (`/api/chat`), qwen2.5:7b
+- 비디오: Wan2.2-TI2V-5B FastAPI (:8500) — /generate(T2V), /generate_i2v(I2V, base64 image)
+- ffmpeg: concat + xfade + 자막 번인
+
+nodes.py는 이 파일의 함수 시그니처에만 의존한다. 엔드포인트/모델이 바뀌면 여기만 교체.
+"""
+import asyncio
+import base64
+import hashlib
+import json
+import os
+import re
+import sqlite3
+import subprocess
+import threading
+import time
+from pathlib import Path
+from io import BytesIO
+
+import httpx
+from PIL import Image, ImageOps
+
+# ── 환경 설정 ────────────────────────────────────────────────
+OLLAMA_URL = os.environ.get("AGENT_OLLAMA_URL", "http://127.0.0.1:11434/api/chat")
+OLLAMA_GEN_URL = OLLAMA_URL.replace("/api/chat", "/api/generate")  # 비전 캡션용(images 지원)
+LLM_MODEL = os.environ.get("AGENT_LLM_MODEL", "qwen3.5:9b")
+VISION_MODEL = os.environ.get("AGENT_VISION_MODEL", "qwen3.5:9b")  # qwen3.5:9b = text+vision 겸용. qwen2.5:7b+gemma3:4b 대체. run_agent.sh와 동일 기본값
+WAN_URL = os.environ.get("AGENT_WAN_URL", "http://127.0.0.1:8500")
+T2I_URL = os.environ.get("AGENT_T2I_URL", "http://127.0.0.1:8501")
+
+# ── ComfyUI Stand-In (참조-이미지 씬의 얼굴 일관성 경로) ──────────
+COMFYUI_URL = os.environ.get("AGENT_COMFYUI_URL", "http://127.0.0.1:8188")
+# 참조 이미지가 있는 씬을 Stand-In(ComfyUI)으로 보낼지 스위치. off면 전부 call_video(:8500)로.
+USE_STANDIN = os.environ.get("AGENT_USE_STANDIN", "1").lower() not in ("0", "false", "no", "")
+# 0이면 참조 이미지 캡션(gemma vision) 생략 → 이미지↔씬은 사람이 지정. gemma 미로드로 GPU 압박↓.
+CAPTION_REFS = os.environ.get("AGENT_CAPTION_REFS", "1").lower() not in ("0", "false", "no", "")
+STANDIN_STEPS = int(os.environ.get("AGENT_STANDIN_STEPS", "4"))     # lightx2v distill: 4~8
+# Stand-In 기반 Wan2.1 14B의 네이티브 fps=16. 24fps 생성은 프레임 50% 낭비(스텝시간이
+# 프레임 수에 초선형). 편집 단계에서 DEFAULT_FPS로 정규화하므로 다른 클립과 섞여도 안전.
+STANDIN_FPS = int(os.environ.get("AGENT_STANDIN_FPS", "16"))
+# I2V-14B 체크포인트가 480P 전용(이름 그대로) — :8500 T2V 경로의 WIDTH/HEIGHT(quality
+# 프리셋 기본 1280x704)를 그대로 쓰면 해상도 초과로 100초 목표를 못 맞춤(실측 65s→159s).
+# 이 경로만 별도로 832x480 고정.
+STANDIN_WIDTH = int(os.environ.get("AGENT_STANDIN_WIDTH", "832"))
+STANDIN_HEIGHT = int(os.environ.get("AGENT_STANDIN_HEIGHT", "480"))
+# M3-8 relight 노브: 참조 첫프레임 latent가 조명/노출/배경을 잠그는 강도. 씬 mood가 참조와
+# 크게 다른 씬만(호출부 nodes.py가 판단) 낮춰 프롬프트대로 재조명되게 한다 — 1.0이면
+# 밝은 참조가 어두운 씬도 밝게 굳히고 참조 배경(흐릿한 portrait bg)까지 전파됨. identity와
+# trade-off라 실측 튜닝값. ref: standin-identity-only-not-style, PLAN M3-8.
+STANDIN_RELIGHT_STRENGTH = float(os.environ.get("AGENT_STANDIN_RELIGHT_STRENGTH", "0.55"))
+STANDIN_RELIGHT_NOISE_AUG = float(os.environ.get("AGENT_STANDIN_RELIGHT_NOISE_AUG", "0.02"))
+# M3-10: face(standin_t2v) 경로 튜닝 노브. identity LoRA(node69)↑면 얼굴 유지↑·배경 자유↓,
+# distill LoRA(node71)는 저스텝 품질. 코드 자동결정 말고 실측 A/B로 조정. PLAN M3-10.
+STANDIN_FACE_LORA_STRENGTH = float(os.environ.get("AGENT_STANDIN_FACE_LORA_STRENGTH", "1.0"))
+STANDIN_DISTILL_LORA_STRENGTH = float(os.environ.get("AGENT_STANDIN_DISTILL_LORA_STRENGTH", "0.6"))
+# face 경로 LoRA 노드(standin_t2v.json 전용): 69=Stand-In identity, 71=lightx2v distill.
+_SI_FACE_LORA = {"identity": "69", "distill": "71"}
+
+
+def _relight_embed_overrides(relight: bool) -> dict:
+    """M3-8: relight 씬이면 WanVideoImageToVideoEncode의 latent 잠금을 완화하는 override.
+    미적용(참조와 mood 유사) 씬은 빈 dict = 기존 1.0 동작 유지."""
+    if not relight:
+        return {}
+    return {
+        "start_latent_strength": STANDIN_RELIGHT_STRENGTH,
+        "end_latent_strength": STANDIN_RELIGHT_STRENGTH,
+        "noise_aug_strength": STANDIN_RELIGHT_NOISE_AUG,
+    }
+STANDIN_EXEC_TIMEOUT = float(os.environ.get("AGENT_STANDIN_EXEC_TIMEOUT",
+                                             os.environ.get("AGENT_STANDIN_TIMEOUT", "1800")))
+STANDIN_QUEUE_TIMEOUT = float(os.environ.get("AGENT_STANDIN_QUEUE_TIMEOUT", "86400"))
+STANDIN_MISSING_TIMEOUT = float(os.environ.get("AGENT_STANDIN_MISSING_TIMEOUT", "30"))
+# 클립 생성 동시 실행 상한. Send fan-out은 씬들을 한 이벤트 루프에서 동시에 돌리므로
+# 상한이 없으면 :8500(Wan)+:8188(ComfyUI) 확산이 같은 순간 피크를 쳐 GB10 통합메모리 OOM.
+# 1=완전 직렬(기본), 2=백엔드당 하나. ref: gb10-gpu-contention-comfyui-ollama.
+MAX_CONCURRENT_CLIPS = int(os.environ.get("AGENT_MAX_CONCURRENT_CLIPS", "1"))
+_gen_semaphore = asyncio.Semaphore(MAX_CONCURRENT_CLIPS)  # 실행 루프는 await 시점에 바인딩(py3.10+)
+_WORKFLOW_DIR = Path(__file__).resolve().parent / "comfyui_workflows"
+# subject_ref(비인간/제품): 참조 전체를 첫프레임 latent로 → 실루엣·화풍 보존, 배경 잠금.
+I2V_WORKFLOW = _WORKFLOW_DIR / "i2v_14b.json"
+# face(사람): 얼굴 identity만 주입(Stand-In), 배경은 프롬프트 100%(빈 embeds). M3-9.
+FACE_WORKFLOW = _WORKFLOW_DIR / "standin_t2v.json"
+# 호환 alias (구 이름) — 기본 경로는 i2v.
+STANDIN_WORKFLOW = I2V_WORKFLOW
+# API 그래프 주입 노드 ID (comfyui_workflows/README.md 표 참조). 두 워크플로는 dims 노드만
+# 다르다: i2v=105(WanVideoImageToVideoEncode), face=103(WanVideoEmptyEmbeds).
+_SI = {
+    "image": "58", "prompt": "16", "embeds": "105", "sampler": "27", "output": "74",
+}
+_SI_FACE = {
+    "image": "58", "prompt": "16", "embeds": "103", "sampler": "27", "output": "74",
+}
+
+JOBS_DIR = Path(os.environ.get("AGENT_JOBS_DIR",
+                               str(Path(__file__).resolve().parent / "jobs")))
+JOBS_DIR.mkdir(parents=True, exist_ok=True)
+COMFY_PROMPTS_DB = JOBS_DIR / "comfy_prompts.db"
+_PROMPT_DB_LOCK = threading.Lock()
+
+VIDEO_PRESETS = {
+    "quality": {"width": 1280, "height": 704, "steps": 20},
+    "fast": {"width": 832, "height": 480, "steps": 10},
+}
+VIDEO_PRESET = os.environ.get("AGENT_VIDEO_PRESET", "quality").lower()
+if VIDEO_PRESET not in VIDEO_PRESETS:
+    raise ValueError(f"unknown AGENT_VIDEO_PRESET={VIDEO_PRESET!r}; choose quality or fast")
+_PRESET = VIDEO_PRESETS[VIDEO_PRESET]
+DEFAULT_FPS = int(os.environ.get("AGENT_FPS", "24"))
+DEFAULT_STEPS = int(os.environ.get("AGENT_STEPS", str(_PRESET["steps"])))
+WIDTH = int(os.environ.get("AGENT_WIDTH", str(_PRESET["width"])))
+HEIGHT = int(os.environ.get("AGENT_HEIGHT", str(_PRESET["height"])))
+
+
+def _prompt_db() -> sqlite3.Connection:
+    """ComfyUI 제출 상태를 LangGraph 노드와 독립적으로 즉시 영속화한다."""
+    conn = sqlite3.connect(COMFY_PROMPTS_DB, timeout=30)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS comfy_prompts (
+            prompt_id TEXT PRIMARY KEY, job_id TEXT NOT NULL,
+            scene_id INTEGER NOT NULL, request_key TEXT NOT NULL,
+            status TEXT NOT NULL, output_filename TEXT, error TEXT,
+            submitted_at REAL NOT NULL, execution_started_at REAL,
+            completed_at REAL, updated_at REAL NOT NULL
+        )
+    """)
+    conn.execute("""CREATE INDEX IF NOT EXISTS idx_comfy_prompts_recovery
+                    ON comfy_prompts(job_id, scene_id, request_key, submitted_at DESC)""")
+    return conn
+
+
+def _save_prompt(prompt_id: str, job_id: str, scene_id: int, request_key: str) -> None:
+    now = time.time()
+    with _PROMPT_DB_LOCK, _prompt_db() as conn:
+        conn.execute("""INSERT OR REPLACE INTO comfy_prompts
+            (prompt_id, job_id, scene_id, request_key, status, submitted_at, updated_at)
+            VALUES (?, ?, ?, ?, 'queued', ?, ?)""",
+            (prompt_id, job_id, scene_id, request_key, now, now))
+
+
+def _update_prompt(prompt_id: str, status: str, *, output_filename: str | None = None,
+                   error: str | None = None, execution_started_at: float | None = None) -> None:
+    completed = time.time() if status in ("completed", "error") else None
+    with _PROMPT_DB_LOCK, _prompt_db() as conn:
+        conn.execute("""UPDATE comfy_prompts SET status=?,
+            output_filename=COALESCE(?, output_filename), error=?,
+            execution_started_at=COALESCE(?, execution_started_at),
+            completed_at=COALESCE(?, completed_at), updated_at=? WHERE prompt_id=?""",
+            (status, output_filename, error, execution_started_at, completed, time.time(), prompt_id))
+
+
+def _recoverable_prompt(job_id: str, scene_id: int, request_key: str):
+    with _PROMPT_DB_LOCK, _prompt_db() as conn:
+        return conn.execute("""SELECT * FROM comfy_prompts
+            WHERE job_id=? AND scene_id=? AND request_key=? AND status != 'error'
+            ORDER BY submitted_at DESC LIMIT 1""", (job_id, scene_id, request_key)).fetchone()
+
+
+def recoverable_comfy_jobs() -> list[str]:
+    with _PROMPT_DB_LOCK, _prompt_db() as conn:
+        rows = conn.execute("""SELECT DISTINCT job_id FROM comfy_prompts
+            WHERE status IN ('queued', 'running', 'completed')""").fetchall()
+    return [row[0] for row in rows]
+
+
+def comfy_job_progress(job_id: str) -> dict:
+    with _PROMPT_DB_LOCK, _prompt_db() as conn:
+        rows = conn.execute("""SELECT scene_id, prompt_id, status, error
+            FROM comfy_prompts WHERE job_id=? ORDER BY submitted_at""", (job_id,)).fetchall()
+    latest = {}
+    for row in rows:
+        latest[row["scene_id"]] = dict(row)
+    return {"scenes": list(latest.values())}
+
+
+def job_dir(job_id: str) -> Path:
+    d = JOBS_DIR / job_id
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def refs_dir(job_id: str) -> Path:
+    d = job_dir(job_id) / "refs"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+# ── LLM ─────────────────────────────────────────────────────
+async def call_llm(system_prompt: str, user_prompt: str) -> str:
+    async with httpx.AsyncClient(timeout=180) as client:
+        resp = await client.post(
+            OLLAMA_URL,
+            json={
+                "model": LLM_MODEL,
+                "stream": False,
+                "think": False,  # qwen3.5:9b는 thinking 모델 — CoT 끄지 않으면 매 호출 장문 <think> 생성 → 180s ReadTimeout
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+            },
+        )
+        resp.raise_for_status()
+        return resp.json()["message"]["content"]
+
+
+_APPROVAL_INTENTS = {"approve", "revise", "reject", "ambiguous"}
+_EXPLICIT_APPROVE = re.compile(
+    r"\s*(?:approve[d]?|승인|확정|ok(?:ay)?|yes)(?:해|해줘|합니다|요)?[.!?\s]*",
+    re.I,
+)
+_EXPLICIT_REGEN = re.compile(r"(?:regen(?:erate)?|재생성|다시)", re.I)
+_EXPLICIT_REVISE = re.compile(
+    r"(?:revise|edit|change|replace|remove|add|수정|변경|바꿔|바꾸|교체|삭제|추가|"
+    r"더\s*.{0,20}(?:해|만들))",
+    re.I,
+)
+_EXPLICIT_REJECT = re.compile(r"\s*(?:reject|cancel|취소|거절|중단)(?:해|해줘|합니다|요)?[.!?\s]*", re.I)
+
+
+def approval_intent_fallback(checkpoint: str, text: str) -> str:
+    """LLM 장애 시 명시적인 명령만 판정한다. 애매하면 절대 승인하지 않는다."""
+    value = text.strip()
+    if _EXPLICIT_APPROVE.fullmatch(value):
+        return "approve"
+    if _EXPLICIT_REJECT.fullmatch(value):
+        return "reject"
+    if _EXPLICIT_REGEN.search(value) or _EXPLICIT_REVISE.search(value):
+        return "revise"
+    return "ambiguous"
+
+
+async def classify_approval_intent(checkpoint: str, text: str) -> dict:
+    """승인 게이트 응답을 구조화한다. 실패·비정상 출력은 보수적 폴백으로 처리한다."""
+    system_prompt = (
+        "You classify a user's response at a human approval gate in an animation workflow. "
+        "Return ONLY JSON: {\"intent\": \"approve|revise|reject|ambiguous\"}. "
+        "approve means accept the current result and continue (including natural phrases such as "
+        "'좋아', '이대로 진행해', '괜찮네 다음으로', or 'looks good, continue'). "
+        "revise means change, edit, or regenerate the current result. "
+        "reject means explicitly cancel, stop, or refuse it. "
+        "ambiguous means the intent is unclear. Never infer approval from a neutral or unclear reply."
+    )
+    user_prompt = json.dumps({"checkpoint": checkpoint, "response": text}, ensure_ascii=False)
+    try:
+        parsed = parse_json_lenient(await call_llm(system_prompt, user_prompt))
+        intent = parsed.get("intent") if isinstance(parsed, dict) else None
+        if intent not in _APPROVAL_INTENTS:
+            raise ValueError(f"invalid approval intent: {intent!r}")
+        return {"intent": intent, "source": "llm"}
+    except Exception:
+        return {"intent": approval_intent_fallback(checkpoint, text), "source": "fallback"}
+
+
+async def caption_image(image_path: str) -> str:
+    """비전 모델로 이미지의 주요 피사체를 영어 한 구절로 캡션.
+    씬↔이미지 내용 매칭 + 캐릭터록(인물 묘사 텍스트) 주입에 쓰인다."""
+    b64 = base64.b64encode(Path(image_path).read_bytes()).decode()
+    async with httpx.AsyncClient(timeout=180) as client:
+        resp = await client.post(OLLAMA_GEN_URL, json={
+            "model": VISION_MODEL,
+            "prompt": (
+                "Describe the MAIN subject of this image in ONE concise English phrase "
+                "for a video prompt. If a person: age range, gender, ethnicity, clothing. "
+                "If an object: what it is and its setting. No preamble, no quotes."
+            ),
+            "images": [b64],
+            "stream": False,
+        })
+        resp.raise_for_status()
+        return resp.json().get("response", "").strip()
+
+
+_SUBTITLE_SYSTEM = (
+    "너는 영상 자막 작가다. 각 장면의 시각 묘사(scene)를 받아, 장면 흐름에 맞는 "
+    "자연스러운 스토리텔링 자막을 한 장면당 한 줄씩 새로 쓴다. 시각 묘사를 그대로 옮기지 말고 "
+    "장면이 이어지는 내레이션처럼 매끄럽게 연결한다. 각 자막은 짧은 한 문장(화면에 겹치지 않게), "
+    "입력 장면과 정확히 같은 개수를 같은 순서로. 오직 JSON 문자열 배열로만 출력한다. "
+    "예: [\"첫 장면 자막\", \"둘째 장면 자막\"]"
+)
+
+
+async def generate_subtitle_lines(scenes: list[dict]) -> list[str]:
+    """장면 시각묘사를 LLM이 자연스러운 스토리텔링 자막으로 재작성한다 (M3-11).
+    LLM 실패·개수 불일치 시 원문 text로 폴백 — 자막이 비는 일은 없다."""
+    ordered = sorted(scenes, key=lambda x: x["id"])
+    fallback = [str(s.get("text", "")).strip() for s in ordered]
+    user_prompt = json.dumps(
+        [{"id": s["id"], "scene": s.get("text", ""), "mood": s.get("mood", "neutral")}
+         for s in ordered], ensure_ascii=False)
+    try:
+        parsed = parse_json_lenient(await call_llm(_SUBTITLE_SYSTEM, user_prompt))
+        lines = [str(x).strip() for x in parsed] if isinstance(parsed, list) else []
+        if len(lines) == len(ordered) and all(lines):
+            return lines
+    except Exception:
+        pass
+    return fallback
+
+
+def parse_json_lenient(text: str):
+    """qwen이 ```json 펜스나 잡설을 붙여도 첫 JSON 배열/객체를 뽑아 파싱."""
+    text = text.strip()
+    fence = re.search(r"```(?:json)?\s*(.*?)```", text, re.DOTALL)
+    if fence:
+        text = fence.group(1).strip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+    # 첫 [ ... ] 또는 { ... } 블록 추출
+    for open_c, close_c in (("[", "]"), ("{", "}")):
+        i, j = text.find(open_c), text.rfind(close_c)
+        if i != -1 and j > i:
+            return json.loads(text[i:j + 1])
+    raise ValueError(f"LLM 응답에서 JSON 파싱 실패: {text[:200]}")
+
+
+_REVISE_KEYS = ("id", "text", "duration", "mood", "matched_image", "image_role")
+
+
+async def revise_scenes(current_scenes: list[dict], ref_images: list[dict],
+                        instruction: str) -> list[dict]:
+    """1-4 게이트에서 사람의 자연어 수정 지시를 '현재 씬 구조'에 반영해 전체 씬 배열을 재구조화한다.
+    revised_script_text(처음부터 재분할) 경로와 달리 기존 씬을 보존·편집하는 것이 목적.
+    matched_image/image_role의 유효성 가드는 호출측(node_checkpoint_scene_approval)이 재수행한다."""
+    view = [{k: s.get(k) for k in _REVISE_KEYS} for s in current_scenes]
+    system_prompt = (
+        "너는 애니메이션 스토리보드 편집자다. 아래 현재 씬 목록(JSON)과 사용자의 수정 지시를 받아 "
+        "지시를 반영한 '전체' 씬 목록을 다시 만들어라. 지시가 건드리지 않은 씬과 필드는 그대로 유지한다. "
+        "각 씬 객체 키: id(정수), text(씬 설명), duration(초, 숫자), mood(무드), "
+        "matched_image(ref_images의 file 중 하나 또는 null), "
+        "image_role(\"start\"|\"ref\"|\"character_ref\"|null). "
+        "씬을 추가·삭제·재배열해도 되지만 id는 1부터 순서대로 다시 매겨라. "
+        "JSON 배열로만 반환하고 다른 텍스트는 절대 포함하지 마라."
+    )
+    user_prompt = json.dumps({
+        "current_scenes": view,
+        "ref_images": ref_images,
+        "instruction": instruction,
+    }, ensure_ascii=False)
+    scenes = parse_json_lenient(await call_llm(system_prompt, user_prompt))
+    # 일부 로컬 LLM은 요청 객체 형태를 따라 배열을 current_scenes/scenes 키로 감싼다.
+    if isinstance(scenes, dict):
+        scenes = scenes.get("scenes") or scenes.get("current_scenes")
+    if not isinstance(scenes, list) or not scenes:
+        raise ValueError(f"revise_scenes: LLM이 유효한 씬 배열을 반환하지 않음: {scenes!r}")
+    return scenes
+
+
+_PROMPT_PREAMBLE = re.compile(
+    r"^(sure[,!.]?|certainly[,!.]?|here('?s| is)|okay[,!.]?|of course)\b.*?:\s*",
+    re.I | re.S,
+)
+_PROMPT_MARKER = re.compile(r"(?:english\s+prompt|prompt)\s*:\s*", re.I)
+
+
+def clean_llm_prompt(text: str) -> str:
+    """qwen이 붙이는 서문("Sure, here's a prompt...")·따옴표·후기 문장을 걷어내고 실제 프롬프트만 남긴다."""
+    text = text.strip()
+    # 1) 따옴표로 감싼 본문이 있으면 가장 긴 인용 블록 = 실제 프롬프트
+    quotes = re.findall(r'"([^"]{20,})"', text)
+    if quotes:
+        return max(quotes, key=len).strip()
+    # 2) 'English Prompt:' / 'Prompt:' 마커 뒤를 채택 (여러 개면 마지막 것)
+    markers = list(_PROMPT_MARKER.finditer(text))
+    if markers:
+        text = text[markers[-1].end():].strip()
+    # 3) 남은 서문 한 줄 제거
+    text = _PROMPT_PREAMBLE.sub("", text).strip()
+    # 4) 후기성 마지막 문장 제거 ("This prompt/description ...")
+    text = re.sub(r"\s*This (prompt|description)\b.*$", "", text, flags=re.I | re.S).strip()
+    return text
+
+
+# ── 비디오 (Wan2.2-TI2V-5B) ──────────────────────────────────
+def to_4k1(frames: float) -> int:
+    """Wan VAE temporal factor 4 → num_frames 는 4k+1 이어야 함. 최소 17."""
+    n = max(17, int(round(frames)))
+    k = round((n - 1) / 4)
+    return max(17, 4 * k + 1)
+
+
+async def call_video(
+    job_id: str,
+    scene_id: int,
+    prompt: str,
+    mode: str,
+    matched_image: str | None,
+    duration: float = 2.0,
+    seed: int | None = None,
+    num_frames: int | None = None,
+) -> str:
+    """씬 하나 생성. return: 다운로드된 클립 로컬 경로.
+    num_frames 지정 시 duration 대신 그 값을 그대로 사용(이미지 생성=num_frames=1)."""
+    if num_frames is None:
+        num_frames = to_4k1(duration * DEFAULT_FPS)
+    body = {
+        "prompt": prompt,
+        "num_frames": num_frames,
+        "num_inference_steps": DEFAULT_STEPS,
+        "width": WIDTH,
+        "height": HEIGHT,
+        "fps": DEFAULT_FPS,
+    }
+    if seed is not None:  # 같은 job의 씬들이 같은 초기 노이즈에서 출발 → 그림체 흔들림 감소
+        body["seed"] = seed
+    if mode == "I2V":
+        if not matched_image:
+            raise ValueError(f"씬 {scene_id}: I2V인데 matched_image 없음")
+        img_path = refs_dir(job_id) / matched_image
+        body["image"] = base64.b64encode(img_path.read_bytes()).decode()
+        endpoint = "/generate_i2v"
+    else:
+        endpoint = "/generate"
+
+    # Send fan-out은 N개 클립 요청을 동시에 보내지만 Wan은 GPU 1개+단일 lock으로 직렬 처리한다.
+    # 고정 read 타임아웃은 "큐 대기 시각"부터 카운트돼, 뒤 순번 클립(3~4번째)이 생성도 시작하기 전에
+    # 만료돼버린다(씬 3개↑면 항상 재현). Wan은 신뢰된 로컬 서버 + 연결 끊겨도 생성을 취소 안 하므로
+    # read 타임아웃을 없앤다(응답은 언젠가 반드시 온다). connect만 유지해 서버가 죽으면 빠르게 실패.
+    # ponytail: read=None. 실제로 서버가 무한 hang하면 job이 running에 묶임 → /status로 감지·재시작.
+    timeout = httpx.Timeout(connect=10.0, read=None, write=60.0, pool=None)
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        resp = await client.post(f"{WAN_URL}{endpoint}", json=body)
+        resp.raise_for_status()
+        video_url = resp.json()["video_url"]
+        mp4 = await client.get(f"{WAN_URL}{video_url}")
+        mp4.raise_for_status()
+
+    out = job_dir(job_id) / f"clip{scene_id}.mp4"
+    out.write_bytes(mp4.content)
+    return str(out)
+
+
+async def generate_t2i_image(job_id: str, prompt: str, seed: int | None = None, index: int = 0) -> str:
+    """정지 이미지 앵커 생성 (FLUX.1-schnell, :8501). 이전엔 :8500 Wan 영상 파이프라인을
+    num_frames=1로 돌려썼는데(~120s), 전용 T2I 모델로 교체(~10-15s). return: 로컬 png 경로.
+    index: 한 배치에서 여러 장 생성 시 파일명 구분용(gen_img_0.png, gen_img_1.png, ...)."""
+    body = {"prompt": prompt, "width": WIDTH, "height": HEIGHT}
+    if seed is not None:
+        body["seed"] = seed
+    timeout = httpx.Timeout(connect=10.0, read=120.0, write=60.0, pool=None)
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        resp = await client.post(f"{T2I_URL}/generate", json=body)
+        resp.raise_for_status()
+        image_url = resp.json()["image_url"]
+        png = await client.get(f"{T2I_URL}{image_url}")
+        png.raise_for_status()
+
+    out = job_dir(job_id) / f"gen_img_{index}.png"
+    out.write_bytes(png.content)
+    return str(out)
+
+
+async def generate_t2i_anchor(
+    prompt: str,
+    width: int | None = None,
+    height: int | None = None,
+    seed: int | None = None,
+) -> dict:
+    """:8700 /t2i 게이트웨이 엔드포인트용 T2I 프록시(FLUX.1-schnell, :8501). job_id 스코프
+    파일이 필요없는 단발 호출(대시보드 미리보기 등)이라 job_dir에 안 쓰고 base64로 바로 반환."""
+    body = {"prompt": prompt}
+    if width is not None:
+        body["width"] = width
+    if height is not None:
+        body["height"] = height
+    if seed is not None:
+        body["seed"] = seed
+    timeout = httpx.Timeout(connect=10.0, read=120.0, write=60.0, pool=None)
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        resp = await client.post(f"{T2I_URL}/generate", json=body)
+        resp.raise_for_status()
+        data = resp.json()
+        png = await client.get(f"{T2I_URL}{data['image_url']}")
+        png.raise_for_status()
+    return {
+        "image_base64": base64.b64encode(png.content).decode(),
+        "seconds": data.get("seconds"),
+    }
+
+
+async def generate_standin_clip(
+    job_id: str,
+    scene_id: int,
+    prompt: str,
+    ref_image: str,
+    duration: float = 2.0,
+    seed: int | None = None,
+    force_new: bool = False,
+    relight: bool = False,
+) -> str:
+    """참조 얼굴 1장 + 프롬프트로 I2V-14B 클립 생성 (ComfyUI :8188).
+    참조 이미지 전체를 첫 프레임 latent로 인코딩 → 얼굴+화풍+분위기가 통째로 이어짐.
+    return: 로컬 클립 경로.
+
+    해상도는 체크포인트 네이티브인 STANDIN_WIDTH/HEIGHT(832x480)로 고정 — T2V 경로의
+    WIDTH/HEIGHT(quality 프리셋 1280x704)를 그대로 쓰면 100초 목표를 못 맞춘다(실측
+    65s→159s). fps는 STANDIN_FPS(네이티브 16)로 생성하고 편집 단계(ffmpeg_concat)가
+    모든 입력을 DEFAULT_FPS로 정규화한다.
+    """
+    return await _generate_reference_clip(
+        job_id, scene_id, prompt, ref_image, duration, seed, force_new,
+        subject_ref=False, relight=relight)
+
+
+async def generate_subject_ref_clip(
+    job_id: str, scene_id: int, prompt: str, ref_image: str,
+    duration: float = 2.0, seed: int | None = None, force_new: bool = False,
+    relight: bool = False,
+) -> str:
+    """비인간 캐릭터/제품 전체 이미지를 identity 조건으로 쓰는 경로."""
+    return await _generate_reference_clip(
+        job_id, scene_id, prompt, ref_image, duration, seed, force_new,
+        subject_ref=True, relight=relight)
+
+
+REFERENCE_PREPROCESS_VERSION = 2
+
+
+def _prepare_reference_upload(image_path: Path, *, subject_ref: bool) -> bytes:
+    """Normalize EXIF/alpha while preserving pixels needed by the identity encoder.
+
+    The I2V encode uses the whole image as-is for both ref kinds (no face-crop step).
+    Subject refs additionally crop transparent margins so a mascot/product occupies the
+    frame without its empty canvas; face refs keep their original framing untouched.
+    """
+    with Image.open(image_path) as opened:
+        image = ImageOps.exif_transpose(opened).copy()
+    if subject_ref and "A" in image.getbands():
+        alpha = image.getchannel("A")
+        bbox = alpha.getbbox()
+        if bbox:
+            image = image.crop(bbox)
+    if "A" in image.getbands():
+        rgba = image.convert("RGBA")
+        background = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
+        image = Image.alpha_composite(background, rgba).convert("RGB")
+    else:
+        image = image.convert("RGB")
+    out = BytesIO()
+    image.save(out, format="PNG", optimize=True)
+    return out.getvalue()
+
+
+def _build_reference_graph(
+    *, prompt: str, num_frames: int, seed: int | None, prefix: str, subject_ref: bool,
+    relight: bool,
+) -> tuple[dict, dict]:
+    """M3-9: ref-kind별 ComfyUI 그래프 빌드.
+    - subject_ref(비인간): i2v_14b — 참조 전체가 첫프레임 latent(실루엣·화풍 보존).
+      M3-8 relight 노브(node 105 첫프레임 lock 완화)는 이 경로에만 유효.
+    - face(사람): standin_t2v — 얼굴 identity만 주입, 배경은 프롬프트(빈 embeds). relight 무의미(no-op).
+    반환: (graph, 노드맵)."""
+    workflow, nodes = (I2V_WORKFLOW, _SI) if subject_ref else (FACE_WORKFLOW, _SI_FACE)
+    graph = json.loads(workflow.read_text())
+    graph[nodes["prompt"]]["inputs"]["positive_prompt"] = prompt
+    graph[nodes["embeds"]]["inputs"].update(
+        width=STANDIN_WIDTH, height=STANDIN_HEIGHT, num_frames=num_frames)
+    if subject_ref:  # relight는 i2v 첫프레임 lock 전용 — face(빈 embeds)엔 넣지 않는다.
+        graph[nodes["embeds"]]["inputs"].update(_relight_embed_overrides(relight))
+    else:  # M3-10: face 경로 LoRA strength 튜닝 노브(identity 유지 vs 배경 자유 A/B).
+        graph[_SI_FACE_LORA["identity"]]["inputs"]["strength"] = STANDIN_FACE_LORA_STRENGTH
+        graph[_SI_FACE_LORA["distill"]]["inputs"]["strength"] = STANDIN_DISTILL_LORA_STRENGTH
+    graph[nodes["sampler"]]["inputs"]["steps"] = STANDIN_STEPS
+    if seed is not None:
+        graph[nodes["sampler"]]["inputs"]["seed"] = seed
+    graph[nodes["output"]]["inputs"]["filename_prefix"] = prefix
+    graph[nodes["output"]]["inputs"]["frame_rate"] = STANDIN_FPS  # 실시간 재생속도; 편집에서 24로 정규화
+    return graph, nodes
+
+
+async def _generate_reference_clip(
+    job_id: str, scene_id: int, prompt: str, ref_image: str, duration: float,
+    seed: int | None, force_new: bool, *, subject_ref: bool, relight: bool = False,
+) -> str:
+    graph, nodes = _build_reference_graph(
+        prompt=prompt, num_frames=to_4k1(duration * STANDIN_FPS), seed=seed,
+        prefix=f"{job_id}_{scene_id}", subject_ref=subject_ref, relight=relight)
+
+    request_key = hashlib.sha256(json.dumps({
+        "scene_id": scene_id, "prompt": prompt, "ref_image": ref_image,
+        "duration": duration, "seed": seed, "steps": STANDIN_STEPS,
+        "fps": STANDIN_FPS,  # fps가 바뀌면 num_frames가 달라짐 → 이전 캐시 재사용 방지
+        "reference_mode": "subject" if subject_ref else "face",
+        "preprocess_version": REFERENCE_PREPROCESS_VERSION,
+        "width": WIDTH, "height": HEIGHT,
+        "workflow": (I2V_WORKFLOW if subject_ref else FACE_WORKFLOW).name,  # M3-9: 경로 전환 시 캐시 무효화
+        # relight는 subject_ref(i2v)에만 유효 — face는 항상 {}로 고정(캐시 안정).
+        "relight": _relight_embed_overrides(relight) if subject_ref else {},
+        # M3-10: face LoRA strength 바뀌면 캐시 무효화(A/B 튜닝 반영).
+        "face_lora": None if subject_ref else [STANDIN_FACE_LORA_STRENGTH, STANDIN_DISTILL_LORA_STRENGTH],
+    }, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
+    async with httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=60.0, write=60.0, pool=None)) as client:
+        # 1) 참조 이미지 업로드 → ComfyUI input/ 에 올려 LoadImage가 파일명으로 참조
+        img_path = refs_dir(job_id) / ref_image
+        upload_name = f"{'subject' if subject_ref else 'face'}_v{REFERENCE_PREPROCESS_VERSION}_{img_path.stem}.png"
+        upload_bytes = _prepare_reference_upload(img_path, subject_ref=subject_ref)
+        up = await client.post(
+            f"{COMFYUI_URL}/upload/image",
+            files={"image": (upload_name, upload_bytes, "image/png")},
+            data={"overwrite": "true"},
+        )
+        up.raise_for_status()
+        uj = up.json()
+        sub = uj.get("subfolder", "")
+        graph[nodes["image"]]["inputs"]["image"] = f"{sub}/{uj['name']}" if sub else uj["name"]
+
+        # 2) 제출 직후 별도 SQLite에 커밋. 재실행 시 기존 prompt를 재사용한다.
+        existing = None if force_new else _recoverable_prompt(job_id, scene_id, request_key)
+        if existing:
+            prompt_id = existing["prompt_id"]
+        else:
+            sub_resp = await client.post(f"{COMFYUI_URL}/prompt", json={"prompt": graph})
+            sub_resp.raise_for_status()
+            prompt_id = sub_resp.json()["prompt_id"]
+            _save_prompt(prompt_id, job_id, scene_id, request_key)
+
+        # 3) 큐 대기와 실제 실행 시간을 분리한다. execution_start 전 대기는
+        # 실행 제한시간에 포함하지 않는다.
+        submitted_at = float(existing["submitted_at"]) if existing else time.time()
+        execution_started_at = (float(existing["execution_started_at"])
+                                if existing and existing["execution_started_at"] else None)
+        missing_since = None
+        gif = None
+        while True:
+            await asyncio.sleep(2.0)
+            h = (await client.get(f"{COMFYUI_URL}/history/{prompt_id}")).json()
+            if prompt_id not in h:
+                queue = (await client.get(f"{COMFYUI_URL}/queue")).json()
+                running_ids = {item[1] for item in queue.get("queue_running", [])}
+                pending_ids = {item[1] for item in queue.get("queue_pending", [])}
+                if prompt_id in running_ids:
+                    if execution_started_at is None:
+                        execution_started_at = time.time()
+                    _update_prompt(prompt_id, "running",
+                                   execution_started_at=execution_started_at)
+                elif prompt_id in pending_ids:
+                    _update_prompt(prompt_id, "queued")
+                elif time.time() - submitted_at > STANDIN_QUEUE_TIMEOUT:
+                    msg = f"씬 {scene_id}: ComfyUI 큐에서 {STANDIN_QUEUE_TIMEOUT:.0f}s 내 시작되지 않음"
+                    _update_prompt(prompt_id, "error", error=msg)
+                    raise TimeoutError(msg)
+                else:
+                    missing_since = missing_since or time.time()
+                    if time.time() - missing_since > STANDIN_MISSING_TIMEOUT:
+                        msg = (f"씬 {scene_id}: ComfyUI prompt가 history/queue에서 사라짐 "
+                               f"(prompt_id={prompt_id})")
+                        _update_prompt(prompt_id, "error", error=msg)
+                        raise TimeoutError(msg)
+                if prompt_id in running_ids or prompt_id in pending_ids:
+                    missing_since = None
+                if execution_started_at and time.time() - execution_started_at > STANDIN_EXEC_TIMEOUT:
+                    label = "Subject Ref" if subject_ref else "Stand-In"
+                    msg = (f"씬 {scene_id}: {label} 실행이 {STANDIN_EXEC_TIMEOUT:.0f}s를 초과함 "
+                           f"(prompt_id={prompt_id})")
+                    _update_prompt(prompt_id, "error", error=msg)
+                    raise TimeoutError(msg)
+                continue
+            status = h[prompt_id]["status"]
+            for kind, data in status.get("messages", []):
+                if kind == "execution_start":
+                    execution_started_at = data.get("timestamp", 0) / 1000 or time.time()
+                    _update_prompt(prompt_id, "running",
+                                   execution_started_at=execution_started_at)
+            if status.get("status_str") == "error":
+                msg = f"씬 {scene_id}: ComfyUI 실행 오류 {status.get('messages')}"
+                _update_prompt(prompt_id, "error", error=msg)
+                raise RuntimeError(msg)
+            for node_out in h[prompt_id].get("outputs", {}).values():
+                if node_out.get("gifs"):
+                    gif = node_out["gifs"][0]
+                    break
+            if gif:
+                _update_prompt(prompt_id, "completed", output_filename=gif["filename"])
+                break
+            if execution_started_at and time.time() - execution_started_at > STANDIN_EXEC_TIMEOUT:
+                label = "Subject Ref" if subject_ref else "Stand-In"
+                msg = (f"씬 {scene_id}: {label} 실행이 {STANDIN_EXEC_TIMEOUT:.0f}s를 초과함 "
+                       f"(prompt_id={prompt_id})")
+                _update_prompt(prompt_id, "error", error=msg)
+                raise TimeoutError(msg)
+
+        # 4) 결과 mp4 다운로드 (/view — 파일시스템 경로 의존 없음)
+        vid = await client.get(f"{COMFYUI_URL}/view", params={
+            "filename": gif["filename"], "subfolder": gif.get("subfolder", ""),
+            "type": gif.get("type", "output"),
+        })
+        vid.raise_for_status()
+
+    out = job_dir(job_id) / f"clip{scene_id}.mp4"
+    out.write_bytes(vid.content)
+    return str(out)
+
+
+# ── ffmpeg ──────────────────────────────────────────────────
+def _probe_duration(path: str) -> float:
+    r = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "default=noprint_wrappers=1:nokey=1", path],
+        check=True, capture_output=True, text=True,
+    )
+    return float(r.stdout.strip())
+
+
+def ffmpeg_concat(clip_paths: list[str], transitions: list[str], out_path: str) -> str:
+    """트랜지션 포함 이어붙이기. transitions[i] = clip i→i+1 사이 ('crossfade'|'cut')."""
+    if len(clip_paths) == 1:
+        subprocess.run(["ffmpeg", "-y", "-i", clip_paths[0], "-c", "copy", out_path],
+                       check=True, capture_output=True)
+        return out_path
+    filter_complex, last = build_concat_filter(clip_paths, transitions)
+    inputs = []
+    for p in clip_paths:
+        inputs += ["-i", p]
+    subprocess.run(
+        ["ffmpeg", "-y", *inputs, "-filter_complex", filter_complex,
+         "-map", f"[{last}]", "-pix_fmt", "yuv420p", out_path],
+        check=True, capture_output=True,
+    )
+    return out_path
+
+
+def build_concat_filter(clip_paths: list[str], transitions: list[str]):
+    """
+    cut → concat 필터, crossfade → xfade(0.5s).
+
+    ⚠️ 예전 구현은 cut도 xfade(duration=0.001)로 흉내 냈는데, 0.001s는 1프레임(1/24s)보다
+    짧아 ffmpeg가 전환 프레임 0개로 계산 → 두 번째 입력이 통째로 탈락하고 체인 전체가
+    연쇄 붕괴했다(클립 4개 18.2s → 6.1s). cut은 반드시 concat으로 붙인다.
+
+    모든 입력을 fps/해상도/SAR/PTS 정규화해서 fps가 다른 클립(예: 16fps Stand-In)이
+    섞여도 concat/xfade가 안전하다.
+    return: (filter_complex_str, 최종_출력_라벨)
+    """
+    XFADE = 0.5
+    durations = [_probe_duration(p) for p in clip_paths]
+    # settb=AVTB: concat 출력(1/1000000)과 fps 필터 출력(1/24)의 timebase가 달라
+    # xfade가 "timebase do not match"로 실패한다 → 모든 입력을 AVTB로 통일.
+    parts = [
+        f"[{i}:v]fps={DEFAULT_FPS},scale={WIDTH}:{HEIGHT},setsar=1,"
+        f"setpts=PTS-STARTPTS,settb=AVTB[n{i}]"
+        for i in range(len(clip_paths))
+    ]
+
+    # cut으로 이어지는 연속 구간을 세그먼트 하나로 concat
+    segments: list[tuple[list[int], float]] = []   # ([클립 인덱스...], 구간 길이)
+    run, run_dur = [0], durations[0]
+    for i in range(1, len(clip_paths)):
+        if transitions[i - 1] == "crossfade":
+            segments.append((run, run_dur))
+            run, run_dur = [], 0.0
+        run.append(i)
+        run_dur += durations[i]
+    segments.append((run, run_dur))
+
+    seg_labels: list[tuple[str, float]] = []
+    for k, (idxs, dur) in enumerate(segments):
+        if len(idxs) == 1:
+            seg_labels.append((f"n{idxs[0]}", dur))
+        else:
+            ins = "".join(f"[n{i}]" for i in idxs)
+            parts.append(f"{ins}concat=n={len(idxs)}:v=1:a=0[s{k}]")
+            seg_labels.append((f"s{k}", dur))
+
+    # 세그먼트 사이만 진짜 crossfade
+    prev, offset = seg_labels[0]
+    for k in range(1, len(seg_labels)):
+        label, dur = seg_labels[k]
+        off = max(0.0, offset - XFADE)
+        parts.append(f"[{prev}][{label}]xfade=transition=fade:"
+                     f"duration={XFADE:.3f}:offset={off:.3f}[x{k}]")
+        prev = f"x{k}"
+        offset = off + dur
+    return ";".join(parts), prev
+
+
+def burn_subtitles(video_path: str, srt_path: str, out_path: str) -> str:
+    subprocess.run(
+        ["ffmpeg", "-y", "-i", video_path, "-vf", f"subtitles={srt_path}",
+         "-pix_fmt", "yuv420p", out_path],
+        check=True, capture_output=True,
+    )
+    return out_path
+
+
+if __name__ == "__main__":  # clean_llm_prompt 자체점검: python tools.py
+    # 실제로 이번 job에서 qwen이 뱉었던 3가지 패턴
+    a = clean_llm_prompt(
+        'Sure, here is the prompt in English:\n\n"A dimly lit room where an Asian '
+        'woman sits at a cluttered desk, chin on clasped hands, troubled expression."'
+        '\n\nThis prompt includes both the scene description and camera work.'
+    )
+    assert a.startswith("A dimly lit room") and "Sure" not in a and "This prompt" not in a, a
+    b = clean_llm_prompt(
+        "A bright light is shining...\n\nEnglish Prompt:\nA bright light emanating from "
+        "a monitor startles an Asian woman, her eyes widen in surprise."
+    )
+    assert b.startswith("A bright light emanating") and "English Prompt" not in b, b
+    c = clean_llm_prompt("A clean prompt with no preamble at all, anime scene.")
+    assert c.startswith("A clean prompt"), c
+    print("clean_llm_prompt self-check ok")
+
+    # revise_scenes 자체점검 (LLM 응답을 가짜로 주입 — 파싱/재구조화만 검증)
+    async def _fake_llm(_s, _u):
+        return ('```json\n[{"id":1,"text":"밝은 방","duration":3,"mood":"bright",'
+                '"matched_image":null,"image_role":null}]\n```')
+    _orig = call_llm
+    globals()["call_llm"] = _fake_llm
+    try:
+        revised = asyncio.run(revise_scenes(
+            [{"id": 1, "text": "어두운 방", "duration": 3, "mood": "dark"}], [], "더 밝게"))
+        assert len(revised) == 1 and revised[0]["mood"] == "bright", revised
+    finally:
+        globals()["call_llm"] = _orig
+    print("revise_scenes self-check ok")
+
+    # ffmpeg_concat 자체점검: cut이 클립을 떨어뜨리지 않는지 (합성 클립, GPU 불필요)
+    # 회귀 대상: xfade duration=0.001(<1프레임) 버그 — 클립 4개 18.2s가 6.1s로 붕괴했었다.
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        clips = []
+        for i, (color, d) in enumerate([("red", 2), ("green", 1), ("blue", 1), ("yellow", 2)]):
+            p = f"{td}/c{i}.mp4"
+            subprocess.run(
+                ["ffmpeg", "-y", "-f", "lavfi", "-i",
+                 f"color=c={color}:s={WIDTH}x{HEIGHT}:r={DEFAULT_FPS}:d={d}",
+                 "-pix_fmt", "yuv420p", p], check=True, capture_output=True)
+            clips.append(p)
+        out_cut = f"{td}/out_cut.mp4"
+        ffmpeg_concat(clips, ["cut", "cut", "cut"], out_cut)
+        got = _probe_duration(out_cut)
+        assert abs(got - 6.0) < 0.15, f"cut concat 길이 {got} != ~6.0"
+        out_x = f"{td}/out_x.mp4"
+        ffmpeg_concat(clips, ["cut", "crossfade", "cut"], out_x)
+        got = _probe_duration(out_x)
+        assert abs(got - 5.5) < 0.15, f"crossfade concat 길이 {got} != ~5.5"
+        # 16fps 클립이 섞여도 정규화로 안전한지
+        p16 = f"{td}/c16.mp4"
+        subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i",
+                        f"color=c=white:s={WIDTH}x{HEIGHT}:r=16:d=2",
+                        "-pix_fmt", "yuv420p", p16], check=True, capture_output=True)
+        out_mix = f"{td}/out_mix.mp4"
+        ffmpeg_concat([clips[0], p16], ["cut"], out_mix)
+        got = _probe_duration(out_mix)
+        assert abs(got - 4.0) < 0.15, f"fps 혼합 concat 길이 {got} != ~4.0"
+    print("ffmpeg_concat self-check ok")

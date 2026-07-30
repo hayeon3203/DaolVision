@@ -1,0 +1,256 @@
+{
+  "70": {
+    "class_type": "WanVideoSetBlockSwap",
+    "inputs": {
+      "model": [
+        "22",
+        0
+      ],
+      "block_swap_args": [
+        "39",
+        0
+      ]
+    }
+  },
+  "35": {
+    "class_type": "WanVideoTorchCompileSettings",
+    "inputs": {
+      "backend": "inductor",
+      "fullgraph": false,
+      "mode": "default",
+      "dynamic": false,
+      "dynamo_cache_size_limit": 64,
+      "compile_transformer_blocks_only": true,
+      "dynamo_recompile_limit": 128,
+      "force_parameter_static_shapes": false,
+      "allow_unmerged_lora_compile": false
+    }
+  },
+  "28": {
+    "class_type": "WanVideoDecode",
+    "inputs": {
+      "vae": [
+        "38",
+        0
+      ],
+      "samples": [
+        "27",
+        0
+      ],
+      "enable_vae_tiling": false,
+      "tile_x": 272,
+      "tile_y": 272,
+      "tile_stride_x": 144,
+      "tile_stride_y": 128,
+      "normalization": "default"
+    }
+  },
+  "39": {
+    "class_type": "WanVideoBlockSwap",
+    "inputs": {
+      "blocks_to_swap": 0,
+      "offload_img_emb": false,
+      "offload_txt_emb": false,
+      "use_non_blocking": true,
+      "vace_blocks_to_swap": 0,
+      "prefetch_blocks": 1,
+      "block_swap_debug": false
+    }
+  },
+  "79": {
+    "class_type": "WanVideoSetLoRAs",
+    "inputs": {
+      "model": [
+        "70",
+        0
+      ],
+      "lora": [
+        "71",
+        0
+      ]
+    }
+  },
+  "103": {
+    "class_type": "WanVideoEmptyEmbeds",
+    "inputs": {
+      "width": 832,
+      "height": 480,
+      "num_frames": 81
+    }
+  },
+  "38": {
+    "class_type": "WanVideoVAELoader",
+    "inputs": {
+      "model_name": "Wan2_1_VAE_bf16.safetensors",
+      "precision": "bf16",
+      "use_cpu_cache": false,
+      "verbose": false
+    }
+  },
+  "69": {
+    "class_type": "WanVideoLoraSelect",
+    "inputs": {
+      "lora": "Stand-In_wan2.1_T2V_14B.ckpt",
+      "strength": 1.0,
+      "low_mem_load": false,
+      "merge_loras": false
+    }
+  },
+  "71": {
+    "class_type": "WanVideoLoraSelect",
+    "inputs": {
+      "lora": "lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors",
+      "strength": 0.6,
+      "low_mem_load": false,
+      "merge_loras": false
+    }
+  },
+  "102": {
+    "class_type": "WanVideoAddStandInLatent",
+    "inputs": {
+      "embeds": [
+        "103",
+        0
+      ],
+      "ip_image_latent": [
+        "104",
+        0
+      ],
+      "freq_offset": 25
+    }
+  },
+  "11": {
+    "class_type": "LoadWanVideoT5TextEncoder",
+    "inputs": {
+      "model_name": "umt5-xxl-enc-bf16.safetensors",
+      "precision": "bf16",
+      "load_device": "offload_device",
+      "quantization": "disabled"
+    }
+  },
+  "22": {
+    "class_type": "WanVideoModelLoader",
+    "inputs": {
+      "model": "Wan2_1-T2V-14B_fp8_e4m3fn.safetensors",
+      "base_precision": "fp16_fast",
+      "quantization": "fp8_e4m3fn",
+      "load_device": "main_device",
+      "attention_mode": "sageattn",
+      "lora": [
+        "69",
+        0
+      ],
+      "rms_norm_function": "default"
+    }
+  },
+  "16": {
+    "class_type": "WanVideoTextEncode",
+    "inputs": {
+      "positive_prompt": "__PROMPT__",
+      "negative_prompt": "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走",
+      "t5": [
+        "11",
+        0
+      ],
+      "force_offload": true,
+      "use_disk_cache": false,
+      "device": "gpu"
+    }
+  },
+  "27": {
+    "class_type": "WanVideoSampler",
+    "inputs": {
+      "model": [
+        "79",
+        0
+      ],
+      "image_embeds": [
+        "102",
+        0
+      ],
+      "steps": 4,
+      "cfg": 1.0,
+      "shift": 9.0,
+      "seed": 0,
+      "force_offload": false,
+      "scheduler": "dpm++_sde",
+      "riflex_freq_index": 0,
+      "text_embeds": [
+        "16",
+        0
+      ],
+      "denoise_strength": 1.0,
+      "batched_cfg": false,
+      "rope_function": "comfy",
+      "start_step": 0,
+      "end_step": -1,
+      "add_noise_to_samples": false
+    }
+  },
+  "58": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "__REF_IMAGE__"
+    }
+  },
+  "74": {
+    "class_type": "VHS_VideoCombine",
+    "inputs": {
+      "frame_rate": 16.0,
+      "loop_count": 0,
+      "filename_prefix": "__PREFIX__",
+      "format": "video/h264-mp4",
+      "pingpong": false,
+      "save_output": true,
+      "images": [
+        "28",
+        0
+      ]
+    }
+  },
+  "104": {
+    "class_type": "WanVideoEncode",
+    "inputs": {
+      "vae": [
+        "38",
+        0
+      ],
+      "image": [
+        "128",
+        0
+      ],
+      "enable_vae_tiling": false,
+      "tile_x": 272,
+      "tile_y": 272,
+      "tile_stride_x": 144,
+      "tile_stride_y": 128,
+      "noise_aug_strength": 0.0,
+      "latent_strength": 1.0
+    }
+  },
+  "130": {
+    "class_type": "FaceProcessorLoader",
+    "inputs": {
+      "yolo_model_name": "model.pt"
+    }
+  },
+  "128": {
+    "class_type": "ApplyFaceProcessor",
+    "inputs": {
+      "face_processor": [
+        "130",
+        0
+      ],
+      "image": [
+        "58",
+        0
+      ],
+      "resize_to": 512,
+      "border_thresh": 10,
+      "face_crop_scale": 2.5,
+      "confidence_threshold": 0.5,
+      "with_neck": false,
+      "face_only_mode": false
+    }
+  }
+}

@@ -1,0 +1,6 @@
+.venv/
+jobs/
+__pycache__/
+*.log
+*.pyc
+checkpoints*.db*

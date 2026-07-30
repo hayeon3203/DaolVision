@@ -1,0 +1,16 @@
+[Unit]
+Description=Animation Video Agent (LangGraph) API on :8700
+After=network-online.target wan.service
+StartLimitIntervalSec=900
+StartLimitBurst=3
+
+[Service]
+Type=simple
+WorkingDirectory=/home/admin/DaolVision/langgraph
+ExecStart=/home/admin/DaolVision/langgraph/run_agent.sh
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=120
+
+[Install]
+WantedBy=default.target

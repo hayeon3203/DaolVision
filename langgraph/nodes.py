@@ -1,0 +1,884 @@
+"""
+Phase 1~5 노드 구현
+- interrupt(): 사람 승인이 필요한 3개 체크포인트 (1-4, 3-5, 4-5)
+- Send: 씬별 클립 생성을 fan-out으로 병렬 처리
+- Command(goto=...): 사람이 승인/재생성/반려를 선택한 뒤 그래프 흐름을 분기
+"""
+import asyncio
+import hashlib
+import json
+import re
+import shutil
+import time
+import uuid
+
+from langgraph.types import interrupt, Command, Send
+from langgraph.graph import END
+
+from state import GraphState, Scene
+import tools
+import metrics
+
+
+# ══════════════════════════════════════════════════════════
+# Phase 1. 입력 수집 & 스토리 기획
+# ══════════════════════════════════════════════════════════
+
+_IMG_QUERY_SYSTEM = (
+    "You rewrite a user's free-form image request (any language) into prompts for a "
+    "text-to-image generator. The user may describe 1 to 3 distinct images in one request. "
+    "Output a JSON array of up to 3 objects, each {\"query\": \"<prompt>\"} — never more than 3. "
+    "Each query independently describes its own subject, composition, and lighting. "
+    "If the subject is a person or character, default to an anime / illustration art style "
+    "unless the user explicitly asks for a photo or realistic look. "
+    "If the array has 2 or more entries, every entry's query MUST end with one identical "
+    "trailing clause, repeated verbatim across all entries, that pins down a shared art style "
+    "and mood (e.g. the same rendering technique, color palette, and lighting description) so "
+    "the images look like they belong to one consistent visual world. "
+    "Output only the JSON array — no preamble, quotes, or markdown."
+)
+
+
+async def node_rewrite_image_query(state: GraphState) -> dict:
+    """M2-1: 사용자 자연어 이미지 요청(최대 3장 묘사 가능) → 이미지 생성용 영어 프롬프트들.
+    node_generate_prompts와 동일한 call_llm + clean_llm_prompt 패턴 재사용."""
+    request = (state.get("image_request") or "").strip()
+    if not request:
+        return {"image_queries": [], "image_query": ""}
+    raw = await tools.call_llm(_IMG_QUERY_SYSTEM, request)
+    items = tools.parse_json_lenient(raw)
+    if isinstance(items, dict):
+        items = items.get("queries") or items.get("items") or []
+    queries = []
+    for item in items if isinstance(items, list) else []:
+        q = item.get("query") if isinstance(item, dict) else item if isinstance(item, str) else None
+        q = tools.clean_llm_prompt(q or "")
+        if q:
+            queries.append(q)
+    queries = queries[:3]
+    return {"image_queries": queries, "image_query": queries[0] if queries else ""}
+
+
+async def node_generate_image(state: GraphState) -> dict:
+    """M2-2/M2-5: image_queries(최대 3개) → FLUX.1-schnell(:8501)로 정지 이미지 앵커를 한 번에 생성.
+    이전엔 Wan(:8500) 영상 파이프라인을 num_frames=1로 돌려썼는데(1장 뽑는 데 ~120s),
+    전용 T2I 모델로 교체해 ~10-15s로 단축. 산출: jobs/<job_id>/gen_img_N.png.
+    여러 장을 같은 seed로 생성해 화풍/색감 상관성을 높인다(모델이 이미지 조건 입력을
+    지원하지 않아 seed 공유가 화풍 통일을 위해 취할 수 있는 실질적인 방법)."""
+    queries = (state.get("image_queries") or [])[:3]
+    if not queries:
+        return {"gen_image_paths": [], "gen_image_path": ""}
+    job_id = state["job_id"]
+    seed = int(hashlib.sha1(job_id.encode()).hexdigest()[:8], 16) % (2 ** 31)
+    paths = await asyncio.gather(*[
+        tools.generate_t2i_image(job_id, q, seed=seed, index=i)
+        for i, q in enumerate(queries)
+    ])
+    paths = list(paths)
+    return {"gen_image_paths": paths, "gen_image_path": paths[0]}
+
+
+def node_checkpoint_image_approval(state: GraphState) -> Command:
+    """checkpoint 2-3 (M2, 선택 분기): 생성 이미지(들) 승인 게이트.
+    기존 3게이트(1-4/3-5/4-5) interrupt/Command 패턴 그대로 복제.
+    approve → 다음 단계(기존 파이프라인 진입). 자연어 수정 → M2-1(rewrite)부터 재실행(전체 재생성)."""
+    paths = state.get("gen_image_paths") or []
+    queries = state.get("image_queries") or []
+    decision = interrupt({
+        "checkpoint": "2-3_image_approval",
+        "message": "생성된 이미지를 확인하고 승인하거나 수정 요청을 입력해주세요.",
+        "gen_image_paths": paths,
+        "gen_image_path": paths[0] if paths else None,
+        "image_queries": queries,
+        "image_query": queries[0] if queries else None,
+    })
+    # decision 예시: {"approved": True} / {"feedback": "더 파랗게"}
+    if decision.get("approved"):
+        # 승인 이미지들을 참조 이미지로 주입 → 기존 caption_image·스마트 라우팅이 그대로 받음.
+        # ref_captions에 생성 시 쓴 프롬프트를 그대로 채워 넣어 — 별도 vision 캡션 호출 없이 —
+        # node_split_scenes가 어떤 이미지가 어떤 씬에 어울리는지 내용 기반으로 매칭하게 한다.
+        job_id = state["job_id"]
+        ref_names, ref_captions = [], {}
+        for i, p in enumerate(paths):
+            name = f"img_{i}.png"
+            shutil.copyfile(p, str(tools.refs_dir(job_id) / name))
+            ref_names.append(name)
+            if i < len(queries):
+                ref_captions[name] = queries[i]
+        return Command(
+            goto="node_checkpoint_scenario_input",
+            update={"ref_images": ref_names, "ref_captions": ref_captions},
+        )
+    # 자연어 수정 텍스트를 원본 요청에 누적 → rewrite부터 재실행(N장 전체 재생성).
+    # 덮어쓰면 원본 의도("잔디밭 뛰어노는")가 소실돼 프롬프트가 피드백만 따라감.
+    feedback = (decision.get("feedback") or decision.get("revised_request") or "").strip()
+    base = (state.get("image_request") or "").strip()
+    combined = f"{base}\n추가 요청: {feedback}" if base and feedback else (feedback or base)
+    return Command(
+        goto="node_rewrite_image_query",
+        update={"image_request": combined},
+    )
+
+
+def node_checkpoint_scenario_input(state: GraphState) -> Command:
+    """checkpoint 2-4 (M3-1): 이미지 승인 후 시나리오 입력 게이트.
+    이전엔 image_request 텍스트가 script_text로 그대로 흘러 '그 사진에 대한 시나리오'가
+    자동으로 만들어졌다. 이제 승인 후 사용자가 직접 입력한 시나리오로 씬을 분할한다."""
+    decision = interrupt({
+        "checkpoint": "2-4_scenario_input",
+        "message": "이미지가 승인되었습니다. 이 이미지로 만들 영상의 시나리오를 입력해주세요.",
+        "ref_images": state.get("ref_images"),
+    })
+    script = (decision.get("script_text") or "").strip()
+    if not script:  # 빈 입력 방어 — 같은 게이트로 되돌아가 다시 묻는다
+        return Command(goto="node_checkpoint_scenario_input")
+    return Command(goto="node_parse_input", update={"script_text": script})
+
+
+WARDROBE_LOCK_TEMPLATE = """WARDROBE CONTINUITY LOCK:
+The character must wear exactly the following outfit in every scene and frame:
+{wardrobe_description}
+Preserve the same garments, layers, colors, patterns, materials, fit, footwear,
+and accessories. Do not change, remove, replace, or add any clothing or accessories.
+Maintain wardrobe continuity across different poses, locations, lighting conditions,
+camera angles, and shot sizes.
+""".strip()
+
+
+def extract_wardrobe_locks(script_text: str, ref_images: list[str]) -> dict[str, str]:
+    """사용자가 선언한 의상만 이미지별로 추출하며 이미지 내용은 추측하지 않는다."""
+    valid, current_ref, locks = set(ref_images), None, {}
+    for raw_line in script_text.splitlines():
+        line = raw_line.strip()
+        mentions = re.findall(r"img[_\s]?(\d+)(?:\.[a-z0-9]+)?", line, re.I)
+        if mentions:
+            candidate = f"img_{int(mentions[-1])}.png"
+            if candidate in valid:
+                current_ref = candidate
+        match = re.search(
+            r"(?:의상|옷)(?:은|는)?\s*[:=]?\s*(.+)$|(?:wardrobe|outfit)\s*[:=]\s*(.+)$",
+            line, re.I)
+        if current_ref and match:
+            value = (match.group(1) or match.group(2)).strip().strip(". ")
+            if value:
+                locks[current_ref] = value
+    return locks
+
+
+async def node_parse_input(state: GraphState) -> dict:
+    """1-2: 입력 파싱 + 참조 이미지 캡셔닝 (AI).
+    각 이미지를 비전 모델로 캡션해 두면 씬 분할이 '파일명 추측'이 아니라 '내용'으로
+    이미지를 배치할 수 있고, 인물 묘사를 프롬프트에 주입(캐릭터록)할 수 있다."""
+    out: dict = {"script_text": state["script_text"].strip()}
+    # 이 노드는 job당 한 번(START 직후)만 실행된다 → 영상 '시작'으로 집계.
+    metrics.video_started()
+    out["started_at"] = time.time()
+    refs = state.get("ref_images") or []
+    out["wardrobe_locks"] = extract_wardrobe_locks(out["script_text"], refs)
+    if refs and tools.CAPTION_REFS:  # 캡션 OFF면 gemma 미로드; 이미지↔씬은 사람이 승인 게이트에서 지정
+        captions = {}
+        for fn in refs:
+            try:
+                captions[fn] = await tools.caption_image(str(tools.refs_dir(state["job_id"]) / fn))
+            except Exception:
+                captions[fn] = ""   # 캡션 실패해도 파일명 기반으로 계속 진행
+        out["ref_captions"] = captions
+    return out
+
+
+# mood는 트랜지션 규칙(node_edit_concat: calm/sad → crossfade)과 영어로 비교된다.
+# LLM이 중국어/한국어 mood를 뱉으면 규칙이 영원히 미발동 → 영어 enum으로 강제 + 가드.
+MOODS = ("calm", "sad", "neutral", "happy", "tense", "excited", "surprised")
+
+# M3-7 재조명 폴백: LLM 씬별 조명 큐 생성 실패/누락 시 mood만으로 구체적 조명 언어를 준다.
+# 핵심 목적 — 어두운 mood(sad/tense)는 참조 이미지 밝기를 상속하지 않고 실제로 저조도로 간다.
+_MOOD_LIGHTING = {
+    "sad":       "low-key dim lighting, deep soft shadows, cool desaturated color grade, low exposure",
+    "tense":     "hard low-key lighting, high contrast, sharp deep shadows, cold color cast",
+    "calm":      "soft even lighting, gentle shadows, warm neutral color grade",
+    "neutral":   "balanced natural lighting, moderate contrast, neutral color temperature",
+    "happy":     "bright high-key lighting, light airy shadows, warm saturated color grade",
+    "excited":   "bright vivid lighting, punchy saturated color, dynamic highlights",
+    "surprised": "bright sudden key light, crisp highlights, alert high contrast",
+}
+
+
+def _mood_to_lighting(mood: str) -> str:
+    return _MOOD_LIGHTING.get((mood or "neutral").strip().lower(), _MOOD_LIGHTING["neutral"])
+
+
+# M3-8: 참조 사진은 대개 밝은/중립 조명이라, 저조도·강대비 mood가 참조와 가장 크게
+# 괴리된다 → 이런 씬만 서버측 relight 노브를 켜 첫프레임 latent 잠금을 완화한다. 밝은/
+# 중립 mood는 참조와 유사해 노브 미적용(기존 동작 유지).
+# ponytail: mood 화이트리스트 휴리스틱. 참조 실제 밝기 측정으로 업그레이드는 필요 시.
+RELIGHT_MOODS = {"sad", "tense"}
+
+
+def _needs_relight(mood: str) -> bool:
+    return (mood or "neutral").strip().lower() in RELIGHT_MOODS
+
+SUBJECT_TYPES = ("human", "nonhuman", "none")
+
+# 캡션(gemma 영어)에서 사람/비인간을 결정론적으로 판정한다. qwen2.5:7b가 씬 분할 시
+# subject_type 필드를 자주 누락(→ None)해 마스코트·제품이 얼굴(STANDIN) 경로로 오라우팅되던
+# 문제(job 1fddc76: 4씬 전부 subject_type None)를 캡션 진실원천으로 막는다.
+_NONHUMAN_HINTS = re.compile(
+    r"\b(mascot|robot|android|product|logo|animal|creature|monster|toy|plush|doll|figurine|"
+    r"cartoon|cartoonish|emoji|blob|gadget|device|bottle|package|parcel|box|carton|"
+    r"food|snack|fruit|plant|flower|vehicle|car|truck|drone|cat|dog|bird|fish|dragon)\b|"
+    r"(animated|cartoon|stylized|cute|character)\s+character|character\s+illustration", re.I)
+_HUMAN_HINTS = re.compile(
+    r"\b(man|woman|men|women|person|people|boy|girl|lady|guy|male|female|worker|portrait|human|"
+    r"businessman|businesswoman|gentleman|model|child|kid|adult|he|she)\b", re.I)
+
+
+def _subject_type_from_caption(caption: str) -> str | None:
+    """캡션 키워드로 human/nonhuman 판정. 애매하면 None(폴백).
+    비인간 힌트를 먼저 본다 — 'cute mascot ... character'처럼 사람 단어가 섞여도 마스코트 우선."""
+    cap = caption or ""
+    if _NONHUMAN_HINTS.search(cap):
+        return "nonhuman"
+    if _HUMAN_HINTS.search(cap):
+        return "human"
+    return None
+
+
+# 씬 텍스트(한/영)에서 피사체 종류 판정 — 캡션(gemma) 불필요. M3-6 이전 결정론적 경로 복원.
+# 비인간 명사가 있으면 nonhuman을 우선(마스코트/로봇/제품 씬), 아니면 사람 명사로 human.
+_NONHUMAN_TEXT = re.compile(
+    r"마스코트|캐릭터|로봇|안드로이드|제품|상품|인형|로고|동물|고양이|강아지|개구리|곰|토끼|새|물고기|"
+    r"드론|자동차|기계|사물|음식|과일|식물|꽃|"
+    r"\b(mascot|robot|android|product|logo|animal|creature|toy|doll|drone|vehicle|plant|character)\b", re.I)
+_HUMAN_TEXT = re.compile(
+    r"여성|남성|여자|남자|사람|인물|직원|회사원|아이|소년|소녀|남녀|그녀|그는|인간|"
+    r"\b(woman|man|person|people|boy|girl|worker|human|lady|male|female)\b", re.I)
+
+
+def _subject_type_from_text(text: str) -> str | None:
+    """씬 텍스트 키워드로 human/nonhuman 판정. 애매하면 None."""
+    t = text or ""
+    if _NONHUMAN_TEXT.search(t):
+        return "nonhuman"
+    if _HUMAN_TEXT.search(t):
+        return "human"
+    return None
+
+
+def _is_nonhuman_subject(text: str) -> bool:
+    """구 테스트용 호환 shim. image_role 결정 경로에서는 사용하지 않는다."""
+    return any(term in (text or "") for term in ("고양이", "로봇", "마스코트"))
+
+
+def _normalise_image_role(matched: str | None, role: str | None,
+                          subject_type: str | None) -> str | None:
+    """LLM이 판단한 피사체 종류를 image_role의 진실의 원천으로 사용한다."""
+    if not matched:
+        return None
+    if subject_type == "nonhuman":
+        return "character_ref"
+    if subject_type == "human":
+        return role if role in ("start", "ref") else "ref"
+    return role if role in ("start", "ref", "character_ref") else None
+
+
+async def node_split_scenes(state: GraphState) -> dict:
+    """1-3: 씬 분할 (AI)"""
+    captions = state.get("ref_captions") or {}
+    # 파일명뿐 아니라 '무엇을 담고 있는지(shows)'를 함께 넘겨 내용 기반 매칭이 되게 한다.
+    ref_info = [{"file": fn, "shows": captions.get(fn, "")} for fn in (state.get("ref_images") or [])]
+
+    system_prompt = (
+        "너는 애니메이션 스토리보드 작가다. 주어진 시나리오를 씬 단위로 분할하라. "
+        "text는 반드시 입력 시나리오와 '같은 언어'로 써라 — 다른 언어(특히 중국어/영어)로 "
+        "번역하지 마라. 시나리오 문장을 임의로 요약·창작하지 말고 원문의 내용과 순서를 보존하라. "
+        "각 씬은 다음 키를 가진 객체다: text(씬 설명, 입력과 동일 언어), "
+        "duration(초, 숫자, 2~3 사이 — 3초를 넘기지 마라, 긴 장면은 여러 씬으로 쪼개라), "
+        f"mood(반드시 다음 영어 단어 중 하나: {', '.join(MOODS)}), "
+        "matched_image(ref_images 중 이 씬에 그 피사체가 등장하는 파일명 하나 — 반드시 shows 설명을 "
+        "보고 '내용'으로 판단, 없으면 null). script_text와 shows의 언어가 달라도 번역된 의미가 같으면 "
+        "동일 피사체로 매칭하고, shows의 주요 피사체가 씬에 등장하면 구도·행동이 달라도 반드시 매칭하라, "
+        f"subject_type(씬 텍스트와 shows를 함께 보고, 참조할 주요 피사체가 사람이면 \"human\", "
+        f"동물·식물·사물·제품·로봇·가상 캐릭터면 \"nonhuman\", 피사체가 없으면 \"none\"; "
+        f"반드시 {', '.join(SUBJECT_TYPES)} 중 하나), "
+        "image_role(matched_image가 있을 때만: 이 씬이 그 사진과 똑같은 장면/포즈로 '시작'하면 \"start\", "
+        "사람의 얼굴 identity만 유지하면 \"ref\", 마스코트·로봇·제품·비인간 캐릭터의 전체 "
+        "실루엣·색상·로고를 유지하면 \"character_ref\", 그 외 null). "
+        "중요: 같은 인물/사물이 여러 씬에 나오면 그 인물이 등장하는 '모든' 씬에 matched_image를 붙여라 "
+        "(그래야 인물이 일관되게 유지된다). subject_type을 먼저 의미적으로 판단한 뒤 role을 정하라. "
+        "nonhuman은 종류나 명칭에 관계없이 항상 \"character_ref\"를 사용하고, human만 사진과 동일 "
+        "구도로 시작하면 \"start\", 그 외에는 \"ref\"를 사용하라. "
+        "JSON 배열로만 반환하고 다른 텍스트는 절대 포함하지 마라."
+    )
+    user_prompt = json.dumps({
+        "script_text": state["script_text"],
+        "ref_images": ref_info,
+    }, ensure_ascii=False)
+
+    raw = await tools.call_llm(system_prompt, user_prompt)
+    scenes_raw = tools.parse_json_lenient(raw)
+
+    ref_set = set(state.get("ref_images") or [])
+    scenes: list[Scene] = []
+    for i, s in enumerate(scenes_raw):
+        if isinstance(s, str):        # qwen이 씬을 객체 대신 문자열로 뱉을 때 방어 → 그 문자열을 씬 텍스트로
+            s = {"text": s}
+        if not isinstance(s, dict) or not s.get("text"):  # 형태 깨진 항목은 건너뜀
+            continue
+        matched = s.get("matched_image")
+        subject_type = s.get("subject_type")
+        if subject_type not in SUBJECT_TYPES:
+            subject_type = "none"
+        if matched not in ref_set:  # LLM이 없는 파일명을 환각하면 T2V로 강등
+            matched = None
+        # subject_type 진실원천: 씬 텍스트 키워드(캡션 불필요, M3-6 이전 동작) > 캡션 > LLM.
+        # 7b가 subject_type을 자주 누락(→None)해 마스코트가 얼굴(STANDIN) 경로로 새던 회귀를 막는다.
+        cap_type = _subject_type_from_caption(captions.get(matched, "")) if matched else None
+        derived = _subject_type_from_text(s.get("text", "")) or cap_type
+        if derived:
+            subject_type = derived
+        role = _normalise_image_role(matched, s.get("image_role"), subject_type)
+        # duration clamp: 스텝시간이 프레임 수에 초선형이라 긴 씬이 속도를 지배한다.
+        # LLM 출력만 제한하고, 사람이 1-4 게이트에서 고친 값은 그대로 존중한다.
+        try:
+            dur = float(s.get("duration") or 3.0)
+        except (TypeError, ValueError):
+            dur = 3.0
+        scenes.append({
+            "id": i + 1,
+            "text": s["text"],
+            "duration": min(max(dur, 2.0), 3.0),
+            "mood": s.get("mood") if s.get("mood") in MOODS else "neutral",
+            "matched_image": matched,
+            "image_role": role,
+            "subject_type": subject_type,
+            "quality_flag": "pending",
+            "approved": False,
+        })
+
+    # 매칭 누락 결정론적 보정: 9b가 씬↔이미지 matched_image를 랜덤 누락(여자 씬이 None으로
+    # 새 사람 생성 → 얼굴 일관성 붕괴)하던 문제를 캡션 기반 per-ref 종류로 메운다. 씬의
+    # subject_type과 같은 종류의 참조가 정확히 하나면 그 참조로 매칭한다(모호하면 건드리지 않음).
+    ref_types = {fn: _subject_type_from_caption(captions.get(fn, "")) for fn in ref_set}
+    for sc in scenes:
+        if sc.get("matched_image"):
+            continue
+        st = sc.get("subject_type")
+        if st in ("human", "nonhuman"):
+            cands = [fn for fn, t in ref_types.items() if t == st]
+            if len(cands) == 1:
+                sc["matched_image"] = cands[0]
+                sc["image_role"] = _normalise_image_role(cands[0], sc.get("image_role"), st)
+
+    # A안 fallback: 캡션 OFF(내용 매칭 불가) + 단일 참조(=생성 이미지 앵커) + LLM이 아무 씬에도
+    # 안 붙였으면 → 그 이미지를 전 씬 앵커로 강제 부착. 안 하면 순수 T2V로 새어 승인 이미지가
+    # 영상 분위기에 전혀 반영되지 않는다(M2 자동생성 플로우 맹점). 캡션 ON이거나 사람이 게이트에서
+    # 지정한 경우엔 이미 matched가 있어 이 분기를 타지 않는다.
+    if (len(ref_set) == 1 and not (state.get("ref_captions") or {})
+            and not any(sc["matched_image"] for sc in scenes)):
+        only_ref = next(iter(ref_set))
+        for sc in scenes:
+            sc["matched_image"] = only_ref
+            # character_ref → SUBJECT_REF: 참조 실루엣·색상 보존이 목표. 캡션 없어 사람/비인간
+            # 구분 불가라 피사체 보존이 가장 강한 모드로 통일. ponytail: 사람 얼굴 앵커면 "start"(STANDIN)가 더 적합.
+            sc["image_role"] = "character_ref"
+
+    return {"scenes": scenes, "phase": "planning"}
+
+
+def node_checkpoint_scene_approval(state: GraphState) -> Command:
+    """
+    checkpoint 1-4 (필수): 씬 분할 결과를 사람이 검토.
+    OpenWebUI 쪽에서는 이 interrupt payload를 받아 씬 리스트를 프리뷰로 렌더링하고,
+    사용자가 수정한 scenes(있다면)와 approve 여부를 resume 값으로 되돌려준다.
+    """
+    decision = interrupt({
+        "checkpoint": "1-4_scene_split",
+        "message": "씬 분할 결과를 확인하고 승인하거나 수정해주세요.",
+        "scenes": state["scenes"],
+    })
+    # decision 예시: {"approved": True, "scenes": [...수정된 씬...]}
+    if decision.get("approved"):
+        updated_scenes = decision.get("scenes", state["scenes"])
+        # 사람이 게이트에서 지정한 이미지 가드: 없는 파일이면 T2V 강등, 역할 비었으면 I2V(start)
+        ref_set = set(state.get("ref_images") or [])
+        guarded = []
+        for s in updated_scenes:
+            img, role = s.get("matched_image"), s.get("image_role")
+            if img not in ref_set:
+                img, role = None, None
+            else:
+                role = _normalise_image_role(img, role, s.get("subject_type"))
+            guarded.append({**s, "matched_image": img, "image_role": role})
+        return Command(goto="node_generate_prompts", update={"scenes": guarded})
+    else:
+        # 반려 시 씬 분할 재시도 (사람이 텍스트 자체를 수정했을 수도 있음)
+        return Command(
+            goto="node_split_scenes",
+            update={"script_text": decision.get("revised_script_text", state["script_text"])},
+        )
+
+
+# ══════════════════════════════════════════════════════════
+# Phase 2. 씬별 프롬프트 엔지니어링
+# ══════════════════════════════════════════════════════════
+# style bible: job당 1회 생성, 모든 씬 프롬프트 끝에 주입 → 분위기/톤 통일
+STYLE_LOCK_TOKEN = """  Maintain one cohesive visual world across every scene. Keep the rendering technique,
+  line and edge treatment, shape language, surface materials, texture density,
+  environmental detail level, prop design language, color-grading method,
+  shadow characteristics, cinematic contrast, and camera character consistent.
+  Every location, subject, and object must appear designed by the same art department.
+  Allow scene-specific changes in location, time of day, weather, emotion, lighting
+  intensity, and accent colors when required by the narrative, without changing the
+  underlying visual style."""
+
+
+async def _make_style_bible(state: GraphState) -> str:
+    """전체 시나리오 기준 공통 스타일 규격 1개 생성. 실패 시 기존 토큰으로 폴백.
+    image_query(있으면)가 정지 이미지 앵커의 화풍을 정의하므로, 영상 스타일이 그와
+    독립적으로 결정되면 이미지·영상 그림체가 어긋난다 → image_query를 앵커로 넘겨
+    같은 렌더링 기법을 따르도록 강제한다."""
+    image_query = (state.get("image_query") or "").strip()
+    system_prompt = (
+          "You are an art director for a short video. "
+          "Create ONE global style bible from the complete story and scene list. "
+
+          + (
+              "A reference image was already generated from the anchor prompt given "
+              "below (see 'image_anchor_prompt'). The video MUST match that image's "
+              "rendering technique, line/edge treatment, and shape language exactly — "
+              "do not invent a different art style (e.g. do not switch between anime, "
+              "3D render, or photoreal). Extract the rendering style from the anchor "
+              "prompt and carry it through unchanged. "
+              if image_query else ""
+          )
+
+          + "Define ONLY the invariant visual rules that stay IDENTICAL across every "
+          "scene (the art style / 화풍): rendering technique, line and edge treatment, "
+          "shape language, surface materials, texture density, environmental detail "
+          "level, prop design language, and camera character. "
+
+          # M3-7: per-scene mood/lighting는 여기서 정의하지 않는다(_make_scene_lighting가
+          # 씬별로 담당). bible은 씬 간 불변 화풍만 담아 모든 씬에 동일하게 주입된다.
+          "Do NOT bake in any single scene's brightness, mood, time of day, or lighting "
+          "state — those change per scene and are specified separately. Mood is expressed "
+          "through lighting and color, never by changing this underlying art style. "
+
+          "Do not standardize character identity, anatomy, clothing, or appearance. "
+          "Output only a compact comma-separated English style specification "
+          "under 100 words. No preamble, quotes, or markdown."
+    )
+    user_prompt = json.dumps({
+        "script": state["script_text"],
+        "scenes": [s["text"] for s in state["scenes"]],
+        "characters": state.get("ref_captions") or {},
+        **({"image_anchor_prompt": image_query} if image_query else {}),
+    }, ensure_ascii=False)
+    try:
+        bible = tools.clean_llm_prompt(await tools.call_llm(system_prompt, user_prompt))
+        return bible if bible else STYLE_LOCK_TOKEN
+    except Exception:
+        return STYLE_LOCK_TOKEN
+
+
+_LIGHTING_SYSTEM = (
+    "You are a cinematographer + continuity supervisor for a short video. The art style (화풍) is "
+    "FIXED across scenes — you do NOT touch it. For EACH scene output two things: "
+    "(1) lighting — one short English clause: exposure/brightness, key-light quality, shadow depth, "
+    "contrast, color temperature, translating the scene's MOOD. A dark/sad/tense beat MUST be low-key "
+    "and genuinely dim; a joyful beat bright and high-key. Never inherit a bright reference image's "
+    "brightness. No character appearance/clothing/pose — lighting only. "
+    "(2) setting — the scene's physical LOCATION/background in the script's own language. If this "
+    "scene continues in the SAME place as the previous scene, output an empty string \"\" for setting "
+    "(it inherits the previous location). Only fill setting when the location changes. "
+    'Output ONLY a JSON object mapping each scene id (string) to {"lighting": "...", "setting": "..."}, '
+    'e.g. {"1": {"lighting": "low-key dim, deep shadows, cool cast", "setting": "어두운 사무실"}, '
+    '"2": {"lighting": "sudden bright key light", "setting": ""}}. No preamble, no markdown.'
+)
+
+
+async def _make_scene_context(state: GraphState) -> tuple[dict[int, str], dict[int, str]]:
+    """M3-7 + 배경 연속성: 씬별 재조명 큐 + 장소(setting)를 한 번의 focused LLM 호출로 생성.
+    bible(불변 화풍)과 분리. setting은 빈값이면 직전 씬 장소를 forward-fill(연속성).
+    이전엔 setting을 giant split 호출에 얹었는데 9b가 run마다 누락 → focused 호출로 이관해 안정화.
+    반환: (lighting_map, setting_map). 실패/누락 씬은 호출부에서 폴백."""
+    scenes = state.get("scenes") or []
+    user_prompt = json.dumps({
+        "script": state.get("script_text", ""),
+        "scenes": [{"id": s.get("id"), "text": s.get("text", ""), "mood": s.get("mood", "neutral")}
+                   for s in scenes],
+    }, ensure_ascii=False)
+    lighting: dict[int, str] = {}
+    setting: dict[int, str] = {}
+    # 9b는 setting 필드를 run마다 통째로 누락하기도 한다(3런 중 1런). setting이 하나도
+    # 안 나오면 1회 재시도 — 대부분 첫 시도 성공(추가시간 0), 누락 run만 +1콜.
+    for _attempt in range(2):
+        try:
+            raw = tools.parse_json_lenient(await tools.call_llm(_LIGHTING_SYSTEM, user_prompt))
+        except Exception:
+            break
+        lit_map: dict[int, str] = {}
+        set_map: dict[int, str] = {}
+        for k, v in (raw or {}).items():
+            if isinstance(v, dict):
+                lit = (v.get("lighting") or "").strip() if isinstance(v.get("lighting"), str) else ""
+                setg = (v.get("setting") or "").strip() if isinstance(v.get("setting"), str) else ""
+            else:  # 구형/축약 응답: 문자열이면 lighting으로만 취급
+                lit, setg = ((v or "").strip() if isinstance(v, str) else ""), ""
+            if lit:
+                lit_map[int(k)] = lit
+            if setg:
+                set_map[int(k)] = setg
+        lighting = lighting or lit_map   # 첫 시도의 조명은 보존
+        setting = set_map
+        if setting:                       # 장소를 하나라도 얻으면 종료
+            break
+    # 장소 forward-fill: 빈(=이어지는) 씬은 직전 씬 장소 상속. 씬 순서대로.
+    prev = ""
+    for s in scenes:
+        sid = s.get("id")
+        if setting.get(sid):
+            prev = setting[sid]
+        elif prev:
+            setting[sid] = prev
+    return lighting, setting
+
+
+async def node_generate_prompts(state: GraphState) -> dict:
+    """2-1, 2-2: 프롬프트 생성 + 스타일 고정 + 이미지 스마트 라우팅 (AI).
+    - 스타일 바이블: job당 1회 생성, 모든 씬 프롬프트 끝에 주입 → 분위기/톤 통일.
+    - image_role=start/ref → Stand-In 얼굴 크롭으로 사람 identity 유지.
+    - image_role=ref → Stand-In으로 사람 얼굴 identity 유지.
+    - image_role=character_ref → Subject Ref로 마스코트/제품 전체 identity 유지.
+    - 이미지 없음      → T2V.
+    """
+    captions = state.get("ref_captions") or {}
+    wardrobe_locks = state.get("wardrobe_locks") or {}
+    bible = state.get("style_bible") or await _make_style_bible(state)
+
+    # M3-7 재조명 + 배경 연속성: 씬별 조명 큐 + 장소(setting)를 한 번의 focused 호출로 생성
+    # (추가 LLM 호출 없음 — 기존 조명 호출에 fold). 이미 둘 다 있으면(재생성) 재호출 생략.
+    have_ctx = all(s.get("lighting") and s.get("setting") for s in state["scenes"])
+    lighting_map, setting_map = (({}, {}) if have_ctx else await _make_scene_context(state))
+
+    updated_scenes = []
+    for scene in state["scenes"]:
+        # 이 씬의 장소를 주입(빈값이면 기존/직전 상속값 유지) → _scene_prompt_user가 배경으로 씀.
+        scene = {**scene, "setting": setting_map.get(scene.get("id")) or scene.get("setting", "")}
+        img = scene.get("matched_image")
+        role = scene.get("image_role")
+        subject_ref = bool(img) and role == "character_ref" and tools.USE_STANDIN
+        standin = bool(img) and role in ("start", "ref") and tools.USE_STANDIN
+        wardrobe = wardrobe_locks.get(img, "") if standin else ""
+        # 보존(identity·화풍)과 분리된 '적응' 축: 이 씬의 재조명 큐.
+        cue = (lighting_map.get(scene.get("id"))
+               or scene.get("lighting")
+               or _mood_to_lighting(scene.get("mood", "neutral")))
+
+        raw_prompt = tools.clean_llm_prompt(
+            await tools.call_llm(_scene_prompt_system(standin or subject_ref, bool(wardrobe)),
+                                 _scene_prompt_user(scene, bible, wardrobe, cue)))
+
+        if subject_ref:
+            mode = "SUBJECT_REF"
+            desc = captions.get(img, "")
+            desc_suffix = f" ({desc})" if desc else ""
+            # "Preserve its complete silhouette" 문구를 첫 문장에 두면 diffusion이 이를
+            # "프레임 안 배치까지 고정"으로 과하게 해석해 카메라가 피사체를 안 따라가는
+            # 사례 실측(2026-07-10, job f1be24f6 — 배경·구도가 전 프레임 고정). identity
+            # lock을 피사체 외형에만 명시적으로 한정하고, 카메라/구도는 이 lock과
+            # 무관하다고 못박아 raw_prompt의 카메라 지시가 눌리지 않게 한다.
+            identity = (f"The main subject's appearance is the exact non-human character or "
+                        f"product from the reference image{desc_suffix}: same shape, colors, "
+                        "distinctive features and visible logo — do not replace it with a human "
+                        "or redesign its appearance. This constraint covers ONLY the subject's "
+                        "own appearance; it does NOT fix the camera, framing, composition or "
+                        "background — those follow the shot/camera-movement instructions below. ")
+            full_prompt = f"{identity}{raw_prompt}, {bible}"
+        elif standin:
+            # Stand-In: 얼굴 identity는 이미지 latent로 주입된다. 프롬프트에 외모/캐릭터록을
+            # 다시 넣으면 표정·자세까지 참조 사진처럼 '고정'돼 어색해진다 → 넣지 않는다.
+            # 프롬프트는 오직 그 씬의 표정·감정·동작·구도만 밀어붙인다.
+            mode = "STANDIN"
+            wardrobe_lock = (WARDROBE_LOCK_TEMPLATE.format(
+                wardrobe_description=wardrobe) if wardrobe else "")
+            full_prompt = f"{wardrobe_lock}\n{raw_prompt}, {bible}" if wardrobe_lock else f"{raw_prompt}, {bible}"
+        elif img and role == "start":        # Stand-In off일 때만 I2V 폴백
+            mode = "I2V"
+            full_prompt = f"{raw_prompt}, {bible}"
+        elif img:                           # ref이지만 Stand-In off → T2V + 캐릭터록 텍스트
+            mode = "T2V"
+            desc = captions.get(img, "")
+            lock = f" The main character: {desc}." if desc else ""
+            full_prompt = f"{raw_prompt}.{lock} {bible}"
+        else:                               # 이미지 없음
+            mode = "T2V"
+            full_prompt = f"{raw_prompt}, {bible}"
+
+        # M3-7: 씬 재조명 큐를 결정적으로 프롬프트 끝에 못박는다 — rewrite LLM이 조명을
+        # 약하게 반영해도 어두운 씬은 실제로 저조도 지시가 남는다(참조 밝기 상속 방지).
+        full_prompt = f"{full_prompt} Scene lighting and atmosphere: {cue}."
+        updated_scenes.append({**scene, "prompt": full_prompt, "mode": mode, "lighting": cue})
+
+    return {"scenes": updated_scenes, "style_bible": bible, "phase": "prompting"}
+
+
+def _scene_prompt_system(standin: bool, has_wardrobe: bool = False) -> str:
+    """씬 프롬프트 생성용 system 프롬프트. 구도/자세/표정/카메라를 '맥락에 맞게' 요구.
+
+    핵심: 표정(facial expression)과 감정, 그리고 '정적이지 않은' 동적 동작을 명시적으로
+    요구한다 — 이게 없으면 diffusion(특히 Stand-In)이 무표정·부동자세로 수렴한다.
+    """
+    base = (
+        "You are a prompt engineer for a video diffusion model. "
+        "Rewrite the scene into ONE vivid English prompt that specifies, all fitting the "
+        "scene's context and mood: (1) shot size and camera angle (e.g. close-up, wide, low "
+        "angle) — vary it per scene, do not default to a frontal medium shot; (2) the "
+        "character's specific body pose, gesture and action; (3) the character's FACIAL "
+        "EXPRESSION and emotional state matching the mood; (4) camera movement. "
+        "Favor natural, dynamic motion and a lively expression — avoid static, stiff or "
+        "frozen poses and blank faces. "
+    )
+    if standin:
+        base += (
+            "IMPORTANT: the character's face and identity come from a separate reference "
+            "image, so do NOT invent their appearance, age, gender, ethnicity or hair. "
+            + ("A user-provided WARDROBE LOCK follows. Translate it faithfully into English, state the exact garments and colors, and keep them unchanged. " if has_wardrobe else "Do not invent or describe clothing. ")
+            + "Describe what they DO and FEEL — expression, gaze, gesture, movement — and the shot composition. "
+        )
+    return base + "Output ONLY the prompt text — no preamble, no quotes, no explanation, no markdown."
+
+
+def _scene_prompt_user(scene: Scene, bible: str, wardrobe: str = "", lighting: str = "") -> str:
+    lock = f"\nWARDROBE LOCK (mandatory, translate faithfully): {wardrobe}" if wardrobe else ""
+    # M3-7: 씬 재조명 큐를 rewrite LLM에 넘겨 조명/노출/그림자를 프롬프트에 녹이게 한다.
+    # 참조 이미지 밝기 상속 금지 — mood대로 재조명. (결정적 append는 호출부에서 별도 수행)
+    relight = (f"\nScene lighting (translate faithfully, do NOT inherit the reference image's "
+               f"brightness): {lighting}") if lighting else ""
+    # 배경 연속성: 이 씬의 장소를 프롬프트에 명시적으로 실어 STANDIN/T2V(배경=프롬프트) 씬이
+    # 직전 씬과 같은 장소를 유지하게 한다. forward-fill된 setting이 여기로 들어온다.
+    place = f"\nSetting/location (render this exact place as the background): {scene.get('setting')}" if scene.get("setting") else ""
+    return f"Scene: {scene['text']}\nMood: {scene.get('mood', 'neutral')}{lock}{relight}{place}\nGlobal style: {bible}"
+
+
+# ══════════════════════════════════════════════════════════
+# Phase 3. 클립 생성 (fan-out/fan-in)
+# ══════════════════════════════════════════════════════════
+
+def scene_seed(job_id: str, scene_id: int) -> int:
+    """씬별로 다른 초기 노이즈를 준다. job_seed 하나를 전 씬이 공유하면(과거 설계
+    의도: 그림체 흔들림 방지) 참조 이미지 전체를 첫 프레임 latent로 쓰는 STANDIN_STEPS=4
+    같은 저스텝 조합에서 프롬프트 차이가 트레젝토리를 거의 못 갈라놓아 씬마다 다른
+    텍스트를 줘도 모션이 수렴해버리는 사례 실측(2026-07-10, job
+    f1be24f6-aaf7-4e39-bc0c-49ac3ca64e5c — 씬 1/2 프레임이 사실상 동일)."""
+    return int(hashlib.sha1(f"{job_id}:{scene_id}".encode()).hexdigest()[:8], 16) % (2 ** 31)
+
+
+def _generation_cache_key(scene: Scene) -> tuple:
+    return (
+        scene.get("mode") or "",
+        scene.get("matched_image") or "",
+        scene.get("image_role") or "",
+    )
+
+
+def _order_scenes_for_generation(scenes: list[Scene]) -> list[tuple[int, Scene]]:
+    """Backend/cache locality only. Final video order is restored by scene id later."""
+    return sorted(enumerate(scenes), key=lambda item: (_generation_cache_key(item[1]), item[0]))
+
+
+def node_dispatch_generation(state: GraphState) -> list[Send]:
+    """
+    3-1: Send API로 씬별 생성을 병렬 fan-out.
+    regen_target_ids가 있으면 해당 씬만, 없으면 전체 씬 대상.
+    실제 생성 순서는 같은 mode/ref끼리 묶어 ComfyUI 캐시 재사용률을 높인다.
+    """
+    targets = state.get("regen_target_ids")
+    scenes_to_run = (
+        [s for s in state["scenes"] if s["id"] in targets]
+        if targets else state["scenes"]
+    )
+    scenes_to_run = [s for _, s in _order_scenes_for_generation(scenes_to_run)]
+    job_id = state["job_id"]
+    return [Send("node_generate_one_clip",
+                 {"scene": s, "job_id": job_id, "seed": scene_seed(job_id, s["id"])})
+            for s in scenes_to_run]
+
+
+async def node_generate_one_clip(payload: dict) -> dict:
+    """3-1: 개별 씬 클립 생성 (AI). 자동 품질체크(3-2)는 제거 — 사람이 3-5에서 판단."""
+    scene: Scene = payload["scene"]
+    job_id: str = payload["job_id"]
+
+    # 동시 실행 상한(_gen_semaphore): fan-out된 씬이 GPU를 동시에 물지 않게 게이팅.
+    # 모든 백엔드가 이 단일 길목을 통과하므로 여기 하나만 걸면 :8500/:8188 합산 동시성이 잡힌다.
+    relight = _needs_relight(scene.get("mood", "neutral"))  # M3-8: mood 괴리 씬만 재조명 노브
+    async with tools._gen_semaphore:
+        if scene["mode"] == "SUBJECT_REF":
+            clip_path = await tools.generate_subject_ref_clip(
+                job_id=job_id, scene_id=scene["id"], prompt=scene["prompt"],
+                ref_image=scene["matched_image"], duration=scene.get("duration", 2.0),
+                seed=payload.get("seed"), force_new=payload.get("force_new", False),
+                relight=relight,
+            )
+        elif scene["mode"] == "STANDIN":       # 참조-얼굴 씬 → ComfyUI Stand-In (:8188)
+            clip_path = await tools.generate_standin_clip(
+                job_id=job_id,
+                scene_id=scene["id"],
+                prompt=scene["prompt"],
+                ref_image=scene["matched_image"],
+                duration=scene.get("duration", 2.0),
+                seed=payload.get("seed"),
+                force_new=payload.get("force_new", False),
+                relight=relight,
+            )
+        else:                                # T2V/I2V → Wan2.2-TI2V-5B (:8500)
+            clip_path = await tools.call_video(
+                job_id=job_id,
+                scene_id=scene["id"],
+                prompt=scene["prompt"],
+                mode=scene["mode"],
+                matched_image=scene.get("matched_image"),
+                duration=scene.get("duration", 2.0),
+                seed=payload.get("seed"),
+            )
+
+    # 클립당 step 수는 모드에 따라 결정적: :8500(T2V/I2V)=DEFAULT_STEPS,
+    # ComfyUI(STANDIN/SUBJECT_REF)=STANDIN_STEPS. 영상당 합산은 final_render에서.
+    steps = (tools.STANDIN_STEPS if scene["mode"] in ("STANDIN", "SUBJECT_REF")
+             else tools.DEFAULT_STEPS)
+    metrics.clip_generated(scene["mode"])
+    metrics.clip_steps(scene["mode"], steps)
+    updated_scene: Scene = {
+        **scene,
+        "clip_path": clip_path,
+        "steps": steps,
+        "quality_score": None,
+        "quality_flag": "pending",
+    }
+    # clip_results는 Annotated[list, operator.add] 이므로 fan-in 시 자동 병합됨
+    return {"clip_results": [updated_scene]}
+
+
+def node_merge_clip_results(state: GraphState) -> dict:
+    """fan-in 이후 scenes를 최신 clip_results로 갱신 (재생성된 씬만 덮어쓰기)"""
+    result_by_id = {s["id"]: s for s in state["clip_results"]}
+    merged = [result_by_id.get(s["id"], s) for s in state["scenes"]]
+    return {"scenes": merged, "clip_results": [], "regen_target_ids": [], "phase": "generating"}
+
+
+def node_checkpoint_clip_approval(state: GraphState) -> Command:
+    """
+    checkpoint 3-5 (필수): 클립별 승인.
+    - 3-3 원칙 반영: 재생성은 AI가 자동으로 하지 않고, 사람이 regen 대상을 지정해야만 루프 진입.
+    """
+    decision = interrupt({
+        "checkpoint": "3-5_clip_approval",
+        "message": "각 씬 클립을 확인해주세요. low_quality로 표시된 씬은 재확인 권장.",
+        "scenes": state["scenes"],
+    })
+    # decision 예시:
+    # {"action": "approve_all"}
+    # {"action": "regenerate", "scene_ids": [2, 4]}
+    action = decision.get("action")
+
+    if action == "approve_all":
+        approved_scenes = [{**s, "approved": True} for s in state["scenes"]]
+        return Command(goto="node_edit_concat", update={"scenes": approved_scenes})
+
+    elif action == "regenerate":
+        target_ids = decision["scene_ids"]
+        metrics.regeneration(len(target_ids))
+        targets = [s for s in state["scenes"] if s["id"] in target_ids]
+        job_id = state["job_id"]
+        ordered_targets = [s for _, s in _order_scenes_for_generation(targets)]
+        # Command가 직접 Send 리스트를 goto로 반환 → 지정된 씬만 재생성 fan-out.
+        # 재생성은 seed=None(랜덤): 고정 시드+같은 프롬프트면 똑같은 결과가 나와 재생성이 무의미.
+        return Command(
+            goto=[Send("node_generate_one_clip", {"scene": s, "job_id": job_id, "seed": None, "force_new": True})
+                  for s in ordered_targets],
+            update={"regen_target_ids": target_ids},
+        )
+
+    else:
+        # 승인 대기 상태 유지 (잘못된 입력 등) — 같은 체크포인트 재진입
+        return Command(goto="node_checkpoint_clip_approval")
+
+
+# ══════════════════════════════════════════════════════════
+# Phase 4. 편집 & 연결
+# ══════════════════════════════════════════════════════════
+
+async def node_edit_concat(state: GraphState) -> dict:
+    """4-1, 4-2, 4-4: 순서 배치 + 트랜지션 + concat 프리뷰 (AI)"""
+    scenes = sorted(state["scenes"], key=lambda s: s["id"])
+    clip_paths = [s["clip_path"] for s in scenes]
+
+    # 무드 기반 트랜지션 결정 (간단 규칙 예시)
+    transitions = [
+        "crossfade" if s["mood"] in ("calm", "sad") else "cut"
+        for s in scenes[1:]
+    ]
+
+    preview_path = str(tools.job_dir(state["job_id"]) / "preview_low.mp4")
+    # ffmpeg는 동기 subprocess → 스레드로 오프로드해 이벤트루프(모든 :8700 엔드포인트가
+    # 공유)를 막지 않는다. 안 그러면 인코딩 중 /status·/jobs가 응답 못해 OWU가 ReadTimeout.
+    await asyncio.to_thread(tools.ffmpeg_concat, clip_paths, transitions, preview_path)
+
+    return {"edited_preview_path": preview_path}
+
+
+async def node_generate_subtitles(state: GraphState) -> dict:
+    """4-3: 자막 삽입 — LLM이 장면 흐름에 맞춰 스토리텔링 자막을 새로 작성 (M3-11)."""
+    scenes = sorted(state["scenes"], key=lambda x: x["id"])
+    lines = await tools.generate_subtitle_lines(scenes)
+    srt_path = str(tools.job_dir(state["job_id"]) / "subs.srt")
+    with open(srt_path, "w", encoding="utf-8") as f:
+        t = 0.0
+        for i, (s, line) in enumerate(zip(scenes, lines), start=1):
+            start, end = t, t + s["duration"]
+            f.write(f"{i}\n{fmt_ts(start)} --> {fmt_ts(end)}\n{line}\n\n")
+            t = end
+
+    subtitled_path = str(tools.job_dir(state["job_id"]) / "preview_sub.mp4")
+    await asyncio.to_thread(  # 위와 동일: 블로킹 ffmpeg를 이벤트루프에서 떼어낸다
+        tools.burn_subtitles, state["edited_preview_path"], srt_path, subtitled_path)
+    return {"subtitle_path": srt_path, "edited_preview_path": subtitled_path}
+
+
+def fmt_ts(seconds: float) -> str:
+    h, rem = divmod(int(seconds), 3600)
+    m, s = divmod(rem, 60)
+    ms = int((seconds - int(seconds)) * 1000)
+    return f"{h:02}:{m:02}:{s:02},{ms:03}"
+
+
+def node_checkpoint_edit_review(state: GraphState) -> Command:
+    """checkpoint 4-5 (필수): 최종 편집본 검수. 마지막 게이트."""
+    decision = interrupt({
+        "checkpoint": "4-5_edit_review",
+        "message": "편집본을 확인해주세요. 트랜지션/자막/전체 흐름을 검토해주세요.",
+        "preview_path": state["edited_preview_path"],
+    })
+    if decision.get("approved"):
+        return Command(goto="node_final_render")
+    else:
+        # 반려 시 어느 단계로 돌아갈지는 사유에 따라 분기 가능 (여기선 편집 단계 재실행)
+        return Command(goto="node_edit_concat")
+
+
+# ══════════════════════════════════════════════════════════
+# Phase 5. 최종 출력
+# ══════════════════════════════════════════════════════════
+
+async def node_final_render(state: GraphState) -> dict:
+    """5-1, 5-2: 고해상도 렌더링 + 포맷 변환 (AI, 사람 개입 없음)"""
+    final_path = str(tools.job_dir(state["job_id"]) / "final.mp4")
+    # Phase C에서 원본 클립 풀퀄 재인코딩 예정. 지금은 편집 프리뷰를 최종본으로 확정.
+    import shutil
+    shutil.copy(state["edited_preview_path"], final_path)
+    started = state.get("started_at")
+    duration = time.time() - started if started else None
+    scenes = state.get("scenes") or []
+    total_steps = sum(s.get("steps", 0) for s in scenes)
+    metrics.video_finished(scenes=len(scenes), duration=duration, steps=total_steps)
+    return {"final_video_path": final_path, "phase": "done"}

@@ -6,11 +6,21 @@
 ## repo 구성 (필독)
 
 - **DaolVision**(이 repo, github.com/hayeon3203/DaolVision, private) = 오픈셸 자립형
-  생성 스튜디오. 기획·문서·**신규 코드**(LocalAI 포크 프론트, 스텝퍼/대시보드,
-  게이트웨이 확장) + 스파이크 기록의 집.
-- **백엔드 코드는 별도 repo `video_generator`**(hunyuan_server :8500, langgraph :8700,
-  ComfyUI :8188 등)에 있고 **그대로 유지**. DaolVision은 이를 **HTTP로 소비**
-  (Architecture "기존 LangGraph API 확장" 원칙). 코드 이전 안 함.
+  생성 스튜디오. 기획·문서 + **:8700 게이트웨이 앱 전체**(`langgraph/` —
+  api.py/tools.py/nodes.py/graph.py/state.py/metrics.py/driver.py, 프로덕션이
+  런타임에 로드하는 `comfyui_workflows/i2v_14b.json`·`standin_t2v.json`, 자체
+  `.venv`) + 앞으로 붙일 신규 코드(LocalAI 포크 프론트, 스텝퍼/대시보드) +
+  스파이크 기록의 집.
+- **GPU 상주 미디어 서버만 `video_generator`에 남음**: hunyuan_server(:8500
+  Wan T2V/I2V, :8501 Flux T2I), ComfyUI(:8188, Stand-In·LTX Face-ID 스파이크).
+  DaolVision의 langgraph 게이트웨이는 이들을 **HTTP로만 소비**(URL은
+  `AGENT_WAN_URL`/`AGENT_T2I_URL`/`AGENT_COMFYUI_URL` env, 전부 127.0.0.1).
+  **2026-07-30 Task 4.1 직후 이전**: 게이트웨이 코드가 물리적으로도
+  video_generator에 있어 원칙과 어긋나던 걸 바로잡음(커밋: video_generator
+  `59e5462`(삭제) / DaolVision 이번 커밋(추가), 히스토리 보존 없이 새 커밋).
+  `video_generator/langgraph/comfyui_workflows/ltx_faceid.json`과
+  `tests/probe_ltx_watch.py`·`probe_ltx_profile.py`(둘 다 untracked)는
+  **Task 3.3 진행 중이라 일부러 남김** — 3.3 종료 후 별도 정리.
 - 스파이크용 LocalAI 클론은 `/home/admin/LocalAI`(untracked).
 
 ## 현재 목표
