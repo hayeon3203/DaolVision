@@ -85,6 +85,56 @@ Week 2 Day1 환경 스파이크(게이트) 완료(2.1~2.4). OOM 정책 = 배치 
   Llama3.1 대비 동등 이상이고 fallback 파싱 경로(`parse_json_lenient` +
   원문 text 폴백)로 안전. subject_type 오분류 완화는 6.x 배선 단계 과제로 이월.
 
+## Task 2.2.1 — Diffusion VLM 텍스트+캡션 통합 스파이크 (2026-07-30, cc:완료)
+
+상세 근거·재현법은
+[docs/spikes/2.2.1-diffusion-vlm-unification.md](../docs/spikes/2.2.1-diffusion-vlm-unification.md).
+
+- `nvidia/Nemotron-Labs-Diffusion-VLM-8B` BF16(17.9GB)을 GB10에서 네이티브 로드
+  성공. load 88.53초, peak CUDA reserved 17.23GiB.
+- 공식 문서의 `transformers>=5.0.0` 표기와 달리 5.0/5.12는 모델 코드 import 실패.
+  체크포인트 제작 버전 4.57.1 전용 격리 venv에서 정상 작동.
+- 캡션은 2.44초, 실제 인물 이미지 주 피사체를 정확히 영어로 설명해 **통과**.
+- S1 한국어 4씬 분할은 6.92초지만 원문 전체 반복 + JSON 여는 `[` 누락으로
+  **실패**. 현재 `parse_json_lenient`에도 들어갈 수 없음.
+- 결정: Qwen 제거는 가능하되 단일 모델 통합은 보류. 텍스트는 이미 통과한
+  Nemotron-3-Nano-4B-GGUF 유지, 캡션만 Diffusion VLM 후보로 채택. 실제 배선은
+  Ollama 모델명 교체가 아니라 별도 Transformers 서버/호출 어댑터가 필요.
+
+## Task 2.2.2 — vLLM + LTX 인코더 교체 검토 (2026-07-30, cc:완료)
+
+상세 결과는
+[docs/spikes/2.2.2-vllm-and-ltx-encoder.md](../docs/spikes/2.2.2-vllm-and-ltx-encoder.md).
+
+- vLLM 0.26.0 aarch64 전용 venv 설치.
+- Diffusion VLM-8B는 Transformers 5.12 import 충돌 및 vLLM 미지원 아키텍처로
+  기동 실패. 전용 Transformers 4.57.1 서버 유지가 유일한 실증 경로.
+- Nemotron 3 Nano 4B BF16은 vLLM 기동 성공(weight 7.47GiB). 하지만 S1에서
+  thinking 출력 잘림, thinking off 시 4개 지시에 2개만 생성, JSON Schema 사용
+  시 공백 토큰만 소진해 기존 Ollama Q4보다 품질 열세. 전환 보류.
+- LTX Gemma 3 12B는 48층×3840 hidden 전체를 `3840*49` 전용 projection으로
+  변환하는 학습된 conditioning encoder. 34층×4096 Diffusion VLM은 tokenizer,
+  shape, embedding 공간이 모두 달라 drop-in 교체 불가. projection+cross-attention+
+  Face-ID LoRA 재학습이 필요.
+- 운영 조치: 미사용 `wan-animate.service` 중지(`:8600` 제거), FLUX :8501은
+  S1 정지 앵커 생성용이라 유지. vLLM 스파이크 서버는 종료.
+
+## Task 2.2.3 — Nemotron 12B VL 양자화 산정 (2026-07-30, cc:완료)
+
+상세 결과는
+[docs/spikes/2.2.3-nemotron-12b-vl-quant-sizing.md](../docs/spikes/2.2.3-nemotron-12b-vl-quant-sizing.md).
+
+- BF16은 vLLM에서 `NemotronH_Nano_VL_V2`로 정상 인식, 24.57GiB weight
+  load 성공. 사용자 지시로 inference/profile 전에 중단.
+- 공식 FP8 저장 크기 14.35GiB → 예상 peak 16~20GiB로 예산 초과.
+- 공식 NVFP4-QAD 저장 크기 9.89GiB → 예상 peak 12~14GiB. weight만으로
+  10GiB에 근접해 전체 peak 8~10GB 보장은 불가.
+- LTX Gemma FP8 12.30GiB + projection 2.15GiB = weights 14.45GiB. 이는
+  LTX conditioning 필수 구성이라 Nemotron과 동시 상주시키지 않고 phase 단위
+  unload/load해야 함.
+- 결정: 8~10GB 엄격 예산이면 12B VL 전 계열 제외. 12~14GB를 허용할 때만
+  NVFP4-QAD 실측 후보.
+
 ## Task 2.3.5 — T2I 모델 확정 (2026-07-29, cc:완료)
 
 R10(전 모델 비중국/NVIDIA)에 따라 T2I 자리(video_generator `:8501` zimage 대체)에
