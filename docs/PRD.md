@@ -95,7 +95,7 @@ UI 플로우: 카테고리 선택 → 스타일 프리셋 선택 → 입력 → 
 | 비전 캡션 | **Nemotron-VL-8B** | 🇺🇸 NVIDIA | 영어출력(한국어 불필요). Ollama 서빙 Day1 확인, 미달시 Llama3.2-Vision 폴백 |
 | T2I 앵커 | **Flux.1-schnell** | 🇩🇪 | Z-Image(중국) 대체, GB10 실측 확정(2.3.5, SDXL은 legacy UNet이라 FA-4 통로 제외) |
 | I2I 얼굴변환 | **Flux.1 Kontext** | 🇩🇪 | S2 |
-| I2V(주력) | **LTX-Video distilled + LTX-Best-Face-ID LoRA** | 🇮🇱 | 캐릭터+화풍 일관. BFS 커스텀노드. Day2 게이트 |
+| I2V(주력) | **LTX-2.3-22B-dev(GGUF Q6_K) + distill LoRA + LTX-Best-Face-ID LoRA** | 🇮🇱 | 캐릭터+화풍 일관. BFS 커스텀노드. Day2 게이트. 3.1에서 "LTX-Video distilled(13B)" 가정 폐기·재정의(docs/spikes/3.1-ltx-faceid-compat.md) |
 | I2V(벤치) | **Cosmos-Predict2-2B-Video2World** | 🇺🇸 NVIDIA | 비교용 |
 | I2V(폴백) | **Wan2.1-14B Stand-In** | 🇨🇳 | 롤백 보존(지우지 않음). 얼굴 일관성 검증됨 |
 | TTS(실통합) | **Kokoro** (82M) | 🇺🇸 | 한국어, OOM 무관 |

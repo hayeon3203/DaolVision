@@ -262,11 +262,50 @@ URL 상수, `langgraph/api.py` 라우트.
   유료 계약 필요 — 이 프로젝트는 해당 없음), BFS Nodes는 GPL-3.0. 문제 없음.
 - **실제 생성 품질 검증은 3.2로 이관**(참조얼굴 4씬 생성 눈판정).
 
+## Task 3.2 — Face-ID 얼굴+화풍 일관성 데모수준 검증 (2026-07-30, cc:완료)
+
+- **실행 경로**: `ltx_faceid.json`은 UI 저장 포맷(SetNode/GetNode/Reroute로
+  변수 배선, `/object_info`에 등록 안 되는 프론트엔드 전용 pseudo-node)이라
+  `/prompt` API에 직접 못 보냄. Playwright로 ComfyUI 프론트를 헤드리스
+  로드 → `window.app.graphToPrompt()`로 실제 실행용 API-format으로 변환 →
+  같은 세션 `fetch`로 `/prompt` 제출. Face-ID LoRA·distill LoRA·Best-Face-ID
+  전부 3.1이 설치한 그대로, 노드 배선 수정 없음(참조 얼굴 파일과 씬별 프롬프트
+  텍스트 위젯값만 교체).
+- **설정**: 768×768(정사각, `Get_base_resolution` 하나가 width/height 동시
+  공급이라 원래 정사각 고정), 5초/24fps(121프레임), distill LoRA 8-step,
+  Best-Face-ID LoRA strength 1.0.
+- **참조 얼굴**: 사용자 제공 개인 사진(비공인, 워터마크 없음). 최초 제시된
+  케이팝 아이돌 언론사진(워터마크 있음, 실존 공인 얼굴)은 초상권/딥페이크
+  리스크로 거절하고 교체받음 — 3.2류 얼굴합성 테스트는 매번 동의된 얼굴
+  소스인지 먼저 확인 필요.
+- **결과(4씬, 우주비행사 발사/우주유영/외계행성/귀환)**: 전부 success,
+  node_errors 없음. 프레임 추출 눈판정 — s1/s2/s4(클로즈업)는 눈썹·눈·코·입
+  모양이 참조 얼굴과 뚜렷이 일치, 씬 내부(0→110프레임) 흔들림 없음. s3(전신
+  와이드샷)는 얼굴 비중이 작아 정합성 판정 신뢰도가 상대적으로 낮음. 화풍
+  (라이팅·질감)은 4씬 전체 일관. **종합 PASS — Wan Stand-In 폴백 불필요.**
+  씬당 생성 3~5분(최초 씬은 모델 로드 포함 ~5.5분, 이후 캐시로 ~3분대).
+- **산출물**: `video_generator/ComfyUI/output/video/LTX_2.3_ia2v_0000{1..4}_.mp4`
+  (얼굴 결과), `video_generator/ComfyUI/output/comparison_0000{1..4}-audio.mp4`
+  (참조사진↔결과 비교).
+- **후속 요구사항(스코프 아웃, 5.x 프로덕션 설정 단계로 이관)**:
+  1. **16:9**: 현재 정사각은 `Get_base_resolution`이 width/height에 동일값을
+     공급하는 배선 때문 — width/height를 분리해야 함. 같은 픽셀 예산으로
+     화면비만 바꾸려면 1024×576(768²와 총 픽셀 동일, 속도 저하 없음).
+  2. **더 먼 앵글/화려한 배경**: 워크플로 배선과 무관, 씬 프롬프트 문구
+     문제("medium close-up" → "wide shot, expansive background" 식으로
+     우리가 쓰는 캡션만 바꾸면 됨).
+  3. **90초 영상**: 이 워크플로 duration 파라미터(node 31)를 90으로 올려
+     한 번에 생성하는 건 아님 — `total_frames = ((duration*fps)//8)*8+1`이라
+     90초/24fps는 2161프레임, LTX 단발 생성 실용 범위를 크게 초과(품질 붕괴/
+     실패 위험). PRD 파이프 설계(씬분할→씬별 짧은 클립→TTS mux→최종 mp4,
+     PRD.md 59행)대로 **여러 짧은 클립을 이어붙여 최종 90초를 만드는 것**이
+     맞는 경로 — Week5 5.x(배치 클립 생성)에서 다룰 사안.
+
 ## 차단 요소
 
 - 없음
 
 ## 최종 갱신
 
-- 2026-07-30, Task 3.1 완료(LTX-2.3+Face-ID 조합 재정의, 설치·워크플로 로드
-  검증, 라이센스 확인).
+- 2026-07-30, Task 3.2 완료(Face-ID 4씬 눈판정 PASS, Wan 폴백 불필요. 16:9·
+  와이드앵글·90초 후속 요구사항은 5.x로 스코프아웃).
