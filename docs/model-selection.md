@@ -46,6 +46,45 @@ Blackwell 최적화는 품질 회귀와 실제 peak를 확인한 뒤 켠다. 얼
 형식과 학습된 연결을 보존하면서, 상주 메모리와 초기화 시간을 줄이는 조합이
 목표다.
 
+### NVIDIA 생태계 모델 도입이 어려운 이유
+
+GB10은 NVIDIA 모델을 실행하기 좋은 Blackwell 장비지만, NVIDIA가 공개한 모델을
+고르면 바로 경량 로컬 파이프라인이 완성되는 것은 아니다. 이번 검토에서는
+다음과 같은 간극이 확인됐다.
+
+1. **distilled 경량 오픈소스 체크포인트가 부족하다.** 공개 가중치는 BF16이나
+   FP8 중심인 경우가 많고, 3~4B급 VLM 또는 품질 검증된 INT4·NVFP4 배포본은
+   선택지가 좁다. Distillation이 제공되더라도 생성 step이나 지연만 줄이고 전체
+   가중치와 생성 peak는 크게 줄이지 않는 경우가 있다.
+2. **양자화 형식만으로 운영 메모리가 해결되지 않는다.** Nemotron Nano 12B VL
+   NVFP4-QAD도 checkpoint가 9.89GiB여서 vision activation, KV/cache, CUDA
+   workspace를 더하면 예상 peak가 12~14GiB다. 양자화 파일 크기와 실제 상주
+   peak를 따로 측정해야 한다.
+3. **GB10에서 실행 가능한 것과 서빙 엔진이 지원하는 것은 다르다.** GB10의
+   CUDA와 연산 정밀도가 모델을 수용하더라도 vLLM·SGLang이 해당 VLM
+   architecture, vision tower, custom remote code를 지원하지 않을 수 있다.
+   Diffusion VLM 8B는 Transformers 버전을 고정하면 실행됐지만 vLLM에는
+   `NemotronLabsDiffusionVLMModel` 구현이 없었다. 반면 Nemotron Nano 12B v2
+   VL의 C-RADIO 경로는 현재 vLLM 0.26.0에서 네이티브 인식됐다. 따라서
+   “NVIDIA VLM 전체가 미지원”이 아니라 **모델 revision과 엔진 버전별 확인**이
+   필요하다.
+4. **ARM64와 최신 CUDA 조합의 패키지 격차가 있다.** x86 서버를 우선 지원하는
+   wheel, custom CUDA op, FlashAttention 또는 ComfyUI node는 GB10 ARM64에서
+   그대로 설치되지 않을 수 있다. 한 모델을 위해 Transformers를 내리면 다른
+   서비스와 충돌하므로 모델별 venv와 서버 격리가 필요하다.
+5. **NVIDIA 최적화와 현재 생성 workflow 사이에 연결 간극이 있다.** FLUX와
+   LTX의 ComfyUI graph, Gemma projection, BFS Nodes, Face-ID LoRA는 각자
+   학습된 tensor 형식과 loader를 요구한다. NVIDIA VLM을 선택해도 이 구성요소를
+   대체할 수 없으며, vLLM API로 통일하려면 custom node와 conditioning adapter
+   개발 또는 재학습이 필요하다.
+6. **비중국·NVIDIA 우선 조건이 후보를 더 줄인다.** NVIDIA가 배포하거나
+   양자화한 모델이라도 원 가중치와 text encoder가 Qwen/Wan 계열일 수 있다.
+   배포 조직, 원 학습 주체, 하위 encoder의 원산을 각각 확인해야 한다.
+
+따라서 NVIDIA 생태계 사용 여부는 브랜드나 모델 카드만으로 결정하지 않는다.
+`GB10/ARM64 설치 → 엔진 기동 → 양자화 runtime peak → 실제 S1 품질 →
+기존 ComfyUI·LangGraph 연결 비용`을 하나의 채택 게이트로 다룬다.
+
 ### 코드 구조상 유지할 아키텍처
 
 ```text
