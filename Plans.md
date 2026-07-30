@@ -52,7 +52,7 @@
 
 | Task | 내용 | DoD | Acceptance | Depends | Status | GH |
 |------|------|-----|------------|---------|--------|----|
-| 3.1 | LTX distilled + BFS노드 + Face-ID LoRA 설치·호환·라이센스 확인 [tdd:skip:integration-spike] | ComfyUI에서 워크플로 로드 성공, LoRA↔distilled 호환·라이센스 STATE.md 기록 | test -f langgraph/comfyui_workflows/ltx_faceid.json | 2.4 | cc:완료 [PENDING] | - |
+| 3.1 | LTX distilled + BFS노드 + Face-ID LoRA 설치·호환·라이센스 확인 [tdd:skip:integration-spike] | ComfyUI에서 워크플로 로드 성공, LoRA↔distilled 호환·라이센스 STATE.md 기록 | test -f langgraph/comfyui_workflows/ltx_faceid.json | 2.4 | cc:완료 [755b317] | - |
 | 3.2 | Face-ID 얼굴+화풍 일관성 데모수준 검증 (게이트) [tdd:skip:quality-spike] | 참조얼굴로 4씬 생성, 얼굴+화풍 유지 눈판정, 미달시 Wan Stand-In 폴백 확정 STATE.md 기록 | - | 3.1 | cc:TODO | - |
 
 ---
