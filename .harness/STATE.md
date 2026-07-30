@@ -15,7 +15,8 @@
 
 ## 현재 목표
 
-Week 2 Day1 환경 스파이크(게이트) 진행 중. 2.1·2.2·2.3·2.3.5 완료, 2.4(전 모델 상주 OOM 실측 게이트) 다음.
+Week 2 Day1 환경 스파이크(게이트) 완료(2.1~2.4). OOM 정책 = 배치 온디맨드
+언로드로 확정. I2V/TTS 모델 확정 후 전 모델 상주 재실측 예정.
 
 ## Task 2.1 — LocalAI 스파이크 (2026-07-28, cc:완료)
 
@@ -128,6 +129,25 @@ video_generator@924a10c. `:8501`에서 실제 `/generate` 호출 검증 완료(�
 이미 열린 파일은 유효 — Linux inode 특성), 재기동은 현재 경로
 (`daol-fascope/.venv/bin/python3.12 -m streamlit run app.py --server.port 8502`)로
 함. `flux.service`는 `:8501`에서 정상 기동·health 200 확인 완료.
+
+## Task 2.4 — 전 모델 상주 OOM 실측 게이트 (2026-07-30, cc:완료)
+
+상세 근거·타임라인은 [docs/spikes/2.4-oom-residency.md](../docs/spikes/2.4-oom-residency.md).
+
+- **사전조치**: ollama systemd가 전역 `OLLAMA_MAX_LOADED_MODELS=1`이라 씬분할+
+  캡션 동시 상주 자체가 불가했음 → `/etc/systemd/system/ollama.service.d/
+  override.conf`로 `=2` 적용(사용자 승인, sudo 직접 실행). **override 유지 중**
+  (재실측 때도 필요).
+- **실측**: baseline(ComfyUI+anim-agent+무관 daol-fascope 상주, 36.4GB) +
+  Nemotron-4B + gemma4 + FLUX.1-schnell 순차 로드 → 시스템 메모리
+  82Gi→118Gi/119Gi까지 상승, 스왑 15Gi 완전 소진, thrashing. video_generator
+  `server.py`(:8500, GPU 21.9GB 보유)가 압박 중 다운(로그 없어 OOM-kill 확정은
+  못 했으나 정황상 유력) — 이후 재기동으로 복구 확인.
+- **결론: 전 모델 상주(PRD 주력안) 기각, 폴백(배치 온디맨드 언로드) 채택.**
+  I2V(LTX/Cosmos/Wan)·TTS 확정 전 3개 모델만으로도 이미 OOM 유발 — 강행 불가.
+- **재실측 예정**: I2V·TTS 모델 확정 후, 확정 스택 전체로 상주 가능여부
+  한 번 더 실측(이번 3-모델 결과가 최종 판단은 아님, daol-fascope처럼 무관한
+  상시 점유 프로세스도 예산에 큰 비중이라 그 시점 상태로 재확인 필요).
 
 ## Task 0.2 — 기존 코드 파악 (파이프라인 4서브시스템) (2026-07-29, cc:완료)
 
