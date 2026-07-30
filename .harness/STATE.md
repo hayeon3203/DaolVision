@@ -313,12 +313,34 @@ URL 상수, `langgraph/api.py` 라우트.
     mp4, PRD.md 59행)대로 **여러 짧은 클립을 이어붙여 최종 90초를 만드는
     것**이 맞는 경로 — Week5 5.x(배치 클립 생성)에서 다룰 사안, 아직 미착수.
 
+## Task 4.1 — :8700 T2I 엔드포인트 (Flux/SDXL :8501 프록시) (2026-07-30, cc:완료)
+
+- **3.3과의 충돌 여부 사전 검토**: 3.3(cc:WIP)은 :8188 ComfyUI LTX-2.3 Face-ID
+  워크플로 구간별 프로파일링 — 전용 격리 venv(`comfyui-bench-venv`)로 돌고
+  "프로덕션 ComfyUI venv는 건드리지 않음"이 원칙, 신규 untracked 파일
+  `video_generator/langgraph/tests/probe_ltx_profile.py` 하나만 추가. 4.1은
+  `video_generator/langgraph/api.py`(:8700 게이트웨이)·`tools.py`에 :8501
+  Flux 프록시 코드를 추가 — 파일·포트·프로세스 겹침 없음(3.3=8188/ComfyUI,
+  4.1=8501/Flux 경유 8700 게이트웨이). 두 작업 간 상호 영향 없음을 확인 후 구현.
+- **구현**: `tools.generate_t2i_anchor(prompt, width?, height?, seed?)` 신설
+  (job_id 불필요한 단발 프록시, 기존 job 스코프 `generate_t2i_image`와 별도) —
+  FLUX.1-schnell(:8501) `/generate` 호출 후 PNG를 base64로 반환. `api.py`에
+  `POST /t2i` 라우트 추가, 빈 prompt는 400, 백엔드 장애(httpx.HTTPError)는 502.
+- **검증**: `tests/test_t2i_endpoint.py` 신설(GPU/Flux 실호출 없이
+  `tools.generate_t2i_anchor`를 가짜로 교체) — base64 반환·빈 prompt 400·
+  백엔드 장애 502 3종 PASS. 기존 회귀 `test_status_clips.py`도 재실행 PASS
+  (게이트웨이 다른 엔드포인트 영향 없음 확인).
+- **커밋**: video_generator repo `6548985`(DaolVision은 백엔드 코드를 갖지
+  않으므로 커밋도 video_generator repo 자체 git에 있음 — 3.1/3.2와 동일 관례).
+
 ## 차단 요소
 
 - 없음
 
 ## 최종 갱신
 
+- 2026-07-30, Task 4.1 완료(:8700 POST /t2i, Flux :8501 프록시, base64 반환) —
+  3.3(ComfyUI :8188 프로파일링, cc:WIP)과 파일/포트 겹침 없음 확인 후 구현.
 - 2026-07-30, Task 3.2 완료(Face-ID 4씬 눈판정 PASS, Wan 폴백 불필요) +
   16:9(1024×576)·와이드샷 프롬프트 톤을 새 기본값으로 확정. 90초 최종영상은
   5.x 배치 클립 이어붙이기로 스코프아웃(미착수).

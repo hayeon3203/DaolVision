@@ -60,11 +60,22 @@
 
 ---
 
+## Week 3.5 — LTX I2V 병목 프로파일링 + 경량화 (4.1과 독립 병렬 가능, 게이트 아님)
+
+| Task | 내용 | DoD | Acceptance | Depends | Status | GH |
+|------|------|-----|------------|---------|--------|----|
+| 3.3 | LTX I2V 파이프라인 병목 프로파일링 (모델로드/스텝/VAE디코드 구간별 실측) [tdd:skip:benchmark] | 워크플로 1회 실행, 구간별(로드·샘플링·디코드) 소요시간 표로 STATE.md 기록 | - | 3.2 | cc:WIP | - |
+| 3.4 | 경량화 파라미터 스윕 (distill LoRA weight, step 10→8, Face-ID LoRA strength 1.0→0.7~0.8, GGUF Q6_K→Q5_K_M) [tdd:skip:quality-spike] | 조합별 생성시간 실측 + 얼굴/화풍 유지 눈판정, 최소 4~5초 분량 유지, 채택 조합·기각 사유 STATE.md 기록 | - | 3.3 | cc:TODO | - |
+| 3.5 | Attention backend 교체 스파이크 (SageAttention3 vs 기본 PyTorch attention) [tdd:skip:benchmark] | ComfyUI 내장 sageattn3_blackwell 적용 전/후 스텝당 소요시간 비교 + 품질 동일성 눈판정 STATE.md 기록. flash-attn-4는 top-level flash_attn_func 미제공으로 ComfyUI attention.py와 드롭인 비호환 확인됨(패치 없인 채택 불가) — 이번 스파이크 대상에서 제외 | - | 3.3 | cc:TODO | - |
+| 3.6 | ComfyUI 모델 로딩 스파이크 완화 플래그 조사 (추후, 낮은 우선순위) [tdd:skip:research] | 로딩 구간 시스템메모리 스파이크 완화 CLI 플래그/옵션 조사 후 적용 전/후 재측정 STATE.md 기록 | - | 3.3 | cc:TODO | - |
+
+---
+
 ## Week 4 — Day3 게이트웨이 :8700 확장 [기준: docs/Architecture.md]
 
 | Task | 내용 | DoD | Acceptance | Depends | Status | GH |
 |------|------|-----|------------|---------|--------|----|
-| 4.1 | :8700 T2I 엔드포인트 (Flux/SDXL :8501 프록시) | POST /t2i가 앵커 이미지(base64/파일) 반환 | curl -sf -X POST http://localhost:8700/t2i -d '{"prompt":"test"}' | grep -qi image | 2.4 | cc:TODO | - |
+| 4.1 | :8700 T2I 엔드포인트 (Flux/SDXL :8501 프록시) | POST /t2i가 앵커 이미지(base64/파일) 반환 | curl -sf -X POST http://localhost:8700/t2i -d '{"prompt":"test"}' | grep -qi image | 2.4 | cc:완료 [6548985] | - |
 | 4.2 | :8700 TTS 엔드포인트 (Kokoro 서버 프록시) | POST /tts가 한국어 wav 반환 | curl -sf -X POST http://localhost:8700/tts -d '{"text":"안녕"}' --output /tmp/t.wav && test -s /tmp/t.wav | 2.4 | cc:TODO | - |
 | 4.3 | :8700 대시보드 엔드포인트 /dashboard/status | JSON에 trace·mem_used·external_calls 필드 포함 | curl -sf http://localhost:8700/dashboard/status | grep -q external_calls | 2.4 | cc:TODO | - |
 | 4.4 | OOM 배치 오케스트레이터 (상주/언로드 정책, 로드순서 제어) [tdd:required] | 상주·배치 모드 전환 + 로드순서 직렬화, 유닛테스트 peak 검증 | cd langgraph && ./.venv/bin/python tests/test_oom_orchestrator.py | 2.4 | cc:TODO | - |
