@@ -179,11 +179,44 @@ URL 상수, `langgraph/api.py` 라우트.
 대시보드/스텝퍼 설계 시 5개 엔드포인트(:8500/:8501/:8600/:8700/:8188) 기준으로
 진행.
 
+## Task 3.1 — LTX distilled + BFS노드 + Face-ID LoRA 설치·호환·라이센스 확인 (2026-07-30, cc:완료)
+
+상세 근거는 [docs/spikes/3.1-ltx-faceid-compat.md](../docs/spikes/3.1-ltx-faceid-compat.md).
+
+- **원래 가정 폐기**: "LTX distilled"(구 LTX-Video 13B) + 커뮤니티 Face-ID
+  LoRA 조합은 버전 불일치로 애초에 안 맞음(LoRA는 LTX-2.3/22B 전용,
+  `docs/model-selection.md`에 착수 전부터 리서치로 기록돼 있던 사항). "BFS"는
+  미정의 상태였으나 `alisson-anjos/ComfyUI-BFSNodes`(Face-ID LoRA 공식
+  컴패니언 노드)로 확인.
+- **재정의 확정 스택**: LTX-2.3-22B-dev(GGUF Q6_K, `unsloth/LTX-2.3-GGUF`,
+  17.8GB) + distill LoRA(rank-111 dynamic, `Kijai/LTX2.3_comfy`, 2.74GB) +
+  Best-Face-ID LoRA(`Alissonerdx/LTX-Best-Face-ID`, 2.47GB) + BFS Nodes +
+  KJNodes(video_generator/ComfyUI에 실치). 사용자 질문("더 가벼운 LTX 없냐")에
+  대한 답: 공식 bf16(46GB)보다 GGUF Q6_K(17.8GB)가 실제 경량 경로이며, 이
+  조합이 LoRA 저자가 직접 검증·배포한 조합(총 41.3GB, ArcFace projector는
+  효과 미미해 스킵).
+- **설치 중 부작용 2건 즉시 복구**: (1) numpy 2.x 승격이 기존 Wan
+  파이프라인의 mediapipe(numpy<2 요구)를 깰 뻔함 → 1.26.4로 원복. (2)
+  opencv-python-headless가 기존 opencv-contrib-python(4.11.0,
+  `cv2.face` 등 contrib 모듈 보유)을 섀도잉할 뻔함 → contrib
+  force-reinstall로 복구. 둘 다 기존 프로덕션 파이프라인 영향 없이 해결
+  확인.
+- **워크플로 로드 검증**(헤드리스, `/object_info` API 기준): 39개 노드 타입 +
+  9개 모델 파일 참조 전부 FOUND. 이 ComfyUI 인스턴스는 community 표준
+  `UnetLoaderGGUF` 대신 내장 `LoaderGGUF`를 씀 → 워크플로 JSON 노드타입
+  교체, distill LoRA 위젯값의 원저작자 개인 폴더 접두어(`ltx-2/2.3/`)도
+  제거해 우리 설치 경로와 맞춤. 산출물: `video_generator/langgraph/
+  comfyui_workflows/ltx_faceid.json`(video_generator repo 자체 git에 커밋,
+  ComfyUI 모델·커스텀노드 디렉터리는 gitignore 대상이라 추적 안 됨).
+- **라이센스**: LTX-2 Community License(무료, 단 연매출 $10M+ 법인은 별도
+  유료 계약 필요 — 이 프로젝트는 해당 없음), BFS Nodes는 GPL-3.0. 문제 없음.
+- **실제 생성 품질 검증은 3.2로 이관**(참조얼굴 4씬 생성 눈판정).
+
 ## 차단 요소
 
 - 없음
 
 ## 최종 갱신
 
-- 2026-07-29, Task 0.2 완료(파이프라인 5엔드포인트 확인, zimage :8501 미문서화·cancel
-  구현완료 stale 표기 2건 격차 기록).
+- 2026-07-30, Task 3.1 완료(LTX-2.3+Face-ID 조합 재정의, 설치·워크플로 로드
+  검증, 라이센스 확인).

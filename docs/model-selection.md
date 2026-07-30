@@ -57,8 +57,9 @@ server.py`(GPU 21.9GB 보유) 다운. → **전 모델 상주 기각, 폴백(배
 
 | 모델 | 국적 | 파라미터 | 디스크/양자화 | Load VRAM | Peak VRAM | 비고 |
 |---|---|---|---|---|---|---|
-| LTX-Video (distilled) | 🇮🇱 Lightricks | 13B(경량 2B 변형도 있음) | bf16 28.6GB / fp8 15.7GB | 최소 6GB(offload+512×512, 정확한 clean-load 미확인) | 미확인(커뮤니티 보고 6~32GB, offload/해상도 의존) | **⚠️ 사실상 LTX-2/2.3에 자리 내줌(같은 회사, 2026-01)** |
-| LTX "Best-Face-ID" LoRA | 커뮤니티(Alissonerdx), Lightricks 공식 아님 | 애드온 | LoRA 2.47GB + ArcFace projector 69.3MB + CharacterSheet LoRA 1.31GB = 4.01GB | — | — | **🚨 LTX-2.3(22B)용으로 빌드됨, LTX-Video 13B distilled용 아님** — Plans.md 3.1이 가정한 "LTX distilled + 이 LoRA" 조합 자체가 호환 안 될 수 있음. 3.1 착수 전 재확인 필요 |
+| LTX-Video (distilled, 구버전) | 🇮🇱 Lightricks | 13B(경량 2B 변형도 있음) | bf16 28.6GB / fp8 15.7GB | 최소 6GB(offload+512×512, 정확한 clean-load 미확인) | 미확인(커뮤니티 보고 6~32GB, offload/해상도 의존) | ❌ **3.1에서 폐기 확정** — Face-ID LoRA 비호환(LTX-2.3 전용), LTX-2/2.3에 자리 내줌 |
+| LTX "Best-Face-ID" LoRA | 커뮤니티(Alissonerdx), Lightricks 공식 아님 | 애드온 | LoRA 2.47GB(+ArcFace projector 69.3MB, CharacterSheet LoRA 1.31GB는 선택적, 3.1에서 스킵) | — | — | ✅ **3.1에서 확정 채택**: LTX-2.3(22B)용, `ComfyUI-BFSNodes`(=BFS노드) 필요. LTX-Video 13B distilled 비호환 확인됨(3.1 재확인 완료) — 상세: [3.1 spike](spikes/3.1-ltx-faceid-compat.md) |
+| LTX-2.3-22B-dev (GGUF Q6_K, 경량) | 🇮🇱 Lightricks(원본) / unsloth(GGUF 양자화) | 22B | GGUF Q6_K **17.8GB**(공식 bf16 46.1GB 대비 약 61% 축소) | 실측 예정(3.2) | 실측 예정(3.2) | ✅ **3.1에서 채택**: Face-ID LoRA 호환 확인 스택의 실제 체크포인트. 공식 dev/distilled bf16(둘 다 46.1GB, fp8/GGUF 없음)보다 이 커뮤니티 GGUF가 유일한 경량 경로 — distill LoRA(rank-111 dynamic, `Kijai/LTX2.3_comfy`, 2.74GB, 공식 distilled-lora-384 7.61GB 대비 약 64% 축소)와 함께 8-step 거동 재현 |
 | nvidia/Cosmos-Predict2-2B-Video2World | 🇺🇸 NVIDIA | 2B | bf16 `.pt`, 3.91GB(해상도/fps별) | Load/Peak 분리 안 됨 | 32.54GB(공식수치, 720p/16fps, no sparsity) | 공식 NVIDIA 리포, Cosmos-Predict2.5가 후속작으로 이미 나옴 |
 | Wan2.1-T2V-14B(Stand-In 베이스) | 🇨🇳 Alibaba | 14B | ~57GB(6샤드) + VAE 508MB + T5인코더 11.4GB | 40~48GB(480p, fp8+offload) | 65~80GB(720p, 단일GPU) | ⚠️ **현재 이 repo에 실제 배선된 건 `Wan2.2-Animate-14B-Diffusers`**(animate_server.py) — PRD가 적은 "Wan2.1-14B"와 버전 드리프트 있음, PRD 정정 필요 |
 | Stand-In(애드온) | 🇨🇳 WeChatCV(Tencent 계열 추정, 사명 100%확인은 아님) | 153M(베이스의 ~1%) | 미확인 | — | — | CVPR2026 accepted, Wan2.1-T2V-14B 호환 |
@@ -128,10 +129,10 @@ server.py`(GPU 21.9GB 보유) 다운. → **전 모델 상주 기각, 폴백(배
 
 ## 시사점
 
-1. **가장 시급한 확인**: Plans.md 3.1(LTX distilled + BFS노드 + Face-ID LoRA)
-   착수 전, Face-ID LoRA가 LTX-Video 13B distilled가 아니라 **LTX-2.3(22B)
-   대상**이라는 리서치 결과부터 검증해야 함. 안 맞으면 3.1 자체를
-   "LTX-2.3 + Face-ID"로 재정의하거나 다른 Face-ID 방법을 찾아야 함.
+1. **(해결됨, 2026-07-30) 3.1 검증 완료**: 리서치대로 Face-ID LoRA는
+   LTX-Video 13B distilled 비호환, **LTX-2.3(22B) 전용**으로 확인됨. 3.1을
+   "LTX-2.3-22B-dev(GGUF Q6_K) + distill LoRA + Face-ID LoRA + BFS Nodes"로
+   재정의·설치·워크플로 로드 검증 완료. 상세: [3.1 spike](spikes/3.1-ltx-faceid-compat.md).
 2. **비중국 정책 재점검 대상**: Wan(Alibaba), CosyVoice2/FunAudioLLM
    (Alibaba), Metis(CUHK-Shenzhen), Qwen3.6-NVFP4(원본 Alibaba),
    ideogram-4-fp8(텍스트인코더가 Qwen3-VL, Alibaba) — "nvidia 공식지원"
