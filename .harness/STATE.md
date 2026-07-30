@@ -15,7 +15,7 @@
 
 ## 현재 목표
 
-Week 2 Day1 환경 스파이크(게이트) 진행 중. 2.1·2.2 완료, 2.3 다음.
+Week 2 Day1 환경 스파이크(게이트) 진행 중. 2.1·2.2·2.3·2.3.5 완료, 2.4(전 모델 상주 OOM 실측 게이트) 다음.
 
 ## Task 2.1 — LocalAI 스파이크 (2026-07-28, cc:완료)
 
@@ -65,6 +65,24 @@ Week 2 Day1 환경 스파이크(게이트) 진행 중. 2.1·2.2 완료, 2.3 다�
 - **NVIDIA는 텍스트 레이어에만 깔끔**: Nemotron-3-Nano-4B-GGUF(2.84GB, GGUF)는
   ollama 직행 가능 → **2.3 씬분할 후보**로 이월(ollama의 Mamba2-하이브리드 arch
   지원 재확인 필요).
+
+## Task 2.3 — Nemotron-4B 한국어 씬분할 벤치 (2026-07-30, cc:완료)
+
+상세 근거·재현법은 [docs/spikes/2.3-scene-split-korean.md](../docs/spikes/2.3-scene-split-korean.md).
+
+- **모델**: `ollama pull hf.co/nvidia/NVIDIA-Nemotron-3-Nano-4B-GGUF:Q4_K_M`
+  (2.8GB) — 2.2에서 우려한 Mamba2-하이브리드 arch 미지원 없이 정상 로드/추론.
+- **방법**: 프로덕션 system_prompt(`nodes.py::node_split_scenes`) 그대로, PRD S1
+  시나리오(우주비행사 4씬)를 한국어로 입력해 3회 반복 실행. Llama3.1:8b로 동일
+  프롬프트 2회 비교 실행.
+- **Nemotron 3회**: JSON 파싱 3/3, 한국어 원문 보존 3/3, duration(2~3초) 스키마
+  100% 준수, subject_type(human) 정확도 12/14씬. 결함: 1회 키릴문자 혼입
+  (`гром음`), 1회 2/5씬 human→nonhuman 오분류. 둘 다 JSON 구조는 안 깨짐.
+- **Llama3.1 2회 비교**: duration 위반 1건 추가, subject_type 정확도 3/11씬으로
+  Nemotron보다 뚜렷이 나쁨(2회차는 5씬 전부 오분류).
+- **결론: Nemotron-3-Nano-4B-GGUF 채택, 폴백(Llama3.1) 불필요**. 간헐적 결함은
+  Llama3.1 대비 동등 이상이고 fallback 파싱 경로(`parse_json_lenient` +
+  원문 text 폴백)로 안전. subject_type 오분류 완화는 6.x 배선 단계 과제로 이월.
 
 ## Task 2.3.5 — T2I 모델 확정 (2026-07-29, cc:완료)
 
