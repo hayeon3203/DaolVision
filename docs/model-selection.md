@@ -120,23 +120,13 @@ server.py`(GPU 21.9GB 보유) 다운. → **전 모델 상주 기각, 폴백(배
 
 ---
 
-## 시사점
+## NVIDIA 모델 시사점
 
-1. **(해결됨, 2026-07-30) 3.1 검증 완료**: 리서치대로 Face-ID LoRA는
-   LTX-Video 13B distilled 비호환, **LTX-2.3(22B) 전용**으로 확인됨. 3.1을
-   "LTX-2.3-22B-dev(GGUF Q6_K) + distill LoRA + Face-ID LoRA + BFS Nodes"로
+1. **(해결됨, 2026-07-30) 3.1 검증 완료**: 리서치대로 Face-ID LoRA는 LTX-Video 13B distilled 비호환, **LTX-2.3(22B) 전용**으로 확인됨. 3.1을 "LTX-2.3-22B-dev(GGUF Q6_K) + distill LoRA + Face-ID LoRA + BFS Nodes"로
    재정의·설치·워크플로 로드 검증 완료. 상세: [3.1 spike](spikes/3.1-ltx-faceid-compat.md).
-2. **비중국 정책 재점검 대상**: Wan(Alibaba), CosyVoice2/FunAudioLLM
-   (Alibaba), Metis(CUHK-Shenzhen), Qwen3.6-NVFP4(원본 Alibaba),
-   ideogram-4-fp8(텍스트인코더가 Qwen3-VL, Alibaba) — "nvidia 공식지원"
+2. **비중국 정책 재점검 대상**: Wan(Alibaba), CosyVoice2/FunAudioLLM(Alibaba), Metis(CUHK-Shenzhen), Qwen3.6-NVFP4(원본 Alibaba), ideogram-4-fp8(텍스트인코더가 Qwen3-VL, Alibaba) — "nvidia 공식지원"
    카테고리는 원산지 라벨과 실제 학습 주체가 분리돼있다는 점 문서화 필요.
-3. **PRD 버전 드리프트 2건**: (a) I2V 폴백 "Wan2.1-14B"가 실제 배선은
-   Wan2.2-Animate-14B, (b) T2I/멀티모달 후보군에 Gemma 4·LTX-2.3처럼
-   PRD 작성 이후 새로 나온 옵션들이 있음 — PRD/Architecture 갱신 검토.
-4. **Peak VRAM 데이터가 전반적으로 약함**: 대부분의 공개 소스가 load만
-   보고하고 peak(생성 중 순간 최대)은 안 나눔. GB10 자체 실측(2.3.5·2.4
-   방식)이 최종 결정 전 가장 신뢰할 수 있는 근거 — 특히 I2V 후보 3~4개로
-   좁혀지면 bench_t2i.py류 스크립트로 직접 재측정 권장.
-5. **Krea-2-Turbo·ideogram-4-fp8·LTX-2.3·Gemma-4 계열 모두 실재 확인됨**
-   (사용자가 최근 나온 모델이라 확인이 필요하다고 짚은 후보들 — 전부 진짜
-   존재, 허구 아님).
+3. **PRD 버전 드리프트 2건**: (a) I2V 폴백 "Wan2.1-14B"가 실제 배선은 Wan2.2-Animate-14B, (b) T2I/멀티모달 후보군에 Gemma 4·LTX-2.3처럼 PRD 작성 이후 새로 나온 옵션들이 있음 — PRD/Architecture 갱신 검토.
+4. **Peak VRAM 데이터가 전반적으로 약함**: 대부분의 공개 소스가 load만 보고하고 peak(생성 중 순간 최대)은 안 나눔. GB10 자체 실측(2.3.5·2.4
+   방식)이 최종 결정 전 가장 신뢰할 수 있는 근거 — 특히 I2V 후보 3~4개로 좁혀지면 bench_t2i.py류 스크립트로 직접 재측정 권장.
+5. **아키텍처 호환성의 어려움**: 오픈소스 프레임워크(vLLM) 환경에서는 주류 모델(gemma4, Llama3.2 등)이 연동성이 높다 (Nemotron-Nano-12B-v2-VL 모델이 C-RADIO 비전 인코더를 프레임워크를 네이티브로 해석하지 못 함. 최신 Nemotron 12B V2 모델 또한 아키텍처 상 CRadioV2-H 인코더를 사용. 추론 엔진 단에 C-RADIO용 Custom Vision Encoder 를 직접 작성해서 붙여야하는 엔지니어링 오버헤드 존재)
