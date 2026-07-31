@@ -9,6 +9,7 @@ import asyncio
 import base64
 import os
 import uuid
+from pathlib import Path
 
 import httpx
 from fastapi import FastAPI, File, Form, HTTPException, Response, UploadFile
@@ -18,10 +19,12 @@ from langgraph.types import Command
 
 import tools
 import metrics
+import dashboard
 from graph import compile_graph
 
 app = FastAPI(title="anim_video_agent")
 app.mount("/files", StaticFiles(directory=str(tools.JOBS_DIR)), name="files")
+app.mount("/static", StaticFiles(directory=str(Path(__file__).resolve().parent / "static")), name="static")
 
 graph = None  # startup에서 초기화
 
@@ -338,6 +341,12 @@ def metrics_endpoint():
 @app.get("/health")
 async def health():
     return {"status": "ok", "graph_loaded": graph is not None}
+
+
+@app.get("/dashboard/status")
+def dashboard_status():
+    """자립 대시보드 폴링 엔드포인트 (docs/PRD.md R9). trace/gpu/external_calls 실측."""
+    return dashboard.dashboard_status()
 
 
 def _to_url(path: str | None) -> str | None:
