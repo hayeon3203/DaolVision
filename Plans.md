@@ -81,7 +81,7 @@
 | 4.2 | :8700 영상 나레이션 TTS 엔드포인트 (Chatterbox V3 CC0 화자) | POST /tts/narration이 고정 CC0 한국어 화자로 24kHz mono WAV 반환, S1은 이 경로만 사용 | curl -sf -X POST http://localhost:8700/tts/narration -H 'Content-Type: application/json' -d '{"text":"안녕"}' --output /tmp/t.wav && test -s /tmp/t.wav | 2.4 | cc:완료 [0b5e63f] | - |
 | 4.2.1 | :8700 사용자 음성 TTS 엔드포인트 (Chatterbox V3) [tdd:required] | POST /tts/clone이 text+reference WAV로 24kHz mono WAV 반환, 참조 누락시 4xx, 다른 화자 자동 폴백 없음 | cd langgraph && ./.venv/bin/python tests/test_tts_routing.py | 4.2 | cc:완료 | - |
 | 4.3 | :8700 대시보드 엔드포인트 /dashboard/status | JSON에 trace·mem_used·external_calls 필드 포함 | curl -sf http://localhost:8700/dashboard/status | grep -q external_calls | 2.4 | cc:완료 [f4dad69] | - |
-| 4.4 | OOM 배치 오케스트레이터 (상주/언로드 정책, 로드순서 제어) [tdd:required] | 상주·배치 모드 전환 + 로드순서 직렬화, 유닛테스트 peak 검증 | cd langgraph && ./.venv/bin/python tests/test_oom_orchestrator.py | 2.4 | cc:TODO | - |
+| 4.4 | OOM 배치 오케스트레이터 (상주/언로드 정책, 로드순서 제어) [tdd:required] | 상주·배치 모드 전환 + 로드순서 직렬화, 유닛테스트 peak 검증 | cd langgraph && ./.venv/bin/python tests/test_oom_orchestrator.py | 2.4 | cc:완료 | - |
 | 4.5 | 스타일 셀렉터 프롬프트 프리픽스 주입 (시네마틱/애니/픽셀/사이버펑크) [tdd:required] | style→프리픽스 매핑 함수, 유닛테스트 4종 검증 | cd langgraph && ./.venv/bin/python tests/test_style_prefix.py | - | cc:TODO | - |
 | 4.6 | :8700 I2V 단발샷 엔드포인트 (LTX-13B-distilled, ComfyUI 프록시) | POST /i2v가 이미지+프롬프트로 영상(webp/mp4) 반환, 3.8 종횡비 버그 수정(입력 비율에 맞춰 32배수 해상도 산정) 반영 | curl -sf -X POST http://localhost:8700/i2v -F prompt=test -F image=@test.jpg | grep -qi video | 2.4, 3.8 | cc:TODO | - |
 ---

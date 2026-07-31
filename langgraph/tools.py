@@ -23,6 +23,8 @@ from io import BytesIO
 import httpx
 from PIL import Image, ImageOps
 
+import oom_orchestrator as oom
+
 # ── 환경 설정 ────────────────────────────────────────────────
 OLLAMA_URL = os.environ.get("AGENT_OLLAMA_URL", "http://127.0.0.1:11434/api/chat")
 OLLAMA_GEN_URL = OLLAMA_URL.replace("/api/chat", "/api/generate")  # 비전 캡션용(images 지원)
@@ -208,9 +210,23 @@ def refs_dir(job_id: str) -> Path:
     return d
 
 
+async def _unload_llm_backend() -> None:
+    """씬분할/캡션 두 Ollama 모델을 명시적으로 언로드(keep_alive=0). Task 4.4 —
+    2.4 실측상 이 언로드 없이 다음 backend(T2I 등)로 전환하면 이중 상주로 OOM."""
+    async with httpx.AsyncClient(timeout=30) as client:
+        for model in {LLM_MODEL, VISION_MODEL}:
+            try:
+                await client.post(OLLAMA_GEN_URL, json={"model": model, "keep_alive": 0})
+            except httpx.HTTPError:
+                pass  # 이미 언로드됐거나 서버 일시 불가 — 다음 로드가 알아서 재적재
+
+
+oom.register_unload("llm", _unload_llm_backend)
+
+
 # ── LLM ─────────────────────────────────────────────────────
 async def call_llm(system_prompt: str, user_prompt: str) -> str:
-    async with httpx.AsyncClient(timeout=180) as client:
+    async with oom.phase("llm"), httpx.AsyncClient(timeout=180) as client:
         resp = await client.post(
             OLLAMA_URL,
             json={
@@ -281,7 +297,7 @@ async def caption_image(image_path: str) -> str:
     """비전 모델로 이미지의 주요 피사체를 영어 한 구절로 캡션.
     씬↔이미지 내용 매칭 + 캐릭터록(인물 묘사 텍스트) 주입에 쓰인다."""
     b64 = base64.b64encode(Path(image_path).read_bytes()).decode()
-    async with httpx.AsyncClient(timeout=180) as client:
+    async with oom.phase("llm"), httpx.AsyncClient(timeout=180) as client:
         resp = await client.post(OLLAMA_GEN_URL, json={
             "model": VISION_MODEL,
             "prompt": (
@@ -445,7 +461,7 @@ async def call_video(
     # read 타임아웃을 없앤다(응답은 언젠가 반드시 온다). connect만 유지해 서버가 죽으면 빠르게 실패.
     # ponytail: read=None. 실제로 서버가 무한 hang하면 job이 running에 묶임 → /status로 감지·재시작.
     timeout = httpx.Timeout(connect=10.0, read=None, write=60.0, pool=None)
-    async with httpx.AsyncClient(timeout=timeout) as client:
+    async with oom.phase("i2v"), httpx.AsyncClient(timeout=timeout) as client:
         resp = await client.post(f"{WAN_URL}{endpoint}", json=body)
         resp.raise_for_status()
         video_url = resp.json()["video_url"]
@@ -465,7 +481,7 @@ async def generate_t2i_image(job_id: str, prompt: str, seed: int | None = None, 
     if seed is not None:
         body["seed"] = seed
     timeout = httpx.Timeout(connect=10.0, read=120.0, write=60.0, pool=None)
-    async with httpx.AsyncClient(timeout=timeout) as client:
+    async with oom.phase("t2i"), httpx.AsyncClient(timeout=timeout) as client:
         resp = await client.post(f"{T2I_URL}/generate", json=body)
         resp.raise_for_status()
         image_url = resp.json()["image_url"]
@@ -488,7 +504,7 @@ async def generate_scene_anchor(
     if seed is not None:
         body["seed"] = seed
     timeout = httpx.Timeout(connect=10.0, read=180.0, write=60.0, pool=None)
-    async with httpx.AsyncClient(timeout=timeout) as client:
+    async with oom.phase("t2i"), httpx.AsyncClient(timeout=timeout) as client:
         resp = await client.post(f"{T2I_URL}/generate", json=body)
         resp.raise_for_status()
         image_url = resp.json()["image_url"]
@@ -516,7 +532,7 @@ async def generate_t2i_anchor(
     if seed is not None:
         body["seed"] = seed
     timeout = httpx.Timeout(connect=10.0, read=120.0, write=60.0, pool=None)
-    async with httpx.AsyncClient(timeout=timeout) as client:
+    async with oom.phase("t2i"), httpx.AsyncClient(timeout=timeout) as client:
         resp = await client.post(f"{T2I_URL}/generate", json=body)
         resp.raise_for_status()
         data = resp.json()
@@ -537,7 +553,7 @@ async def generate_kokoro_narration(text: str, speed: float = 1.0) -> bytes:
     """
     # 첫 요청에는 Kokoro 모델의 메모리 적재 시간이 포함될 수 있다.
     timeout = httpx.Timeout(connect=10.0, read=300.0, write=30.0, pool=None)
-    async with httpx.AsyncClient(timeout=timeout) as client:
+    async with oom.phase("tts"), httpx.AsyncClient(timeout=timeout) as client:
         response = await client.post(
             f"{KOKORO_URL}/generate",
             json={"text": text, "language": "ko", "speed": speed},
@@ -566,7 +582,7 @@ async def generate_chatterbox_clone(
 ) -> bytes:
     """Generate cloned Korean speech using only the Chatterbox V3 backend."""
     timeout = httpx.Timeout(connect=10.0, read=600.0, write=60.0, pool=None)
-    async with httpx.AsyncClient(timeout=timeout) as client:
+    async with oom.phase("tts"), httpx.AsyncClient(timeout=timeout) as client:
         response = await client.post(
             f"{CHATTERBOX_URL}/generate",
             data={"text": text},
@@ -708,7 +724,10 @@ async def _generate_reference_clip(
         "face_lora": None if subject_ref else [STANDIN_FACE_LORA_STRENGTH, STANDIN_DISTILL_LORA_STRENGTH],
     }, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
-    async with httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=60.0, write=60.0, pool=None)) as client:
+    async with (
+        oom.phase("i2v"),
+        httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=60.0, write=60.0, pool=None)) as client,
+    ):
         # 1) 참조 이미지 업로드 → ComfyUI input/ 에 올려 LoadImage가 파일명으로 참조
         img_path = refs_dir(job_id) / ref_image
         upload_name = f"{'subject' if subject_ref else 'face'}_v{REFERENCE_PREPROCESS_VERSION}_{img_path.stem}.png"
