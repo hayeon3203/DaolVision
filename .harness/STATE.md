@@ -26,7 +26,8 @@
 ## 현재 목표
 
 Week 2 Day1 환경 스파이크(게이트) 완료(2.1~2.4). OOM 정책 = 배치 온디맨드
-언로드로 확정. I2V/TTS 모델 확정 후 전 모델 상주 재실측 예정.
+언로드로 확정. TTS는 S1 영상=Kokoro, 독립 사용자 음성=Chatterbox
+Multilingual V3로 역할 분리 확정. I2V 포함 전체 모델 상주 재실측 예정.
 
 ## Task 2.1 — LocalAI 스파이크 (2026-07-28, cc:완료)
 
@@ -368,12 +369,98 @@ URL 상수, `langgraph/api.py` 라우트.
   venv `/home/admin/.venv`와 분리 유지, 3.1의 numpy/opencv 오염 전례 반복
   방지).
 
+## Task 7.4 — Chatterbox V3 사용자 음성 E2E 청취 검증 (2026-07-31, cc:완료)
+
+- **결정**: 영상 생성 파이프의 나레이션은 Kokoro로 고정하고, LocalAI의 독립
+  TTS 카테고리에서만 Chatterbox Multilingual V3 사용자 음성 복제를 제공한다.
+- **라우팅 계약**: Agent 내부 `POST /tts/narration` → Kokoro, 독립 TTS
+  `POST /tts/clone` → Chatterbox V3. 두 엔진 사이 자동 폴백 없음.
+- **참조 입력**: `private/tts/voices/my_voice/reference.wav`(35.43초, PCM
+  16-bit, 48kHz stereo)와 `reference.txt`. `private/`와 출력 `out/`은 Git 제외.
+- **환경**: `.venv-chatterbox` Python 3.11, ARM64 CUDA 13용
+  torch/torchaudio 2.11.0+cu130. V3 GPU 로드 약 3.0GiB 실측.
+- **검증**: 같은 한국어 문장과 seed로 참조 조건 clone 및 기본 음성 대조군을
+  생성해 음량 정규화 후 청취. 사용자가 `clone_test_listen.wav`는 본인 음성과
+  매우 유사하다고 판정했고 기본 음성은 말투가 급해 부적합하다고 판정.
+- **산출물**: `out/tts/chatterbox/my_voice/clone_test_listen.wav`,
+  `default_voice_control_listen.wav`, `reference_listen.wav`.
+- **남은 구현**: 게이트웨이 `/tts/narration`, `/tts/clone` 및 LocalAI TTS
+  화면 배선은 Plans 4.2/4.2.1/6.3에서 구현한다. 현재는 로컬 CLI와 모델 검증 완료.
+
+## Task 4.2 — :8700 Kokoro 영상 나레이션 엔드포인트 (2026-07-31, cc:완료)
+
+- **구현**: `POST /tts/narration`을 추가해 `text`와 `speed(0.5~2.0)`를
+  localhost `:8503/generate`로 전달하고, 결과를 `audio/wav`로 반환한다.
+  빈 텍스트는 400, 백엔드 연결 실패·비정상 WAV는 502로 처리한다.
+- **엔진 경계**: 이 경로는 영상 나레이션 전용 Kokoro로 고정하며 Chatterbox로
+  자동 폴백하지 않는다. 사용자 복제 음성은 후속 Task 4.2.1 `/tts/clone`에서
+  별도로 구현한다.
+- **Kokoro 서비스**: `tts/kokoro/`에 PyKokoro 한국어 백엔드, 격리
+  `.venv-kokoro`, systemd 유닛을 추가했다. 기본 화자는 `af_heart`, 출력은
+  24kHz mono PCM 16-bit WAV이며 최초 모델 적재를 고려해 게이트웨이 read
+  timeout은 300초다.
+- **검증**: 계약 테스트(정상 WAV·빈 입력 400·백엔드 장애 502)와 기존 T2I
+  회귀 테스트 PASS. 실서비스 `POST :8700/tts/narration` 호출도 200
+  (`X-TTS-Engine: kokoro`), 24kHz mono PCM, 6.4초/307,244바이트로 통과.
+  청취용 결과는 `out/tts/kokoro_narration_api.wav`.
+
+## Task 3.4 — LTX I2V 경량화 파라미터 스윕 (2026-07-31, cc:완료)
+
+상세 근거는 [docs/spikes/3.4-ltx-lightweight-sweep.md](../docs/spikes/3.4-ltx-lightweight-sweep.md).
+
+- **채택: baseline 유지**(8-step, GGUF Q6_K, Face-ID LoRA strength 1.0). 테스트한
+  경량화 레버 중 순이익 나는 조합 없음.
+- **step 8→6: 기각**. twin 아티팩트(주인공 옆에 동일 인물이 프레임 내내 하나
+  더 붙음, 저스텝 diffusion의 전형적 identity 미수렴 결함) + 얼굴 정합성 저하.
+- **Face-ID strength 0.75: 미결**. 시드를 baseline과 정확히 동일하게 고정해도
+  (`/history`로 실제 반영 확인) 카메라 구도가 매번 달라짐 — GPU 병렬연산
+  부동소수점 비결정성이 8-step 누적되며 증폭되는 것으로 추정, 이 파이프라인은
+  시드 고정만으론 완전 재현 안 됨. 3회 제출 전부 얼굴이 프레임에 안 잡혀
+  정합성 판정 불가, 속도 영향 없음만 확인.
+- **GGUF Q6_K→Q5_K_M: 트레이드오프로 미채택**. 가중치 15.6GB(Q6_K 17.2GB 대비
+  작음)는 확실하나, 얼굴 정합성이 눈에 띄게 하락(턱선·헤어 파팅 불일치)하고
+  속도는 두 실행 간 46% 편차(20.28 vs 28.27초/step)로 신뢰 불가.
+- **UVM(통합메모리) 스톨 반복 재현 — 4.4/3.6에 근거로 남김**: 시스템 메모리가
+  1~2GB대로 빠듯할 때마다 GPU-매핑 페이지 회수 압박으로 `UVM GPU1 BH` 커널
+  스레드가 계속 개입, ComfyUI 스레드는 CPU 99%인데 disk read_bytes·로그
+  진행이 15~24분+ 완전히 멈추는 현상이 이번 스윕에서 최소 2회 재현됨(GGUF
+  로드 단계·VAE 디코드 단계 각각). `/interrupt` 무효, `systemctl --user
+  restart comfyui.service`로만 회복. 일반 스왑 스래싱과 달리 GPU-매핑
+  메모리가 스왑 압박 받을 때 특유의 오버헤드(CUDA managed-memory
+  oversubscription의 알려진 함정) — 4.4는 "메모리 부족 감내"가 아니라
+  "GPU-매핑 페이지가 회수 후보로 안 잡히게 여유 유지"를 목표로 잡아야 함.
+- **Wan2.2-TI2V-5B 대비 참고**: `journalctl -u wan.service`에서 LTX와 동일
+  프레임수(121) 조건 실측 2건 발견 — 45.68~93.08초/step(1280×704, 20-step).
+  LTX baseline 27.6초/step(1024×576, 8-step) 대비 Wan(5B, 파라미터 훨씬 작음)이
+  오히려 1.7~3.4배 느림 — 3.2의 "Wan Stand-In 폴백 불필요" 판정이 속도 면에서도
+  방향이 맞았음을 보강.
+
 ## 차단 요소
 
 - 없음
 
+## Task 4.2.1 — :8700 Chatterbox V3 사용자 음성 엔드포인트 (2026-07-31, cc:완료)
+
+- **구현**: `POST /tts/clone`이 multipart `text`와 필수 `reference` WAV를
+  받아 Chatterbox 전용 `:8504/generate`로 전달한다.
+- **출력 계약**: Chatterbox 서비스가 결과를 24kHz mono PCM 16-bit WAV로
+  정규화한다. 빈 텍스트는 400, 참조 누락은 422, WAV가 아닌 입력은 415,
+  백엔드 장애·비정상 WAV는 502다.
+- **엔진 경계**: clone 경로는 Chatterbox V3만 호출하며 Kokoro 자동 폴백이
+  없다. `/tts/narration`의 Kokoro 고정 경로도 그대로 유지한다.
+- **검증**: `tests/test_tts_routing.py`, 기존 Kokoro narration 및 T2I 계약
+  테스트와 Python 컴파일 검증 PASS.
+
 ## 최종 갱신
 
+- 2026-07-31, Task 4.2.1 완료(:8700 `POST /tts/clone` → Chatterbox V3
+  :8504, 필수 참조 WAV, 24kHz mono 출력, Kokoro 폴백 없음).
+- 2026-07-31, Task 4.2 완료(:8700 `POST /tts/narration` → Kokoro :8503,
+  한국어 24kHz mono WAV 실호출 통과). 영상 나레이션은 Kokoro 고정,
+  사용자 음성은 후속 4.2.1 Chatterbox 경로로 계속 분리.
+- 2026-07-31, TTS 역할 분리 확정(S1 영상=Kokoro, 독립 사용자 음성=Chatterbox
+  V3). 실제 참조 음성 clone 청취 통과, 기본 음성 대조군은 기각. 게이트웨이/UI
+  배선은 후속 Task 4.2/4.2.1/6.3.
 - 2026-07-30, Task 4.1 완료(:8700 POST /t2i, Flux :8501 프록시, base64 반환) —
   3.3(ComfyUI :8188 프로파일링, cc:WIP)과 파일/포트 겹침 없음 확인 후 구현.
 - 2026-07-30, Task 3.2 완료(Face-ID 4씬 눈판정 PASS, Wan 폴백 불필요) +
