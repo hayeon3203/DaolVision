@@ -479,6 +479,21 @@ Face-ID LoRA 출력~샘플러 사이에 패치 삽입.
   [I2I] [TTS]`. docs/PRD.md 갱신 완료, `:8700 /i2v` 게이트웨이 엔드포인트는
   아직 미구현(Plans.md 신규 태스크로 추가).
 
+## Task 3.6 — ComfyUI 모델 로딩 스파이크 완화 플래그 조사 (2026-07-31, cc:완료)
+
+상세 근거는 [docs/spikes/3.6-comfyui-loading-memory-flags.md](../docs/spikes/3.6-comfyui-loading-memory-flags.md).
+
+- **채택 없음**: `--cache-classic` 제거(기본 `--cache-ram` 복귀) 전/후로
+  production 모델(3.8, LTX-13B-distilled) 단발샷 I2V 재측정 — 가용메모리
+  ±130MB·스왑 변화 없음·소요시간 차이 노이즈 범위, 측정 가능한 이득 없음.
+  `comfyui.service`는 원래 플래그(`--cache-classic --highvram`)로 원복.
+- **원인 재확인**: 3.3에서 관측된 진짜 위험 스파이크(가용메모리 1.7GiB,
+  24분+ 정지)는 ComfyUI 자체 로딩이 아니라 별도 프로세스(`flux_server.py`)와의
+  동시 대형 모델 로드 경합이 원인 — 단일 서비스 CLI 플래그로 해결 불가.
+  단독 실행 시 최저 가용메모리 51GiB로 여유 충분(위험 상황 재현 안 됨).
+- **후속**: 진짜 완화책은 Task 4.4(OOM 오케스트레이터, 프로세스 간 동시
+  대형 로드 직렬화/차단) 몫 — 3.6은 조사 완료로 종료, 추가 액션 없음.
+
 ## 차단 요소
 
 - 없음
