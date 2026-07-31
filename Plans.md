@@ -83,7 +83,7 @@
 | 4.3 | :8700 대시보드 엔드포인트 /dashboard/status | JSON에 trace·mem_used·external_calls 필드 포함 | curl -sf http://localhost:8700/dashboard/status | grep -q external_calls | 2.4 | cc:완료 [f4dad69] | - |
 | 4.4 | OOM 배치 오케스트레이터 (상주/언로드 정책, 로드순서 제어) [tdd:required] | 상주·배치 모드 전환 + 로드순서 직렬화, 유닛테스트 peak 검증 | cd langgraph && ./.venv/bin/python tests/test_oom_orchestrator.py | 2.4 | cc:완료 [3c97a1d] | - |
 | 4.5 | 스타일 셀렉터 프롬프트 프리픽스 주입 (시네마틱/애니/사이버펑크/로우폴리3D/클레이메이션/수채화) [tdd:required] | style→프리픽스 매핑 함수, 유닛테스트 6종 검증 | cd langgraph && ./.venv/bin/python tests/test_style_prefix.py | - | cc:완료 [b164a1f] | - |
-| 4.6 | :8700 I2V 단발샷 엔드포인트 (LTX-13B-distilled, ComfyUI 프록시) | POST /i2v가 이미지+프롬프트로 영상(webp/mp4) 반환, 3.8 종횡비 버그 수정(입력 비율에 맞춰 32배수 해상도 산정) 반영 | curl -sf -X POST http://localhost:8700/i2v -F prompt=test -F image=@test.jpg | grep -qi video | 2.4, 3.8 | cc:TODO | - |
+| 4.6 | :8700 I2V 단발샷 엔드포인트 (LTX-13B-distilled, ComfyUI 프록시) | POST /i2v가 이미지+프롬프트로 영상(webp/mp4) 반환, 3.8 종횡비 버그 수정(입력 비율에 맞춰 32배수 해상도 산정) 반영 | curl -sf -X POST http://localhost:8700/i2v -F prompt=test -F image=@test.jpg | grep -qi video | 2.4, 3.8 | cc:완료 [58ebde6] | - |
 ---
 
 ## Week 5 — Day4 S1 파이프 (우주비행사 4씬) [기준: docs/PRD.md R2]
