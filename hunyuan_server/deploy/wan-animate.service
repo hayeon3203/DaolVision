@@ -1,0 +1,16 @@
+[Unit]
+Description=Wan2.2-Animate-14B character animation server
+After=network-online.target wan.service
+StartLimitIntervalSec=900
+StartLimitBurst=3
+
+[Service]
+Type=simple
+WorkingDirectory=/home/admin/DaolVision/hunyuan_server
+ExecStart=/home/admin/DaolVision/hunyuan_server/run_animate.sh
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=300
+
+[Install]
+WantedBy=default.target

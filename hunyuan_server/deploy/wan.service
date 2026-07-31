@@ -1,0 +1,17 @@
+[Unit]
+Description=Wan2.2-TI2V-5B video inference server (host GPU)
+After=network-online.target
+# model load takes ~90s; don't trip the restart burst limiter
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=/home/admin/DaolVision/hunyuan_server
+ExecStart=/home/admin/DaolVision/hunyuan_server/run.sh
+Restart=always
+RestartSec=5
+TimeoutStartSec=300
+
+[Install]
+WantedBy=default.target

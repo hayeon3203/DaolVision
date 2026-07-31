@@ -1,0 +1,204 @@
+{
+  "uid": "hyv-main",
+  "title": "WanVideo 생성 모니터링",
+  "tags": ["hunyuanvideo"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 3,
+  "refresh": "5s",
+  "time": { "from": "now-30m", "to": "now" },
+  "templating": { "list": [] },
+  "annotations": { "list": [] },
+  "panels": [
+    {
+      "type": "stat", "title": "생성 상태",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [ { "refId": "A", "expr": "hyv_generation_in_progress", "datasource": { "type": "prometheus", "uid": "prometheus" } } ],
+      "fieldConfig": { "defaults": {
+        "mappings": [
+          { "type": "value", "options": { "0": { "text": "대기", "color": "green" }, "1": { "text": "생성중", "color": "orange" } } }
+        ],
+        "color": { "mode": "thresholds" },
+        "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] }
+      }, "overrides": [] },
+      "options": { "colorMode": "background", "graphMode": "none", "textMode": "value", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "type": "stat", "title": "현재 스텝",
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [ { "refId": "A", "expr": "hyv_generation_current_step", "datasource": { "type": "prometheus", "uid": "prometheus" } } ],
+      "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "blue" } }, "overrides": [] },
+      "options": { "colorMode": "value", "graphMode": "area", "textMode": "value", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "type": "stat", "title": "전체 스텝",
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [ { "refId": "A", "expr": "hyv_generation_total_steps", "datasource": { "type": "prometheus", "uid": "prometheus" } } ],
+      "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "purple" } }, "overrides": [] },
+      "options": { "colorMode": "value", "graphMode": "none", "textMode": "value", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "type": "stat", "title": "경과 시간",
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [ { "refId": "A", "expr": "hyv_generation_elapsed_seconds", "datasource": { "type": "prometheus", "uid": "prometheus" } } ],
+      "fieldConfig": { "defaults": { "unit": "s", "color": { "mode": "fixed", "fixedColor": "blue" } }, "overrides": [] },
+      "options": { "colorMode": "value", "graphMode": "none", "textMode": "value", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "type": "stat", "title": "마지막 스텝 소요",
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [ { "refId": "A", "expr": "hyv_generation_last_step_seconds", "datasource": { "type": "prometheus", "uid": "prometheus" } } ],
+      "fieldConfig": { "defaults": { "unit": "s", "decimals": 1, "color": { "mode": "thresholds" },
+        "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 90 }, { "color": "red", "value": 130 } ] } }, "overrides": [] },
+      "options": { "colorMode": "background", "graphMode": "none", "textMode": "value", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "type": "stat", "title": "마지막 생성 소요",
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [ { "refId": "A", "expr": "sum(hyv_generation_last_duration_seconds)", "datasource": { "type": "prometheus", "uid": "prometheus" } } ],
+      "fieldConfig": { "defaults": { "unit": "s", "decimals": 0, "color": { "mode": "fixed", "fixedColor": "text" } }, "overrides": [] },
+      "options": { "colorMode": "value", "graphMode": "none", "textMode": "value", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+
+    {
+      "type": "timeseries", "title": "스텝 소요시간 (초)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [ { "refId": "A", "expr": "hyv_generation_last_step_seconds", "legendFormat": "스텝 소요(초)", "datasource": { "type": "prometheus", "uid": "prometheus" } } ],
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 15, "spanNulls": true } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+    },
+    {
+      "type": "stat", "title": "완성 영상 (상태별)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [ { "refId": "A", "expr": "sum by (status) (anim_videos_total)", "legendFormat": "{{status}}", "datasource": { "type": "prometheus", "uid": "prometheus" } } ],
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" } }, "overrides": [] },
+      "options": { "colorMode": "value", "graphMode": "none", "textMode": "value_and_name", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+
+    {
+      "type": "timeseries", "title": "GPU 사용률 (%)",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 12 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [ { "refId": "A", "expr": "hyv_gpu_utilization_percent", "legendFormat": "GPU util %", "datasource": { "type": "prometheus", "uid": "prometheus" } } ],
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100, "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 15 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "single" } }
+    },
+    {
+      "type": "timeseries", "title": "GPU 전력 (W)",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 12 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [ { "refId": "A", "expr": "hyv_gpu_power_watts", "legendFormat": "GPU power W", "datasource": { "type": "prometheus", "uid": "prometheus" } } ],
+      "fieldConfig": { "defaults": { "unit": "watt", "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 15 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "single" } }
+    },
+    {
+      "type": "timeseries", "title": "GPU 온도 (°C)",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 12 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [ { "refId": "A", "expr": "hyv_gpu_temperature_celsius", "legendFormat": "GPU temp °C", "datasource": { "type": "prometheus", "uid": "prometheus" } } ],
+      "fieldConfig": { "defaults": { "unit": "celsius", "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "single" } }
+    },
+
+    {
+      "type": "timeseries", "title": "시스템 메모리 (사용 / 가용)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "expr": "hyv_system_memory_used_bytes", "legendFormat": "사용", "datasource": { "type": "prometheus", "uid": "prometheus" } },
+        { "refId": "B", "expr": "hyv_system_memory_available_bytes", "legendFormat": "가용", "datasource": { "type": "prometheus", "uid": "prometheus" } }
+      ],
+      "fieldConfig": { "defaults": { "unit": "bytes", "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 15 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+    },
+    {
+      "type": "timeseries", "title": "스왑 사용 (높으면 스래싱 위험)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [ { "refId": "A", "expr": "hyv_system_swap_used_bytes", "legendFormat": "스왑 사용", "datasource": { "type": "prometheus", "uid": "prometheus" } } ],
+      "fieldConfig": { "defaults": { "unit": "bytes", "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 20 },
+        "color": { "mode": "thresholds" },
+        "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 4000000000 }, { "color": "red", "value": 12000000000 } ] } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "single" } }
+    },
+
+    {
+      "type": "row", "title": "LangGraph 영상(job) 지표",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 28 },
+      "collapsed": false, "panels": []
+    },
+    {
+      "type": "stat", "title": "완성 영상 수",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 29 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [ { "refId": "A", "expr": "sum(anim_videos_total{status=\"done\"})", "datasource": { "type": "prometheus", "uid": "prometheus" } } ],
+      "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "green" } }, "overrides": [] },
+      "options": { "colorMode": "value", "graphMode": "none", "textMode": "value", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "type": "stat", "title": "시작 영상 수",
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 29 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [ { "refId": "A", "expr": "anim_videos_started_total", "datasource": { "type": "prometheus", "uid": "prometheus" } } ],
+      "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "blue" } }, "overrides": [] },
+      "options": { "colorMode": "value", "graphMode": "none", "textMode": "value", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "type": "stat", "title": "재생성 횟수",
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 29 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [ { "refId": "A", "expr": "anim_regenerations_total", "datasource": { "type": "prometheus", "uid": "prometheus" } } ],
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" },
+        "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 5 } ] } }, "overrides": [] },
+      "options": { "colorMode": "value", "graphMode": "none", "textMode": "value", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "type": "stat", "title": "마지막 영상 소요",
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 29 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [ { "refId": "A", "expr": "anim_video_last_duration_seconds", "datasource": { "type": "prometheus", "uid": "prometheus" } } ],
+      "fieldConfig": { "defaults": { "unit": "s", "decimals": 0, "color": { "mode": "fixed", "fixedColor": "text" } }, "overrides": [] },
+      "options": { "colorMode": "value", "graphMode": "none", "textMode": "value", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "type": "stat", "title": "영상 클립 생성 (모드별)",
+      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 29 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [ { "refId": "A", "expr": "sum by (mode) (anim_clips_generated_total)", "legendFormat": "{{mode}}", "datasource": { "type": "prometheus", "uid": "prometheus" } } ],
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" } }, "overrides": [] },
+      "options": { "colorMode": "value", "graphMode": "none", "textMode": "value_and_name", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "type": "stat", "title": "마지막 영상 총 step",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 33 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [ { "refId": "A", "expr": "anim_video_last_steps", "datasource": { "type": "prometheus", "uid": "prometheus" } } ],
+      "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "purple" } }, "overrides": [] },
+      "options": { "colorMode": "value", "graphMode": "none", "textMode": "value", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "type": "stat", "title": "모드별 누적 step",
+      "gridPos": { "h": 4, "w": 10, "x": 6, "y": 33 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [ { "refId": "A", "expr": "sum by (mode) (anim_clip_steps_total)", "legendFormat": "{{mode}}", "datasource": { "type": "prometheus", "uid": "prometheus" } } ],
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" } }, "overrides": [] },
+      "options": { "colorMode": "value", "graphMode": "none", "textMode": "value_and_name", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "type": "timeseries", "title": "step 처리량 (step/s, 모드별)",
+      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 33 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [ { "refId": "A", "expr": "sum by (mode) (rate(anim_clip_steps_total[5m]))", "legendFormat": "{{mode}}", "datasource": { "type": "prometheus", "uid": "prometheus" } } ],
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 15, "spanNulls": true } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: hunyuanvideo
+    metrics_path: /metrics
+    static_configs:
+      # The inference server runs on the host (0.0.0.0:8500). From inside the
+      # Prometheus container, reach it via the host LAN IP (replace as needed).
+      - targets: ["host.docker.internal:8500"]
+
+  - job_name: anim_agent
+    metrics_path: /metrics
+    static_configs:
+      # The LangGraph approval agent (:8700). Exposes per-video (job) metrics:
+      # completed videos, clips-by-mode, regenerations, video duration.
+      - targets: ["host.docker.internal:8700"]

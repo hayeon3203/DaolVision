@@ -1,0 +1,18 @@
+# generated videos
+outputs/
+*.mp4
+
+# logs
+*.log
+server_*.log
+
+# backups
+*.bak
+
+# python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+process_checkpoint/

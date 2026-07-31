@@ -1,0 +1,16 @@
+[Unit]
+Description=FLUX.1-schnell text-to-image server (host GPU)
+After=network-online.target
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=/home/admin/DaolVision/hunyuan_server
+ExecStart=/home/admin/DaolVision/hunyuan_server/run_flux.sh
+Restart=always
+RestartSec=5
+TimeoutStartSec=180
+
+[Install]
+WantedBy=default.target
