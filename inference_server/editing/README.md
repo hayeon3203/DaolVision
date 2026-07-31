@@ -10,7 +10,7 @@ HunyuanVideo 클립들을 이어붙여 한글 자막·배경음악이 들어간 
 
 ## 사용법
 ```bash
-cd ~/video_generator/hunyuan_server/editing
+cd ~/DaolVision/inference_server/editing
 
 ./make_ad.sh -o final.mp4 \
   -s subs.srt \          # (선택) 한글 자막 SRT
@@ -33,4 +33,4 @@ cd ~/video_generator/hunyuan_server/editing
 시간은 `시:분:초,밀리초`. 장면 길이에 맞춰 타임코드를 적으면 됩니다.
 
 ## 생성 클립 위치
-`~/video_generator/hunyuan_server/outputs/` — 파일명이 `날짜_시각_ID.mp4` 라 시간순 구분 가능.
+`~/DaolVision/inference_server/outputs/` — 파일명이 `날짜_시각_ID.mp4` 라 시간순 구분 가능.

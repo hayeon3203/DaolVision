@@ -6,8 +6,8 @@ StartLimitBurst=3
 
 [Service]
 Type=simple
-WorkingDirectory=/home/admin/DaolVision/hunyuan_server
-ExecStart=/home/admin/DaolVision/hunyuan_server/run_animate.sh
+WorkingDirectory=/home/admin/DaolVision/inference_server
+ExecStart=/home/admin/DaolVision/inference_server/run_animate.sh
 Restart=on-failure
 RestartSec=10
 TimeoutStartSec=300

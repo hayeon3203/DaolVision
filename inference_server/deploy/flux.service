@@ -6,8 +6,8 @@ StartLimitBurst=5
 
 [Service]
 Type=simple
-WorkingDirectory=/home/admin/DaolVision/hunyuan_server
-ExecStart=/home/admin/DaolVision/hunyuan_server/run_flux.sh
+WorkingDirectory=/home/admin/DaolVision/inference_server
+ExecStart=/home/admin/DaolVision/inference_server/run_flux.sh
 Restart=always
 RestartSec=5
 TimeoutStartSec=180
