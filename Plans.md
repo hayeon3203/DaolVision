@@ -91,7 +91,7 @@
 | Task | 내용 | DoD | Acceptance | Depends | Status | GH |
 |------|------|-----|------------|---------|--------|----|
 | 5.1 | 씬분할 LLM을 Nemotron-4B로 배선 (tools.call_llm) | LLM_MODEL 교체, 한국어 스토리→4씬 분할, driver --dry PASS | cd langgraph && ./.venv/bin/python driver.py --dry | 2.3, 4.4 | cc:완료 | - |
-| 5.2 | 앵커 생성 Flux + Face-ID 참조(우주비행사) 전달 | 씬별 앵커 생성 + 캐릭터 참조 첨부, driver --dry PASS | cd langgraph && ./.venv/bin/python driver.py --dry | 4.1, 5.1 | cc:TODO | - |
+| 5.2 | 앵커 생성 Flux + Face-ID 참조(우주비행사) 전달 | 씬별 앵커 생성 + 캐릭터 참조 첨부, driver --dry PASS | cd langgraph && ./.venv/bin/python driver.py --dry | 4.1, 5.1 | cc:완료 | - |
 | 5.3 | I2V 클립 LTX+Face-ID 배치 생성 (로드1회 전씬) | 배치 로드로 4클립 생성, 씬별 재로드 없음, driver --dry PASS | cd langgraph && ./.venv/bin/python driver.py --dry | 3.2, 5.2 | cc:TODO | - |
 | 5.4 | TTS 나레이션 mux (경량, 나레이션>클립시 프레임홀드) [tdd:required] | 씬별 나레이션 concat+영상 mux, 홀드 로직 유닛테스트 | cd langgraph && ./.venv/bin/python tests/test_tts_mux.py | 4.2, 5.3 | cc:TODO | - |
 | 5.5 | 승인 3게이트 챗 멀티턴 (마커패턴 이식) | 씬분할·클립·자막편집 3게이트 interrupt+챗 resume, 회귀 PASS | cd langgraph && ./.venv/bin/python tests/test_anim_function.py | 5.4 | cc:TODO | - |

@@ -83,10 +83,20 @@ def _install_fakes():
         )
         return str(out)
 
+    async def fake_scene_anchor(job_id, scene_id, prompt, seed=None):
+        out = tools.job_dir(job_id) / f"anchor_scene_{scene_id}.png"
+        subprocess.run(
+            ["ffmpeg", "-y", "-f", "lavfi", "-i",
+             f"color=c=navy:size={tools.WIDTH}x{tools.HEIGHT}", "-frames:v", "1", str(out)],
+            check=True, capture_output=True,
+        )
+        return str(out)
+
     tools.call_llm = fake_llm
     tools.call_video = fake_video
     tools.generate_standin_clip = fake_standin
     tools.generate_t2i_image = fake_t2i_image
+    tools.generate_scene_anchor = fake_scene_anchor
     tools.CAPTION_REFS = False  # dry: 비전(gemma) 미호출 — 이미지 분기 승인 후 ref 캡션 스킵
 
 

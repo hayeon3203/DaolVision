@@ -477,6 +477,29 @@ async def generate_t2i_image(job_id: str, prompt: str, seed: int | None = None, 
     return str(out)
 
 
+async def generate_scene_anchor(
+    job_id: str,
+    scene_id: int,
+    prompt: str,
+    seed: int | None = None,
+) -> str:
+    """S1 씬별 Flux 첫 프레임 앵커. 사용자 이미지 분기의 gen_img_*와 충돌하지 않는다."""
+    body = {"prompt": prompt, "width": WIDTH, "height": HEIGHT}
+    if seed is not None:
+        body["seed"] = seed
+    timeout = httpx.Timeout(connect=10.0, read=180.0, write=60.0, pool=None)
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        resp = await client.post(f"{T2I_URL}/generate", json=body)
+        resp.raise_for_status()
+        image_url = resp.json()["image_url"]
+        png = await client.get(f"{T2I_URL}{image_url}")
+        png.raise_for_status()
+
+    out = job_dir(job_id) / f"anchor_scene_{scene_id}.png"
+    out.write_bytes(png.content)
+    return str(out)
+
+
 async def generate_t2i_anchor(
     prompt: str,
     width: int | None = None,

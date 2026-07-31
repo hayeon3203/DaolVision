@@ -37,6 +37,7 @@ def build_graph():
 
     # Phase 2
     g.add_node("node_generate_prompts", nodes.node_generate_prompts)
+    g.add_node("node_generate_scene_anchors", nodes.node_generate_scene_anchors)
 
     # Phase 3
     g.add_node("node_generate_one_clip", nodes.node_generate_one_clip)
@@ -68,12 +69,14 @@ def build_graph():
     g.add_edge("node_split_scenes", "node_checkpoint_scene_approval")
     # node_checkpoint_scene_approval은 Command(goto=...)로 자체 분기하므로 add_edge 불필요
 
-    # Send API fan-out: node_generate_prompts 다음 바로 conditional_edges의
+    # 씬별 Flux 앵커 + Face-ID 참조 첨부 후 Send API로 클립 생성을 fan-out한다.
+    g.add_edge("node_generate_prompts", "node_generate_scene_anchors")
+    # Send API fan-out: node_generate_scene_anchors 다음 conditional_edges의
     # path 함수(node_dispatch_generation)가 list[Send]를 반환하면
     # LangGraph가 자동으로 node_generate_one_clip을 씬 개수만큼 병렬 호출한다.
     # (재생성 루프도 동일 경로를 재진입하므로 별도 노드로 분리하지 않음)
     g.add_conditional_edges(
-        "node_generate_prompts",
+        "node_generate_scene_anchors",
         nodes.node_dispatch_generation,
         ["node_generate_one_clip"],
     )

@@ -578,3 +578,9 @@ Face-ID LoRA 출력~샘플러 사이에 패치 삽입.
   `run_agent.sh` 기본값도 통일했다. 씬분할은 정확히 4씬을 요구하며, Nemotron의
   간헐적 3/5씬 출력을 1회 교정 재시도 후 순서 보존 정규화한다. 실제 한국어
   우주비행사 시나리오 4씬, 회귀 테스트, `driver.py --dry` 모두 PASS.
+- 2026-07-31, Task 5.2 완료. `node_generate_scene_anchors`를 씬 프롬프트와
+  클립 fan-out 사이에 추가해 Flux(:8501)로 `anchor_scene_<id>.png`를 씬별
+  생성한다. 각 씬은 구도/배경 조건인 `anchor_image`와 LTX Face-ID identity
+  조건인 `face_id_ref`를 별도 필드로 보존한다. 사람의 `start/ref`만 Face-ID
+  참조가 전달되며 비인간 참조는 제외한다. 4씬 앵커 계약 테스트, 기존 생성 순서·
+  스타일 회귀, Python 컴파일, `driver.py --dry` 모두 PASS.

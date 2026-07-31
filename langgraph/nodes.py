@@ -666,6 +666,37 @@ async def node_generate_prompts(state: GraphState) -> dict:
     return {"scenes": updated_scenes, "style_bible": bible, "phase": "prompting"}
 
 
+async def node_generate_scene_anchors(state: GraphState) -> dict:
+    """2-3: 승인된 모든 씬의 Flux 앵커를 생성하고 Face-ID 참조를 별도 첨부한다.
+
+    anchor_image는 장면 구도/배경의 첫 프레임 조건이고, face_id_ref는 사람 identity
+    조건이다. 둘을 분리해야 5.3의 LTX I2V가 앵커 구도를 받으면서도 같은 얼굴을
+    전 씬에 유지할 수 있다.
+    """
+    job_id = state["job_id"]
+    scenes = state.get("scenes") or []
+
+    async def generate(scene: Scene) -> Scene:
+        anchor = await tools.generate_scene_anchor(
+            job_id=job_id,
+            scene_id=scene["id"],
+            prompt=scene["prompt"],
+            seed=scene_seed(job_id, scene["id"]),
+        )
+        matched = scene.get("matched_image")
+        face_id_ref = (
+            matched
+            if matched
+            and scene.get("subject_type") == "human"
+            and scene.get("image_role") in ("start", "ref")
+            else None
+        )
+        return {**scene, "anchor_image": anchor, "face_id_ref": face_id_ref}
+
+    anchored = await asyncio.gather(*(generate(scene) for scene in scenes))
+    return {"scenes": list(anchored), "phase": "anchoring"}
+
+
 def _scene_prompt_system(standin: bool, has_wardrobe: bool = False) -> str:
     """씬 프롬프트 생성용 system 프롬프트. 구도/자세/표정/카메라를 '맥락에 맞게' 요구.
 
