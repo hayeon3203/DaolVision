@@ -49,6 +49,7 @@ class GraphState(TypedDict, total=False):
     # Phase 1~2 산출물
     scenes: list[Scene]
     style_bible: Optional[str]     # 전체 영상 공통 스타일 규격(팔레트/조명/톤). 모든 씬 프롬프트에 주입
+    selected_style: Optional[str]  # 사용자가 고른 스타일 프리셋 키(style_presets.STYLE_PREFIXES). 있으면 style_bible을 LLM 대신 이걸로 고정
 
     # Phase 3 재생성 타겟 (사람이 "이 씬만 다시" 요청 시 채워짐)
     regen_target_ids: list[int]

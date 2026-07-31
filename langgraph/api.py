@@ -66,6 +66,7 @@ class StartJobRequest(BaseModel):
     script_text: str
     ref_images: list[str] = []   # base64 또는 data-URI 문자열
     image_request: str = ""      # M2: 참조 미첨부 + 이미지 생성 요청 시 자연어 텍스트
+    style: str | None = None     # 4.5: 스타일 프리셋 키(style_presets.STYLE_PREFIXES), 없으면 LLM 자동 style_bible
 
 
 class ResumeRequest(BaseModel):
@@ -121,6 +122,7 @@ async def start_job(req: StartJobRequest):
             "script_text": req.script_text,
             "ref_images": ref_names,
             "image_request": req.image_request,  # 있으면 entry router가 이미지 분기로
+            "selected_style": req.style,
             "scenes": [],
             "clip_results": [],
             "regen_target_ids": [],
