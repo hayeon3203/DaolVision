@@ -51,6 +51,7 @@ ollama pull qwen2.5:7b
 # 3. 생성 백엔드 확인 (별도 기동, systemd 상주 권장)
 curl http://127.0.0.1:8500/health      # Wan T2V/I2V 서버
 curl http://127.0.0.1:8188/system_stats  # ComfyUI (+WanVideoWrapper)
+curl http://127.0.0.1:8503/health      # Kokoro 한국어 나레이션
 
 # 4. GPU 없이 파이프라인 검증 (가짜 클립으로 전체 흐름 확인)
 ./.venv/bin/python driver.py --dry
@@ -120,6 +121,7 @@ langgraph_videogenerator/
 | `POST /jobs/{id}/resume` | 승인 게이트 재개 (`approve_all`, `regenerate [2,4]` 등) |
 | `POST /jobs/{id}/revise` | **자연어 수정 지시**를 씬 구조에 반영 (게이트 1) |
 | `POST /jobs/{id}/cancel` | job 취소 |
+| `POST /tts/narration` | Kokoro 한국어 영상 나레이션 WAV 생성 |
 | `GET /jobs/{id}/state` | 현재 상태 조회 (`__interrupt__` 포함 = 승인 대기) |
 | `GET /metrics` | 운영 지표 |
 

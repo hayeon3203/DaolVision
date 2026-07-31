@@ -30,6 +30,7 @@ LLM_MODEL = os.environ.get("AGENT_LLM_MODEL", "qwen3.5:9b")
 VISION_MODEL = os.environ.get("AGENT_VISION_MODEL", "qwen3.5:9b")  # qwen3.5:9b = text+vision 겸용. qwen2.5:7b+gemma3:4b 대체. run_agent.sh와 동일 기본값
 WAN_URL = os.environ.get("AGENT_WAN_URL", "http://127.0.0.1:8500")
 T2I_URL = os.environ.get("AGENT_T2I_URL", "http://127.0.0.1:8501")
+KOKORO_URL = os.environ.get("AGENT_KOKORO_URL", "http://127.0.0.1:8503")
 
 # ── ComfyUI Stand-In (참조-이미지 씬의 얼굴 일관성 경로) ──────────
 COMFYUI_URL = os.environ.get("AGENT_COMFYUI_URL", "http://127.0.0.1:8188")
@@ -483,6 +484,37 @@ async def generate_t2i_anchor(
         "image_base64": base64.b64encode(png.content).decode(),
         "seconds": data.get("seconds"),
     }
+
+
+async def generate_kokoro_narration(text: str, speed: float = 1.0) -> bytes:
+    """Generate Korean narration through the dedicated Kokoro backend.
+
+    The backend may return WAV bytes directly or an ``audio_url`` JSON object.
+    Supporting both keeps this gateway independent from a particular Kokoro
+    server wrapper without weakening the model boundary.
+    """
+    # 첫 요청에는 Kokoro 모델의 메모리 적재 시간이 포함될 수 있다.
+    timeout = httpx.Timeout(connect=10.0, read=300.0, write=30.0, pool=None)
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        response = await client.post(
+            f"{KOKORO_URL}/generate",
+            json={"text": text, "language": "ko", "speed": speed},
+        )
+        response.raise_for_status()
+        content_type = response.headers.get("content-type", "").lower()
+        if "audio/wav" in content_type or "audio/x-wav" in content_type:
+            wav = response.content
+        else:
+            audio_url = response.json().get("audio_url")
+            if not audio_url:
+                raise ValueError("Kokoro backend response has no audio_url")
+            audio_response = await client.get(f"{KOKORO_URL}{audio_url}")
+            audio_response.raise_for_status()
+            wav = audio_response.content
+
+    if len(wav) < 12 or wav[:4] != b"RIFF" or wav[8:12] != b"WAVE":
+        raise ValueError("Kokoro backend returned invalid WAV data")
+    return wav
 
 
 async def generate_standin_clip(

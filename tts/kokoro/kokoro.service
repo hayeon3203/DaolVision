@@ -1,0 +1,19 @@
+[Unit]
+Description=DaolVision Kokoro Korean TTS on :8503
+After=network-online.target
+StartLimitIntervalSec=900
+StartLimitBurst=3
+
+[Service]
+Type=simple
+WorkingDirectory=/home/admin/DaolVision
+ExecStart=/home/admin/DaolVision/.venv-kokoro/bin/python /home/admin/DaolVision/tts/kokoro/server.py
+Environment=KOKORO_HOST=127.0.0.1
+Environment=KOKORO_PORT=8503
+Environment=KOKORO_VOICE=af_heart
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=120
+
+[Install]
+WantedBy=default.target

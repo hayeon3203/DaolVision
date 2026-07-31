@@ -13,7 +13,7 @@ import uuid
 import httpx
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from langgraph.types import Command
 
 import tools
@@ -84,6 +84,11 @@ class T2IRequest(BaseModel):
     width: int | None = None
     height: int | None = None
     seed: int | None = None
+
+
+class TTSNarrationRequest(BaseModel):
+    text: str
+    speed: float = Field(default=1.0, ge=0.5, le=2.0)
 
 
 def _save_ref_images(job_id: str, images: list[str]) -> list[str]:
@@ -241,6 +246,29 @@ async def t2i(req: T2IRequest):
         return await tools.generate_t2i_anchor(req.prompt, req.width, req.height, req.seed)
     except httpx.HTTPError as e:
         raise HTTPException(status_code=502, detail=f"T2I backend unreachable: {e}")
+
+
+@app.post("/tts/narration")
+async def tts_narration(req: TTSNarrationRequest):
+    """S1 video narration. This route is permanently bound to Kokoro."""
+    text = req.text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="text is required")
+    try:
+        wav = await tools.generate_kokoro_narration(text, req.speed)
+    except (httpx.HTTPError, ValueError) as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Kokoro backend unavailable or invalid: {exc}",
+        ) from exc
+    return Response(
+        content=wav,
+        media_type="audio/wav",
+        headers={
+            "Content-Disposition": 'attachment; filename="narration.wav"',
+            "X-TTS-Engine": "kokoro",
+        },
+    )
 
 
 @app.post("/approval-intent")

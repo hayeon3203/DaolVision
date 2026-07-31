@@ -1,0 +1,7 @@
+.venv-nemotron/
+.venv-vllm/
+.venv-chatterbox/
+.venv-kokoro/
+__pycache__/
+private/
+out/

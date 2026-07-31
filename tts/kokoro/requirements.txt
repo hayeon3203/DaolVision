@@ -1,0 +1,6 @@
+pykokoro[cpu]==0.7.4
+fastapi==0.141.1
+uvicorn==0.52.0
+nltk==3.10.0
+jamo==0.4.1
+ko-core-news-sm @ https://github.com/explosion/spacy-models/releases/download/ko_core_news_sm-3.8.0/ko_core_news_sm-3.8.0-py3-none-any.whl
