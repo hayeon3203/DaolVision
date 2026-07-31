@@ -24,6 +24,24 @@
 | 영상 나레이션 TTS | Chatterbox Multilingual V3 + CC0 한국어 화자 | 🇨🇦 |
 | 독립 사용자 음성 TTS | Chatterbox Multilingual V3 | 🇨🇦 |
 
+## 라이선스 핵심
+
+| 구성요소 | 라이선스 | 상업 사용·배포 영향 |
+|---|---|---|
+| ComfyUI · BFS Nodes · KJNodes · VideoHelperSuite | GPL-3.0 | 상업적 실행 가능. 수정본이나 결합 배포 시 GPL 소스 제공·고지 의무 검토 |
+| WanVideoWrapper | Apache-2.0 | 상업 사용·수정·배포 가능, 저작권·라이선스 고지 유지 |
+| ComfyUI GGUF 로더 | MIT | 상업 사용·수정·배포 가능, 저작권·라이선스 고지 유지 |
+| LTX-2.3 및 파생 GGUF/LoRA | LTX-2 Community License | 상업 사용 가능. 연매출 미화 1천만 달러 이상 법인은 별도 상업 계약 필요 |
+| LTX Best-Face-ID LoRA | 별도 라이선스 불명확 | 상업 배포 전 저작권자 조건 재확인 필요 |
+| FLUX.1-schnell | Apache-2.0 | 상업 사용 가능 |
+| FLUX.1 Kontext [dev] | FLUX.1 Dev Non-Commercial License | 상업 서비스에는 사용 불가하므로 상용 라이선스 또는 대체 모델 필요 |
+| Chatterbox Multilingual V3 | MIT | 상업 사용 가능. 사용자 참조 음성은 별도 권리·동의 필요 |
+| 고정 한국어 나레이션 참조 음성 | CC0-1.0 | 상업적 복제·수정·배포 가능 |
+
+ComfyUI는 별도 로컬 HTTP 서비스로 격리한다. GPL은 네트워크 사용만으로
+DaolVision 전체에 전파되지 않지만, 제품 번들로 배포할 때는 각 구성요소의 소스
+제공 및 고지 의무를 별도로 확인한다. 위 내용은 기술적 검토이며 법률 자문이 아니다.
+
 ## 기획 문서
 
 - [docs/PRD.md](docs/PRD.md) — 제품 요구사항 (product contract)
