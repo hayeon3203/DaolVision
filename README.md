@@ -49,11 +49,11 @@ DaolVision 전체에 전파되지 않지만, 제품 번들로 배포할 때는 �
 - [docs/Architecture.md](docs/Architecture.md) — 아키텍처
 - [Plans.md](Plans.md) — 실행 task 원장 (7일 스프린트)
 - [tts/chatterbox/README.md](tts/chatterbox/README.md) — 한국어 사용자 음성 테스트
-- [docs/external-dependencies.md](docs/external-dependencies.md) — ComfyUI/Wan2.2-Animate/HF캐시 등 git 비추적 외부 의존성
+- [docs/external-dependencies.md](docs/external-dependencies.md) — ComfyUI/HF캐시 등 git 비추적 외부 의존성
 
 ## 백엔드
 
-- `inference_server/` — Wan2.2-TI2V-5B(:8500)·FLUX.1-schnell(:8501)·Wan2.2-Animate(:8600) 서버 코드 + systemd deploy unit(Task 3.7, video_generator hunyuan_server에서 복제 — 원본 유지)
+- `inference_server/` — Wan2.2-TI2V-5B(:8500)·FLUX.1-schnell(:8501) 서버 코드 + systemd deploy unit(Task 3.7, video_generator hunyuan_server에서 복제 — 원본 유지). Animate(:8600)는 미사용 죽은 코드라 DaolVision에서 삭제
 - `langgraph/` — :8700 게이트웨이(S1 파이프 오케스트레이션, Task 4.1에서 복제 — 원본 유지)
 
 ## 제약

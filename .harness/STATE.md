@@ -528,6 +528,13 @@ Face-ID LoRA 출력~샘플러 사이에 패치 삽입.
   이름만 관성으로 남아 있었음). DaolVision 쪽 코드·deploy unit·설치된 systemd
   unit·문서를 전부 새 이름으로 갱신. video_generator 원본 디렉터리명은
   그대로 `hunyuan_server`(건드리지 않음 — 복제본과 원본은 독립적으로 관리).
+- **animate_server.py(:8600) 삭제**(2026-07-31, 사용자 지시): LangGraph가
+  :8600을 호출한 적 없고(Task 2.2.2부터 `wan-animate.service` 중지 상태) 죽은
+  코드로 확인돼 DaolVision `inference_server/`에서 제거
+  (`animate_server.py`·`run_animate.sh`·`deploy/wan-animate.service`).
+  설치된 `~/.config/systemd/user/wan-animate.service`도 disable 후 삭제
+  (원래도 inactive/disabled). 삭제 범위는 DaolVision만 — video_generator
+  `hunyuan_server/` 원본은 안 건드림(사용자가 명시적으로 DaolVision만 선택).
 
 ## 차단 요소
 
