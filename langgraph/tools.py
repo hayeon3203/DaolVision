@@ -31,6 +31,20 @@ VISION_MODEL = os.environ.get("AGENT_VISION_MODEL", "qwen3.5:9b")  # qwen3.5:9b 
 WAN_URL = os.environ.get("AGENT_WAN_URL", "http://127.0.0.1:8500")
 T2I_URL = os.environ.get("AGENT_T2I_URL", "http://127.0.0.1:8501")
 KOKORO_URL = os.environ.get("AGENT_KOKORO_URL", "http://127.0.0.1:8503")
+CHATTERBOX_URL = os.environ.get("AGENT_CHATTERBOX_URL", "http://127.0.0.1:8504")
+CHATTERBOX_NARRATION_REFERENCE = Path(
+    os.environ.get(
+        "AGENT_CHATTERBOX_NARRATION_REFERENCE",
+        str(
+            Path(__file__).resolve().parents[1]
+            / "private"
+            / "tts"
+            / "voices"
+            / "narrator_cc0"
+            / "reference.wav"
+        ),
+    )
+)
 
 # ── ComfyUI Stand-In (참조-이미지 씬의 얼굴 일관성 경로) ──────────
 COMFYUI_URL = os.environ.get("AGENT_COMFYUI_URL", "http://127.0.0.1:8188")
@@ -515,6 +529,43 @@ async def generate_kokoro_narration(text: str, speed: float = 1.0) -> bytes:
     if len(wav) < 12 or wav[:4] != b"RIFF" or wav[8:12] != b"WAVE":
         raise ValueError("Kokoro backend returned invalid WAV data")
     return wav
+
+
+async def generate_chatterbox_clone(
+    text: str,
+    reference_wav: bytes,
+    filename: str = "reference.wav",
+) -> bytes:
+    """Generate cloned Korean speech using only the Chatterbox V3 backend."""
+    timeout = httpx.Timeout(connect=10.0, read=600.0, write=60.0, pool=None)
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        response = await client.post(
+            f"{CHATTERBOX_URL}/generate",
+            data={"text": text},
+            files={"reference": (filename, reference_wav, "audio/wav")},
+        )
+        response.raise_for_status()
+        wav = response.content
+
+    if len(wav) < 12 or wav[:4] != b"RIFF" or wav[8:12] != b"WAVE":
+        raise ValueError("Chatterbox backend returned invalid WAV data")
+    return wav
+
+
+async def generate_chatterbox_narration(text: str, speed: float = 1.0) -> bytes:
+    """Generate video narration with the fixed, commercially usable CC0 voice."""
+    if not CHATTERBOX_NARRATION_REFERENCE.is_file():
+        raise ValueError(
+            f"Chatterbox narration reference is missing: "
+            f"{CHATTERBOX_NARRATION_REFERENCE}"
+        )
+    # Chatterbox V3 has no native speaking-rate control. Keep ``speed`` in the
+    # gateway contract for compatibility; natural model timing is used.
+    return await generate_chatterbox_clone(
+        text,
+        CHATTERBOX_NARRATION_REFERENCE.read_bytes(),
+        CHATTERBOX_NARRATION_REFERENCE.name,
+    )
 
 
 async def generate_standin_clip(

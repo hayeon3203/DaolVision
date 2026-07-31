@@ -1,0 +1,19 @@
+[Unit]
+Description=DaolVision Chatterbox V3 voice cloning on :8504
+After=network-online.target
+StartLimitIntervalSec=900
+StartLimitBurst=3
+
+[Service]
+Type=simple
+WorkingDirectory=/home/admin/DaolVision
+ExecStart=/home/admin/DaolVision/.venv-chatterbox/bin/python /home/admin/DaolVision/tts/chatterbox/server.py
+Environment=CHATTERBOX_HOST=127.0.0.1
+Environment=CHATTERBOX_PORT=8504
+Environment=CHATTERBOX_DEVICE=cuda
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=120
+
+[Install]
+WantedBy=default.target

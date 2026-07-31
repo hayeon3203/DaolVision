@@ -6,8 +6,9 @@
 
 ## 시나리오
 
-- **S1 — 우주비행사의 여정**: 텍스트 스토리 → 씬분할 → 캐릭터 일관 I2V(4씬) → TTS 나레이션 → mp4
+- **S1 — 우주비행사의 여정**: 텍스트 스토리 → 씬분할 → 캐릭터 일관 I2V(4씬) → Chatterbox CC0 한국어 나레이션 → mp4
 - **S2 — 내 얼굴 → 그림체 변환**: 얼굴사진 → 애니/유화초상화/프로필/우주비행사 (Flux Kontext)
+- **독립 TTS — 내 목소리**: 참조 WAV → Chatterbox Multilingual V3 한국어 음성 복제
 - **연결**: S2 우주비행사 캐릭터 → S1 Face-ID 참조로
 
 ## 스택 (전부 비중국/NVIDIA 오픈소스)
@@ -20,7 +21,8 @@
 | I2I | Flux.1 Kontext | 🇩🇪 |
 | I2V | LTX-Video distilled + Face-ID | 🇮🇱 |
 | I2V 벤치 | Cosmos-Predict2-2B | 🇺🇸 NVIDIA |
-| TTS | Kokoro | 🇺🇸 |
+| 영상 나레이션 TTS | Chatterbox Multilingual V3 + CC0 한국어 화자 | 🇨🇦 |
+| 독립 사용자 음성 TTS | Chatterbox Multilingual V3 | 🇨🇦 |
 
 ## 기획 문서
 
@@ -28,6 +30,7 @@
 - [docs/UserFlow.md](docs/UserFlow.md) — 사용자 플로우
 - [docs/Architecture.md](docs/Architecture.md) — 아키텍처
 - [Plans.md](Plans.md) — 실행 task 원장 (7일 스프린트)
+- [tts/chatterbox/README.md](tts/chatterbox/README.md) — 한국어 사용자 음성 테스트
 
 ## 제약
 

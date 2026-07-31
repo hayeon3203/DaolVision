@@ -14,7 +14,7 @@ flowchart TD
     A[LocalAI 포크 접속] --> B[사이드바 카테고리 선택]
     B -->|T2I| T[T2I 단발]
     B -->|I2I 얼굴변환| S2[S2 얼굴변환]
-    B -->|TTS| TT[TTS 벤치]
+    B -->|TTS| TT[내 목소리 TTS]
     B -->|Agent 스토리영상| S1[S1 파이프]
     B -->|자립 대시보드| D[대시보드]
     T --> ST[스타일 프리셋 선택]
@@ -51,10 +51,10 @@ flowchart TD
     D --> E[I2V 클립 LTX+Face-ID 배치]
     E --> G2{게이트2: 클립 승인}
     G2 -->|재생성 특정씬| E
-    G2 -->|승인| F[자막편집: TTS 4모델 샘플 미리듣기]
+    G2 -->|승인| F[자막편집 및 나레이션 확인]
     F --> G3{게이트3: 자막편집 승인}
     G3 -->|수정| F
-    G3 -->|승인| H[Kokoro 나레이션 생성 + mux]
+    G3 -->|승인| H[Chatterbox CC0 한국어 나레이션 생성 + mux]
     H --> I[최종 mp4 인라인 재생]
 ```
 
@@ -64,7 +64,23 @@ flowchart TD
 - 승인 없이 세션 종료 → SQLite 체크포인트(thread_id=job_id)로 나중 재개
 - 나레이션 > 클립 길이 → 마지막 프레임 홀드로 흡수(경량 mux)
 
-### 플로우 3 — 자립 대시보드 (오프라인 증명)
+### 플로우 3 — 독립 사용자 음성 TTS
+
+```mermaid
+flowchart TD
+    A[TTS 카테고리 진입] --> B[한국어 텍스트 입력]
+    B --> C[내 reference.wav 선택]
+    C --> D[POST /tts/clone]
+    D --> E[Chatterbox Multilingual V3 생성]
+    E --> F[24kHz WAV 미리듣기·다운로드]
+```
+
+**엣지 케이스**
+- 참조 WAV 없음/손상/3초 미만 → 생성하지 않고 재업로드 안내
+- GPU 또는 Chatterbox 로딩 실패 → 다른 화자로 바꾸지 않고 오류 표시
+- 참조 음성은 사용자 소유 또는 사용 허가가 확인된 파일만 사용
+
+### 플로우 4 — 자립 대시보드 (오프라인 증명)
 
 ```mermaid
 flowchart TD
@@ -89,5 +105,5 @@ flowchart TD
 | S2 얼굴변환 | I2I 선택 | S1 전달 / 저장 |
 | S1 Agent(스텝퍼) | Agent 선택 | 게이트1/2/3 → 최종 mp4 |
 | 승인 게이트(챗) | 각 phase 완료 | 승인→다음 / 재생성→이전 |
-| TTS 벤치 | TTS 선택 | 샘플 A/B 청취 |
+| 내 목소리 TTS | TTS 선택 | 참조 WAV + 텍스트 → Chatterbox 결과 청취/다운로드 |
 | 자립 대시보드 | 대시보드 선택 | (상시 폴링) |

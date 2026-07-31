@@ -94,7 +94,8 @@ UI
      ├─ VLM endpoint      사용자 참조 이미지 캡션
      ├─ :8501 FLUX        S1 T2I 앵커
      ├─ :8188 ComfyUI     LTX I2V + Gemma encoder + projection + Face-ID
-     └─ TTS
+     ├─ TTS narration    Chatterbox V3 + fixed CC0 Korean voice
+     └─ TTS clone        Chatterbox Multilingual V3
 ```
 
 다음 규칙은 모델을 바꾸더라도 유지한다.
@@ -126,7 +127,8 @@ UI
 | I2V | LTX-2.3 22B GGUF Q6_K + distill LoRA + BFS Nodes + Face-ID LoRA | 호환 구성 확인, peak 실측 필요 | Face-ID LoRA가 LTX-Video 13B가 아니라 LTX-2.3용임을 확인 |
 | LTX conditioning | Gemma 3 12B FP8 + LTX projection BF16 | 유지 필요 | LTX와 Face-ID가 이 embedding/projection 공간을 전제로 학습됨 |
 | I2I | FLUX.1 Kontext | 검증 대기 | S2의 얼굴 스타일 변환용이며 FLUX.1-schnell과 역할이 다름 |
-| TTS | Kokoro 82M | 유지 | 작고 CPU 실행도 가능해 GPU 상주 예산에 미치는 영향이 작음 |
+| 영상 나레이션 TTS | Chatterbox Multilingual V3 + CC0 한국어 화자 | 채택 | Kokoro `af_heart`의 외국인 억양을 실청취로 기각. 고정 CC0 한국어 화자로 자연스러운 S1 나레이션 생성 |
+| 독립 사용자 음성 TTS | Chatterbox Multilingual V3 | 채택 | 한국어 clone 실청취에서 화자 유사도 양호. S1과 분리해 필요할 때만 GPU 로드 |
 
 `wan-animate`는 사용하지 않으므로 서비스와 포트 `:8600`을 내렸다.
 FLUX 서비스는 S1 T2I 앵커에 필요하므로 유지한다.
@@ -220,7 +222,7 @@ LLM/VLM과 FLUX/LTX 서비스는 계속 살아 있되, FLUX와 LTX sampling만 �
 이전의 “매 단계마다 대형 모델 unload → 다음 모델 load” 방식은 OOM은 피하지만
 초기화 지연이 너무 크다. 앞으로는 아래 순서로 설계한다.
 
-1. gateway, 경량 Q4 LLM, 경량 양자 VLM, TTS는 상시 상주
+1. gateway와 경량 Q4 LLM/VLM은 상시 상주하고, Chatterbox는 GPU-heavy 큐 정책에 따른다
 2. FLUX와 ComfyUI 서비스도 상시 실행
 3. ComfyUI는 같은 작업의 4개 LTX 장면 동안 Gemma/LTX graph cache 유지
 4. GPU-heavy generation은 전역 semaphore로 직렬 실행
@@ -308,7 +310,8 @@ idle 사용량과 FLUX/LTX 각각의 생성 peak를 같은 조건에서 측정�
 
 | 모델 | 국적 | 파라미터 | 디스크/양자화 | 메모리 | 비고 |
 |---|---|---:|---|---|---|
-| Kokoro-82M | 🇺🇸 hexgrad | 82M | FP32/BF16 약 326MB, JS Q4 86MB | 1~2GB 이하 보고 | 현재 선택, CPU 실행 가능 |
+| Kokoro-82M | 🇺🇸 hexgrad | 82M | FP32/BF16 약 326MB, JS Q4 86MB | 1~2GB 이하 보고 | **기각**: 한국어 G2P는 작동하지만 한국어 화자가 없어 `af_heart` 외국인 억양 |
+| Chatterbox Multilingual V3 | 🇨🇦 Resemble AI | 0.5B | CUDA 13 환경 설치, V3 가중치 로컬 캐시 | GPU 할당 약 3.0GiB 실측 | **S1·독립 TTS 채택**, S1은 CC0 고정 화자, 독립 TTS는 사용자 참조 |
 | Zonos-v0.1 | 🇺🇸 Zyphra | 1.6B | BF16 3.25GB | 공식 최소 6GB+ | Linux 중심 |
 | CosyVoice2-0.5B | 🇨🇳 FunAudioLLM/Alibaba | 0.5B | Q4 1GB 미만 보고 | FP 약 4GB 권장 | 원산 정책 불일치 |
 | Metis | 🇨🇳 CUHK-Shenzhen | 학습 파라미터 20M 미만 | 전용 checkpoint 미공개 | 미확인 | 연구 도구 성격이 강함 |

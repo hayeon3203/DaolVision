@@ -453,6 +453,12 @@ URL 상수, `langgraph/api.py` 라우트.
 
 ## 최종 갱신
 
+- 2026-07-31, S1 나레이션 엔진을 Kokoro에서 Chatterbox V3 + 고정 CC0
+  한국어 화자로 교체. Kokoro `af_heart`는 한국어 G2P만 가능하고 한국어
+  네이티브 화자가 없어 실청취에서 외국인 억양으로 기각했다. Lingua Libre
+  화자 `CHK2605`의 Wikimedia Commons CC0 녹음 10개를 8.79초/24kHz mono
+  참조로 구성했으며, `/tts/narration` 실호출 200·24kHz mono WAV를 확인했다.
+  Kokoro 서비스는 미사용으로 중지·비활성화했다.
 - 2026-07-31, Task 4.2.1 완료(:8700 `POST /tts/clone` → Chatterbox V3
   :8504, 필수 참조 WAV, 24kHz mono 출력, Kokoro 폴백 없음).
 - 2026-07-31, Task 4.2 완료(:8700 `POST /tts/narration` → Kokoro :8503,

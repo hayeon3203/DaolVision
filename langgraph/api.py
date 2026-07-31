@@ -11,7 +11,7 @@ import os
 import uuid
 
 import httpx
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, File, Form, HTTPException, Response, UploadFile
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from langgraph.types import Command
@@ -250,23 +250,64 @@ async def t2i(req: T2IRequest):
 
 @app.post("/tts/narration")
 async def tts_narration(req: TTSNarrationRequest):
-    """S1 video narration. This route is permanently bound to Kokoro."""
+    """S1 video narration using the fixed CC0 Chatterbox narrator voice."""
     text = req.text.strip()
     if not text:
         raise HTTPException(status_code=400, detail="text is required")
     try:
-        wav = await tools.generate_kokoro_narration(text, req.speed)
+        wav = await tools.generate_chatterbox_narration(text, req.speed)
     except (httpx.HTTPError, ValueError) as exc:
         raise HTTPException(
             status_code=502,
-            detail=f"Kokoro backend unavailable or invalid: {exc}",
+            detail=f"Chatterbox narrator backend unavailable or invalid: {exc}",
         ) from exc
     return Response(
         content=wav,
         media_type="audio/wav",
         headers={
             "Content-Disposition": 'attachment; filename="narration.wav"',
-            "X-TTS-Engine": "kokoro",
+            "X-TTS-Engine": "chatterbox-v3",
+        },
+    )
+
+
+@app.post("/tts/clone")
+async def tts_clone(
+    text: str = Form(...),
+    reference: UploadFile | None = File(None),
+):
+    """Independent user-voice TTS. This route never falls back to Kokoro."""
+    text = text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="text is required")
+    if reference is None or not reference.filename:
+        raise HTTPException(status_code=422, detail="reference WAV is required")
+    if not reference.filename.lower().endswith(".wav"):
+        raise HTTPException(status_code=415, detail="reference must be a WAV file")
+
+    reference_wav = await reference.read()
+    if (
+        len(reference_wav) < 12
+        or reference_wav[:4] != b"RIFF"
+        or reference_wav[8:12] != b"WAVE"
+    ):
+        raise HTTPException(status_code=415, detail="reference is not a valid WAV file")
+
+    try:
+        wav = await tools.generate_chatterbox_clone(
+            text, reference_wav, reference.filename
+        )
+    except (httpx.HTTPError, ValueError) as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Chatterbox backend unavailable or invalid: {exc}",
+        ) from exc
+    return Response(
+        content=wav,
+        media_type="audio/wav",
+        headers={
+            "Content-Disposition": 'attachment; filename="clone.wav"',
+            "X-TTS-Engine": "chatterbox-v3",
         },
     )
 

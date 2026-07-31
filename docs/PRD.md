@@ -56,14 +56,23 @@ UI 플로우: 카테고리 선택 → 스타일 프리셋 선택 → 입력 → 
 
 - **각본**: 발사 → 우주유영 → 외계행성 → 귀환. **4씬.** 투명 바이저로 얼굴 노출(Face-ID 일관성 시연용).
 - **캐릭터 소스**: S2에서 만든 우주비행사 캐릭터를 S1 Face-ID 참조로 전달 (S2→S1 연결).
-- **파이프**: 씬분할 → (씬별)T2I 앵커 → I2V 클립(캐릭터+화풍 일관) → 자막편집 게이트 → TTS 나레이션 mux → 최종 mp4.
+- **파이프**: 씬분할 → (씬별)T2I 앵커 → I2V 클립(캐릭터+화풍 일관) → 자막편집 게이트 → **Chatterbox CC0 한국어 화자** 나레이션 mux → 최종 mp4.
 - **승인 3게이트**(interrupt): 씬분할 / 클립 / 자막편집. 챗 멀티턴(기존 `openwebui_anim_function.py` 마커 패턴 이식).
-- **자막편집 게이트**: TTS 4모델 **사전생성 샘플** 미리듣기로 골라보는 연출, 실제 나레이션 생성은 **비중국 1개(Kokoro)**.
+- **영상 TTS 고정**: S1은 **Chatterbox V3 + 고정 CC0 한국어 화자**를 사용한다. 사용자 음성 파일 유무에 따라 나레이션 화자가 바뀌지 않는다.
 
 ### S2 — 내 얼굴 → 그림체 변환 (I2I)
 
 - **입력**: 사용자 얼굴사진 1장.
 - **출력 4종**(Flux.1 Kontext, 프롬프트만 교체): **애니메이션 · 유화 초상화 · 프로필 사진 · 우주비행사**(S1 연결용).
+
+### 독립 TTS — 내 목소리
+
+- **진입점**: LocalAI 사이드바의 TTS 카테고리. S1 Agent 파이프와 분리한다.
+- **입력**: 한국어 텍스트 + 사용자 소유/사용 허가를 받은 참조 `reference.wav`.
+- **엔진**: **Chatterbox Multilingual V3**의 한국어(`ko`) zero-shot voice cloning.
+- **출력**: 24kHz mono WAV. 참조 원본과 결과는 로컬 파일시스템에만 보관한다.
+- **보관**: `private/tts/voices/<voice_id>/reference.wav`와 대응 대본 `reference.txt`; `private/`는 Git 제외.
+- **라우팅**: `POST /tts/clone`. 다른 화자로 자동 폴백하지 않으며, 참조 음성이 없으면 명시적 입력 오류를 반환한다.
 
 ---
 
@@ -79,7 +88,8 @@ UI 플로우: 카테고리 선택 → 스타일 프리셋 선택 → 입력 → 
    ├─> :11434  Ollama (Nemotron-4B 씬분할 / Nemotron-VL-8B 캡션)
    ├─> :8501   T2I (Flux.1-schnell)
    ├─> :8188   ComfyUI (I2V: LTX distilled+Face-ID / Cosmos 벤치 / Wan 폴백, I2I: Flux Kontext)
-   └─> TTS 서버 (Kokoro)
+   ├─> TTS 나레이션 (Chatterbox V3 + CC0 한국어 화자, POST /tts/narration)
+   └─> TTS 사용자 음성 (Chatterbox V3, POST /tts/clone)
 ```
 
 - LocalAI 사이드바 기존 카테고리 재활용(Images/Video/TTS/Agents). 신규 = **Agent 상단 노드 스텝퍼 1개** + 스타일 셀렉터 + 자립 대시보드 탭.
@@ -98,8 +108,8 @@ UI 플로우: 카테고리 선택 → 스타일 프리셋 선택 → 입력 → 
 | I2V(주력) | **LTX-2.3-22B-dev(GGUF Q6_K) + distill LoRA + LTX-Best-Face-ID LoRA** | 🇮🇱 | 캐릭터+화풍 일관. BFS 커스텀노드. Day2 게이트. 3.1에서 "LTX-Video distilled(13B)" 가정 폐기·재정의(docs/spikes/3.1-ltx-faceid-compat.md) |
 | I2V(벤치) | **Cosmos-Predict2-2B-Video2World** | 🇺🇸 NVIDIA | 비교용 |
 | I2V(폴백) | **Wan2.1-14B Stand-In** | 🇨🇳 | 롤백 보존(지우지 않음). 얼굴 일관성 검증됨 |
-| TTS(실통합) | **Kokoro** (82M) | 🇺🇸 | 한국어, OOM 무관 |
-| TTS(벤치, 샘플) | Kokoro/Zonos/CosyVoice2/Metis | 🇺🇸🇺🇸🇨🇳🇨🇳 | 사전샘플 A/B용. 중국 2개는 참고 |
+| 영상 나레이션 TTS | **Chatterbox Multilingual V3** (0.5B) | 🇨🇦 | S1 고정 CC0 한국어 화자 |
+| 독립 사용자 음성 TTS | **Chatterbox Multilingual V3** (0.5B) | 🇨🇦 | 한국어 zero-shot clone, MIT, GB10 약 3.0GiB 실측 |
 
 국적 정책: **비중국 우선 + 품질 예외 허용**(발표시 트레이드오프 명시).
 
@@ -143,7 +153,7 @@ UI 플로우: 카테고리 선택 → 스타일 프리셋 선택 → 입력 → 
 | R5 | S2 우주비행사 결과가 S1 Face-ID 참조로 전달된다 (S2→S1 연결) | should |
 | R6 | Agent 카테고리 상단 노드 스텝퍼가 phase 진행을 표시, 승인 3게이트가 챗 멀티턴으로 동작 | must |
 | R7 | 스타일 셀렉터(시네마틱/애니/픽셀/사이버펑크)가 S1·S2 프롬프트에 프리픽스 주입 | should |
-| R8 | TTS: 실통합 Kokoro 나레이션 + 자막편집 게이트서 4모델 사전샘플 미리듣기 | must |
+| R8 | TTS 이중 경로: S1 영상은 Chatterbox V3의 고정 CC0 한국어 화자, 독립 TTS는 사용자 참조 음성. `/tts/narration`과 `/tts/clone`을 분리한다 | must |
 | R9 | 자립 대시보드: 오프라인 배지 + 실행트레이스(External calls:0 실측) + GB10 메모리 게이지 | must |
 | R10 | 전 모델 비중국/NVIDIA (Wan 폴백은 예외, 발표시 명시). 신규 모델 도입시 국적 확인 | must |
 | R11 | OOM: 전 모델 상주 실측(Day1) → 성공시 상주, 실패시 배치 언로드. 데모중 OOM 0건 | must |
@@ -166,7 +176,7 @@ UI 플로우: 카테고리 선택 → 스타일 프리셋 선택 → 입력 → 
 | **3** | :8700 게이트웨이 확장(T2I/TTS/대시보드 엔드포인트) · 배치 오케 · 스타일 셀렉터 프리픽스 | — |
 | **4** | S1 파이프(우주 4씬, Face-ID 참조, 승인 3게이트, TTS mux) | — |
 | **5** | S2(Flux Kontext 4스타일) · S2→S1 연결 · LocalAI 프론트 배선(카테고리/스텝퍼) | — |
-| **6** | 자립 대시보드(트레이스/external calls/메모리게이지) · Cosmos 벤치 · TTS 4모델 샘플 생성 · **시나리오 녹화** | — |
+| **6** | 자립 대시보드(트레이스/external calls/메모리게이지) · Cosmos 벤치 · Chatterbox 사용자 음성 UI 연결 · **시나리오 녹화** | — |
 | **7** | 라이브 리허설 · 녹화 백업 확정 · 재현 스크립트 · 문서 | — |
 
 ---
@@ -183,8 +193,10 @@ UI 플로우: 카테고리 선택 → 스타일 프리셋 선택 → 입력 → 
 | 2026-07-28 | LLM = Nemotron-4B(씬분할) + Nemotron-VL-8B(캡션), 둘 다 NVIDIA | nvidia 풀스택 배점 + 캡션 영어출력이라 한국어 불필요 | Llama3.2-Vision 단일(nvidia 아님, 폴백으로 강등) |
 | 2026-07-28 | OOM = 전 모델 상주 우선(언로드 회피) → 실패시 배치 언로드 | 상주되면 로드부하 0(사용자 우려 근본해결). GB10 119GB 여유 | 무조건 배치 언로드(로드부하 매 단계) |
 | 2026-07-28 | 오프라인 증명 = 대시보드(External calls:0 실측 + 메모리게이지), 랜선 뽑기 안 함 | 소프트웨어 증거가 정직·재현가능 | 물리 랜선 퍼포먼스(사용자 기각) |
-| 2026-07-28 | TTS = 실통합 Kokoro 1개, 벤치 4개는 사전샘플 | OOM 무관하나 4개 실시간 셋업 리스크. 국적비교는 샘플로 충분 | 4개 전부 실시간(공수 4배) |
+| 2026-07-28 | TTS = 실통합 Kokoro 1개, 벤치 4개는 사전샘플 *(2026-07-31 결정으로 대체)* | OOM 무관하나 4개 실시간 셋업 리스크. 국적비교는 샘플로 충분 | 4개 전부 실시간(공수 4배) |
 | 2026-07-28 | 국적 = 비중국 우선 + 품질 예외 허용 | 비중국 얼굴보존/I2V 선택지 희소(대부분 중국) | 비중국 하드룰(구현 불가 구간 발생) |
+| 2026-07-31 | TTS 역할 분리: S1 영상=Kokoro, 독립 사용자 음성=Chatterbox Multilingual V3 *(후속 결정으로 대체)* | 초기 API 형식 검증 기준 | S1까지 Chatterbox 사용 |
+| 2026-07-31 | S1 영상 나레이션도 Chatterbox V3 + 고정 CC0 한국어 화자로 전환 | Kokoro `af_heart` 실청취에서 외국인 억양 확인. Lingua Libre `CHK2605` CC0 음원으로 한국어 화자 고정 | Kokoro 유지(한국어 네이티브 화자 없음) |
 
 ## Open Questions / 리스크
 
@@ -192,7 +204,6 @@ UI 플로우: 카테고리 선택 → 스타일 프리셋 선택 → 입력 → 
 - [ ] LTX-Best-Face-ID LoRA 라이센스 (커뮤니티 LoRA, 상업/재배포 조건) — Day2
 - [ ] Nemotron-VL-8B **Ollama GGUF 서빙 가능 여부** (문서VLM은 vLLM 서빙인 경우 많음) — Day1
 - [ ] Nemotron-4B **한국어 씬분할 품질** (공식 영어만) — Day1 벤치
-- [ ] Metis TTS **국적 확정** (Amphion 중국계 추정) — Day1 확인
 - [ ] 전 모델 상주시 fragmentation OOM 실제 임계 — Day1 실측
 - [ ] LTX Face-ID 씬간 색조/조명 연속성이 데모 수준인지 — Day2 게이트
 

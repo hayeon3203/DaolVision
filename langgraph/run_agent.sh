@@ -11,6 +11,8 @@ export AGENT_CAPTION_REFS="${AGENT_CAPTION_REFS:-1}"          # 1=참조 캡션 
 export AGENT_WAN_URL="${AGENT_WAN_URL:-http://127.0.0.1:8500}"
 export AGENT_T2I_URL="${AGENT_T2I_URL:-http://127.0.0.1:8501}"  # 정지 이미지 앵커(M2) 전용, FLUX.1-schnell
 export AGENT_KOKORO_URL="${AGENT_KOKORO_URL:-http://127.0.0.1:8503}"  # S1 나레이션 전용 Kokoro
+export AGENT_CHATTERBOX_URL="${AGENT_CHATTERBOX_URL:-http://127.0.0.1:8504}"  # 사용자 음성 복제 전용 Chatterbox V3
+export AGENT_CHATTERBOX_NARRATION_REFERENCE="${AGENT_CHATTERBOX_NARRATION_REFERENCE:-../private/tts/voices/narrator_cc0/reference.wav}"
 export AGENT_COMFYUI_URL="${AGENT_COMFYUI_URL:-http://127.0.0.1:8188}"   # Stand-In(참조-얼굴 씬)
 export AGENT_USE_STANDIN="${AGENT_USE_STANDIN:-1}"     # job bfb193ba 재현: 참조 씬을 14B Stand-In(ComfyUI)으로. 0이면 :8500 5B로만.
 export AGENT_STANDIN_STEPS="${AGENT_STANDIN_STEPS:-4}" # lightx2v distill 4~8 (bfb193ba 당시 값은 기록에 없어 기본 4 유지)

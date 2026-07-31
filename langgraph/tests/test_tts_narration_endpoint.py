@@ -1,6 +1,6 @@
-"""Task 4.2: POST /tts/narration Kokoro proxy contract.
+"""Task 4.2: POST /tts/narration Chatterbox narrator contract.
 
-Kokoro itself is replaced with a stub, so this test is GPU/model independent.
+Chatterbox itself is replaced with a stub, so this test is GPU/model independent.
 """
 
 import asyncio
@@ -26,16 +26,20 @@ async def main():
         calls.append({"text": text, "speed": speed})
         return FAKE_WAV
 
-    tools.generate_kokoro_narration = fake_narration
+    async def forbidden_kokoro(text, speed=1.0):
+        raise AssertionError("video narration must not call Kokoro")
+
+    tools.generate_chatterbox_narration = fake_narration
+    tools.generate_kokoro_narration = forbidden_kokoro
 
     response = await api.tts_narration(
         api.TTSNarrationRequest(text="안녕하세요", speed=0.95)
     )
     assert response.media_type == "audio/wav", response.media_type
     assert response.body == FAKE_WAV
-    assert response.headers["x-tts-engine"] == "kokoro"
+    assert response.headers["x-tts-engine"] == "chatterbox-v3"
     assert calls == [{"text": "안녕하세요", "speed": 0.95}]
-    print("PASS: /tts/narration -> Kokoro WAV")
+    print("PASS: /tts/narration -> Chatterbox narrator WAV")
 
     try:
         await api.tts_narration(api.TTSNarrationRequest(text="  "))
@@ -47,14 +51,14 @@ async def main():
     async def failing_narration(text, speed=1.0):
         raise httpx.ConnectError("connection refused")
 
-    tools.generate_kokoro_narration = failing_narration
+    tools.generate_chatterbox_narration = failing_narration
     try:
         await api.tts_narration(api.TTSNarrationRequest(text="안녕하세요"))
         raise AssertionError("backend failure was not surfaced")
     except HTTPException as exc:
         assert exc.status_code == 502, exc
-        assert "Kokoro" in exc.detail
-    print("PASS: Kokoro backend failure -> 502")
+        assert "Chatterbox" in exc.detail
+    print("PASS: Chatterbox narrator failure -> 502")
 
 
 if __name__ == "__main__":
