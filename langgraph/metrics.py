@@ -1,7 +1,7 @@
 """
 LangGraph 영상 에이전트(:8700)의 Prometheus 지표.
 
-hunyuan_server(:8500)의 metrics.py는 '클립 한 개'를 렌더하는 GPU 서버 관점의 지표다.
+inference_server(:8500)의 metrics.py는 '클립 한 개'를 렌더하는 GPU 서버 관점의 지표다.
 여기서는 사람이 실제로 받는 '완성 영상 한 편(=job)' 관점의 지표를 수집한다:
   - 시작/완성한 영상 수, 영상당 씬 수, 제작 소요시간(시나리오→최종본)
   - 씬 클립을 어떤 모드(T2V/I2V/STANDIN/SUBJECT_REF)로 생성했는지

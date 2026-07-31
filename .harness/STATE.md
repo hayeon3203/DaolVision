@@ -498,7 +498,7 @@ Face-ID LoRA 출력~샘플러 사이에 패치 삽입.
 
 상세 근거는 [docs/external-dependencies.md](../docs/external-dependencies.md).
 
-- **코드 복제**(이전 아님, 사용자 지시로 정정): `hunyuan_server/`(Wan :8500·Flux
+- **코드 복제**(이전 아님, 사용자 지시로 정정): `inference_server/`(Wan :8500·Flux
   :8501·Animate :8600 서버·deploy unit·모니터링·editing 스크립트, git 추적분
   전량)를 video_generator에서 DaolVision으로 복제(commit `56672a0`).
   video_generator에 있던 uncommitted 수정(`run.sh`/`run_animate.sh`의
@@ -510,7 +510,7 @@ Face-ID LoRA 출력~샘플러 사이에 패치 삽입.
   GPL-3.0 vendored, `comfyui.service`로 상시 가동 중이라 무중단 이전 불가),
   Wan2.2-Animate 저장소, HuggingFace 캐시(~315GB). 셋 다 원래도 `.gitignore`
   대상이었다 — 경로·크기·재배치 방법을 `docs/external-dependencies.md`에 표로 기록.
-  `hunyuan_server/weights/Z-Image-Turbo`(31GB)는 폐기된 선대 모델이라 제외.
+  `inference_server/weights/Z-Image-Turbo`(31GB)는 폐기된 선대 모델이라 제외.
 - **systemd**: repo 내 `deploy/*.service` 템플릿과 설치본
   (`~/.config/systemd/user/{wan,flux,wan-animate}.service`) 모두 새 경로로
   갱신. 셋 다 이전부터 `disabled`/`inactive`(현재 Wan/Flux는 수동 프로세스로
@@ -518,11 +518,16 @@ Face-ID LoRA 출력~샘플러 사이에 패치 삽입.
   무중단 원칙 유지. `comfyui.service`(유일하게 `Restart=always`로 상시
   가동)는 경로 변경 없이 그대로 둠.
 - **충돌 재확인**: 3.3~3.6은 전부 cc:완료, 건드린 파일은 `docs/spikes/*.md`·
-  `langgraph/comfyui_workflows/`뿐 — `hunyuan_server/`와 경로·포트 겹침 없음.
+  `langgraph/comfyui_workflows/`뿐 — `inference_server/`와 경로·포트 겹침 없음.
 - **DoD 대비 남은 갭**: "DaolVision 클론만으로 전 서비스 기동"은 코드 기준
-  참(clone 즉시 `hunyuan_server/run*.sh` 실행 가능) — 단 ComfyUI 앱/모델과
+  참(clone 즉시 `inference_server/run*.sh` 실행 가능) — 단 ComfyUI 앱/모델과
   HF 캐시는 별도로 문서 경로에 배치해야 실제 기동됨(문서화 완료, 자동화 스크립트는
   범위 밖).
+- **폴더명 정정**(2026-07-31): `hunyuan_server` → `inference_server`로 개명
+  (사용자 지시 — HunyuanVideo는 진작 Wan2.2-TI2V-5B로 교체됐고 이제 안 씀,
+  이름만 관성으로 남아 있었음). DaolVision 쪽 코드·deploy unit·설치된 systemd
+  unit·문서를 전부 새 이름으로 갱신. video_generator 원본 디렉터리명은
+  그대로 `hunyuan_server`(건드리지 않음 — 복제본과 원본은 독립적으로 관리).
 
 ## 차단 요소
 

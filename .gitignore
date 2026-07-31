@@ -9,8 +9,8 @@ out/
 # --- vendored/external (Task 3.7, see docs/external-dependencies.md) ---
 ComfyUI/
 Wan2.2-Animate/
-hunyuan_server/weights/
-hunyuan_server/process_checkpoint/
-hunyuan_server/.cache/
-hunyuan_server/bench_out/
-hunyuan_server/outputs/
+inference_server/weights/
+inference_server/process_checkpoint/
+inference_server/.cache/
+inference_server/bench_out/
+inference_server/outputs/
