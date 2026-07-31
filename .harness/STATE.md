@@ -573,3 +573,8 @@ Face-ID LoRA 출력~샘플러 사이에 패치 삽입.
 - 2026-07-30, Task 3.2 완료(Face-ID 4씬 눈판정 PASS, Wan 폴백 불필요) +
   16:9(1024×576)·와이드샷 프롬프트 톤을 새 기본값으로 확정. 90초 최종영상은
   5.x 배치 클립 이어붙이기로 스코프아웃(미착수).
+- 2026-07-31, Task 5.1 완료. `tools.call_llm` 기본값을 Ollama
+  `hf.co/nvidia/NVIDIA-Nemotron-3-Nano-4B-GGUF:Q4_K_M`으로 교체하고
+  `run_agent.sh` 기본값도 통일했다. 씬분할은 정확히 4씬을 요구하며, Nemotron의
+  간헐적 3/5씬 출력을 1회 교정 재시도 후 순서 보존 정규화한다. 실제 한국어
+  우주비행사 시나리오 4씬, 회귀 테스트, `driver.py --dry` 모두 PASS.

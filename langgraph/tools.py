@@ -1,7 +1,7 @@
 """
 실제 인프라 호출부 (GB10 실서버 배선).
 
-- LLM: Ollama 네이티브 chat API (`/api/chat`), qwen2.5:7b
+- LLM: Ollama 네이티브 chat API (`/api/chat`), NVIDIA Nemotron 3 Nano 4B GGUF
 - 비디오: Wan2.2-TI2V-5B FastAPI (:8500) — /generate(T2V), /generate_i2v(I2V, base64 image)
 - ffmpeg: concat + xfade + 자막 번인
 
@@ -26,7 +26,10 @@ from PIL import Image, ImageOps
 # ── 환경 설정 ────────────────────────────────────────────────
 OLLAMA_URL = os.environ.get("AGENT_OLLAMA_URL", "http://127.0.0.1:11434/api/chat")
 OLLAMA_GEN_URL = OLLAMA_URL.replace("/api/chat", "/api/generate")  # 비전 캡션용(images 지원)
-LLM_MODEL = os.environ.get("AGENT_LLM_MODEL", "qwen3.5:9b")
+LLM_MODEL = os.environ.get(
+    "AGENT_LLM_MODEL",
+    "hf.co/nvidia/NVIDIA-Nemotron-3-Nano-4B-GGUF:Q4_K_M",
+)
 VISION_MODEL = os.environ.get("AGENT_VISION_MODEL", "qwen3.5:9b")  # qwen3.5:9b = text+vision 겸용. qwen2.5:7b+gemma3:4b 대체. run_agent.sh와 동일 기본값
 WAN_URL = os.environ.get("AGENT_WAN_URL", "http://127.0.0.1:8500")
 T2I_URL = os.environ.get("AGENT_T2I_URL", "http://127.0.0.1:8501")
@@ -213,7 +216,9 @@ async def call_llm(system_prompt: str, user_prompt: str) -> str:
             json={
                 "model": LLM_MODEL,
                 "stream": False,
-                "think": False,  # qwen3.5:9b는 thinking 모델 — CoT 끄지 않으면 매 호출 장문 <think> 생성 → 180s ReadTimeout
+                # Ollama 모델별 지원 여부와 무관하게 비사고 모드로 고정한다.
+                # JSON-only 씬 분할에 숨은 CoT가 섞이거나 지연되는 것을 방지한다.
+                "think": False,
                 "messages": [
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},

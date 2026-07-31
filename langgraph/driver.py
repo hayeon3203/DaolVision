@@ -2,7 +2,7 @@
 헤드리스 검증 드라이버.
 
   python driver.py --dry     # Ollama/Wan 미호출, 가짜 클립으로 그래프+ffmpeg 전 경로 검증
-  python driver.py           # 실서버(Ollama qwen2.5:7b + Wan :8500) end-to-end
+  python driver.py           # 실서버(Ollama Nemotron-4B + Wan :8500) end-to-end
 
 --dry 는 배선/interrupt/resume/xfade/자막 로직을, 실모드는 진짜 생성을 확인한다.
 사람 승인 자리는 자동 승인 payload로 대체.
@@ -40,10 +40,14 @@ def _install_fakes():
     async def fake_llm(system_prompt: str, user_prompt: str) -> str:
         if "스토리보드" in system_prompt:  # node_split_scenes
             return json.dumps([
-                {"text": "해질녘 도시를 걷는 주인공", "duration": 1.0,
+                {"text": "해질녘 도시를 걷는 주인공", "duration": 2.0,
                  "mood": "calm", "matched_image": None},
-                {"text": "네온사인 아래 달리기 시작", "duration": 1.0,
+                {"text": "주인공이 네온사인을 발견한다", "duration": 2.0,
+                 "mood": "surprised", "matched_image": None},
+                {"text": "네온사인 아래 달리기 시작", "duration": 2.0,
                  "mood": "tense", "matched_image": None},
+                {"text": "도시 끝에 도착해 숨을 고른다", "duration": 2.0,
+                 "mood": "calm", "matched_image": None},
             ], ensure_ascii=False)
         if "text-to-image generator" in system_prompt:  # node_rewrite_image_query (M2-1/M2-5)
             style = "pastel watercolor style, soft warm lighting"

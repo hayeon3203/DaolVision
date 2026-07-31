@@ -219,6 +219,32 @@ def _needs_relight(mood: str) -> bool:
 
 SUBJECT_TYPES = ("human", "nonhuman", "none")
 
+
+def _normalise_scene_count(items: list, target: int = 4) -> list:
+    """LLM의 3/5씬 변동을 원문 순서를 유지한 채 목표 개수로 정규화한다."""
+    scenes = [dict(item) for item in items if isinstance(item, dict) and item.get("text")]
+    while len(scenes) > target:
+        tail = scenes.pop()
+        scenes[-1]["text"] = f'{scenes[-1]["text"]} {tail["text"]}'.strip()
+        scenes[-1]["duration"] = min(
+            float(scenes[-1].get("duration") or 3),
+            float(tail.get("duration") or 3),
+        )
+    while scenes and len(scenes) < target:
+        index = max(range(len(scenes)), key=lambda i: len(str(scenes[i].get("text", ""))))
+        source = scenes[index]
+        words = str(source["text"]).split()
+        if len(words) < 2:
+            break
+        cut = max(1, len(words) // 2)
+        first, second = " ".join(words[:cut]), " ".join(words[cut:])
+        scenes[index:index + 1] = [
+            {**source, "text": first},
+            {**source, "text": second},
+        ]
+    return scenes
+
+
 # 캡션(gemma 영어)에서 사람/비인간을 결정론적으로 판정한다. qwen2.5:7b가 씬 분할 시
 # subject_type 필드를 자주 누락(→ None)해 마스코트·제품이 얼굴(STANDIN) 경로로 오라우팅되던
 # 문제(job 1fddc76: 4씬 전부 subject_type None)를 캡션 진실원천으로 막는다.
@@ -288,7 +314,8 @@ async def node_split_scenes(state: GraphState) -> dict:
     ref_info = [{"file": fn, "shows": captions.get(fn, "")} for fn in (state.get("ref_images") or [])]
 
     system_prompt = (
-        "너는 애니메이션 스토리보드 작가다. 주어진 시나리오를 씬 단위로 분할하라. "
+        "너는 애니메이션 스토리보드 작가다. 주어진 시나리오를 정확히 4개 씬으로 분할하라. "
+        "반드시 4개의 객체만 반환하고, 시나리오의 시작부터 끝까지 시간 순서대로 고르게 배분하라. "
         "text는 반드시 입력 시나리오와 '같은 언어'로 써라 — 다른 언어(특히 중국어/영어)로 "
         "번역하지 마라. 시나리오 문장을 임의로 요약·창작하지 말고 원문의 내용과 순서를 보존하라. "
         "각 씬은 다음 키를 가진 객체다: text(씬 설명, 입력과 동일 언어), "
@@ -316,6 +343,23 @@ async def node_split_scenes(state: GraphState) -> dict:
 
     raw = await tools.call_llm(system_prompt, user_prompt)
     scenes_raw = tools.parse_json_lenient(raw)
+    # Nemotron Q4는 같은 프롬프트에서도 간헐적으로 3/5씬을 반환한다(Spike 2.3).
+    # 잘못된 결과를 그대로 승인 게이트에 보내지 말고, 결과를 보존한 교정 요청을 한 번 수행한다.
+    if not isinstance(scenes_raw, list) or len(scenes_raw) != 4:
+        correction_prompt = json.dumps({
+            "instruction": (
+                "이전 결과의 내용과 시간 순서를 보존하면서 정확히 4개 씬으로 다시 나눠라. "
+                "JSON 배열 외에는 아무것도 출력하지 마라."
+            ),
+            "script_text": state["script_text"],
+            "ref_images": ref_info,
+            "previous_result": scenes_raw,
+        }, ensure_ascii=False)
+        raw = await tools.call_llm(system_prompt, correction_prompt)
+        scenes_raw = tools.parse_json_lenient(raw)
+    if not isinstance(scenes_raw, list):
+        scenes_raw = []
+    scenes_raw = _normalise_scene_count(scenes_raw)
 
     ref_set = set(state.get("ref_images") or [])
     scenes: list[Scene] = []
