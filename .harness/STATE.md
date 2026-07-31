@@ -435,6 +435,50 @@ URL 상수, `langgraph/api.py` 라우트.
   오히려 1.7~3.4배 느림 — 3.2의 "Wan Stand-In 폴백 불필요" 판정이 속도 면에서도
   방향이 맞았음을 보강.
 
+## Task 3.5 — SageAttention3 스파이크 (2026-07-31, cc:완료)
+
+`/home/admin/SageAttention/sageattention3_blackwell`을 GB10 sm_121a
+타겟으로 소스 빌드해 ComfyUI 운영 venv(`/home/admin/.venv`)에 설치
+(`MAX_JOBS=2`로 OOM 방지, 설치 전후 numpy/opencv/torch 버전 스냅샷 비교로
+오염 없음 확인). KJNodes `PathchSageAttentionKJ` 노드로 LTX 그래프의
+Face-ID LoRA 출력~샘플러 사이에 패치 삽입.
+
+**결과: 순이익 없음.** 같은 세션 조건에서 baseline 25.36초/step vs sage3
+27.02초/step — 오히려 근소하게 느림(둘 다 이 세션 특유의 UVM 스톨 노이즈
+영향권). 3.4와 같은 결론: 테스트한 가속 레버 중 확실한 순이익 내는 조합
+없음. 채택 안 함.
+
+## Task 3.8 — LTX-13B-distilled 단발샷 I2V (2026-07-31, cc:완료)
+
+상세 근거는 [docs/spikes/3.8-ltx13b-oneshot-i2v.md](../docs/spikes/3.8-ltx13b-oneshot-i2v.md).
+
+- **LTX-2.3-22B Face-ID 파이프라인(523초/5초분량)의 대안으로 LTX-Video-0.9.8-
+  13B-distilled(fp8) 채택 — 8-step 30.22초, 17배 빠름.** Face-ID LoRA 없이
+  원본 사진이 첫 프레임으로 직접 조건부 입력 — 단일 클립 내 identity는
+  자연 유지된다는 가설 확인(눈판정 통과, twin/드리프트 없음).
+- **막힌 지점 4개 순차 해결**: (1) `curl | tail` 파이프가 curl 실패를
+  가려서 safetensors 파일 손상 → `curl -fL --retry` 재다운로드. (2)
+  `LTXBaseModel.forward()`가 `attention_mask` 필수인자인데 클래식 0.9.x
+  경로는 안 채움(2.3/AV 리팩터 회귀 추정) → `comfy/model_base.py`의
+  `LTXV.extra_conds()` 1줄 패치(`None`이어도 `CONDConstant(None)`으로 명시
+  채움, 기존 2.3 파이프라인 동작 불변). (3) `LTXAVTextEncoderLoader`는
+  AV(2.3) 전용이라 이 체크포인트엔 안 맞음 → 일반 `CLIPLoader`로 원복.
+  (4) 로컬 `umt5-xxl-enc-bf16.safetensors`가 Wan 전용 키 스킴이라 로더가
+  못 알아봄(77×768 CLIP-L로 오인식) → LTX 0.9.x는 실제로 표준 T5-XXL을
+  씀, `comfyanonymous/flux_text_encoders`의
+  `t5xxl_fp8_e4m3fn_scaled.safetensors`로 교체.
+- **NVIDIA Cosmos 계열 I2V 용도 최종 제외**: Cosmos-Predict2-2B는 identity
+  보존 기능 없음(공식 카드 확인), Cosmos3-Super-Image2Video(64B)는
+  8×H200급 멀티GPU 전제라 GB10 1노드 불가. Cosmos는 identity 불필요한
+  순수 T2V 단발샷 용도로 재검토 예정(사용자 요청, 아직 미착수).
+- **알려진 후속 버그**: 테스트 스크립트가 세로 사진(856×1141)에 가로
+  해상도(768×512) 하드코딩해 얼굴 상단이 크롭됨 — 모델 결함 아님, 다음
+  실행은 512×704(세로 비율)로 재검증 필요.
+- **UI 카테고리 개편**: 사이드바 독립 T2I 카테고리 폐지(Agent 내부 단계로만
+  존재), 신규 "I2V 단발샷" 카테고리 추가 — `[Agent(T2I→I2V)] [I2V 단발샷]
+  [I2I] [TTS]`. docs/PRD.md 갱신 완료, `:8700 /i2v` 게이트웨이 엔드포인트는
+  아직 미구현(Plans.md 신규 태스크로 추가).
+
 ## 차단 요소
 
 - 없음

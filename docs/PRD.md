@@ -105,8 +105,9 @@ UI 플로우: 카테고리 선택 → 스타일 프리셋 선택 → 입력 → 
 | 비전 캡션 | **Nemotron-VL-8B** | 🇺🇸 NVIDIA | 영어출력(한국어 불필요). Ollama 서빙 Day1 확인, 미달시 Llama3.2-Vision 폴백 |
 | T2I 앵커 | **Flux.1-schnell** | 🇩🇪 | Z-Image(중국) 대체, GB10 실측 확정(2.3.5, SDXL은 legacy UNet이라 FA-4 통로 제외) |
 | I2I 얼굴변환 | **Flux.1 Kontext** | 🇩🇪 | S2 |
-| I2V(주력) | **LTX-2.3-22B-dev(GGUF Q6_K) + distill LoRA + LTX-Best-Face-ID LoRA** | 🇮🇱 | 캐릭터+화풍 일관. BFS 커스텀노드. Day2 게이트. 3.1에서 "LTX-Video distilled(13B)" 가정 폐기·재정의(docs/spikes/3.1-ltx-faceid-compat.md) |
-| I2V(벤치) | **Cosmos-Predict2-2B-Video2World** | 🇺🇸 NVIDIA | 비교용 |
+| I2V(주력, Agent용) | **LTX-2.3-22B-dev(GGUF Q6_K) + distill LoRA + LTX-Best-Face-ID LoRA** | 🇮🇱 | 캐릭터+화풍 일관. BFS 커스텀노드. Day2 게이트. 3.1에서 "LTX-Video distilled(13B)" 가정 폐기·재정의(docs/spikes/3.1-ltx-faceid-compat.md). 5초/523초 — S1 멀티씬 전용, 단발샷엔 안 씀 |
+| I2V(단발샷 카테고리용) | **LTX-Video-0.9.8-13B-distilled(fp8)** | 🇮🇱 | Face-ID 없이 사진 1장이 첫 프레임 조건부 입력. 5초/30초 실측(docs/spikes/3.8-ltx13b-oneshot-i2v.md). 종횡비 버그 수정 후 재검증 예정 |
+| I2V(벤치, 제외) | **Cosmos-Predict2-2B-Video2World** | 🇺🇸 NVIDIA | identity 보존 기능 없어 I2V 용도 최종 제외. 향후 T2V 카테고리(단발샷) 후보로 재검토 |
 | I2V(폴백) | **Wan2.1-14B Stand-In** | 🇨🇳 | 롤백 보존(지우지 않음). 얼굴 일관성 검증됨 |
 | 영상 나레이션 TTS | **Chatterbox Multilingual V3** (0.5B) | 🇨🇦 | S1 고정 CC0 한국어 화자 |
 | 독립 사용자 음성 TTS | **Chatterbox Multilingual V3** (0.5B) | 🇨🇦 | 한국어 zero-shot clone, MIT, GB10 약 3.0GiB 실측 |
@@ -127,7 +128,11 @@ UI 플로우: 카테고리 선택 → 스타일 프리셋 선택 → 입력 → 
 
 ## UI
 
-- 사이드바 카테고리(LocalAI 기존 재활용): **[T2I] [I2I 얼굴변환] [TTS] [Agent 스토리영상]**
+- 사이드바 카테고리(LocalAI 기존 재활용): **[Agent 스토리영상(T2I→I2V)] [I2V 단발샷] [I2I 얼굴변환] [TTS]**
+  (2026-07-31 개편: 독립 T2I 카테고리 폐지 — T2I는 Agent 내부 단계로만 존재.
+  I2V 단발샷(LTX-13B-distilled, Face-ID 없이 사진+텍스트→영상, 3.8 스파이크)을
+  신규 카테고리로 추가. 추후 T2V 카테고리(Cosmos, 단발샷) 검토 예정 — 아직
+  미착수, 별도 후속 태스크)
 - 대화 히스토리: LocalAI 기존 재활용(agent 포함 전부 챗 히스토리)
 - **Agent 카테고리**: LocalAI 챗 UI 그대로 + **상단 노드 스텝퍼**(경량, Alpine) — 씬분할→앵커→I2V→TTS→합성 phase 하이라이트. 승인 3게이트는 챗 메시지로.
 - **스타일 셀렉터**: 카테고리 진입 후 프리셋 칩(프롬프트 프리픽스 주입)
