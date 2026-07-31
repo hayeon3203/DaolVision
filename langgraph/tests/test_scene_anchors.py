@@ -1,15 +1,21 @@
-"""Task 5.2: 씬별 Flux 앵커와 사람 Face-ID 참조 전달 계약."""
-import asyncio
+"""Task 5.2 (2026-07-31 재설계): LTX_FACEID 모드 분류 계약.
+
+원래 이 노드(`node_generate_scene_anchors`)는 Flux로 씬별 배경 앵커를
+생성했으나, 앵커가 얼굴 참조를 받지 않아 identity가 무작위였고 그 앵커를
+LTXVImgToVideo가 강도 1.0으로 고정해 Face-ID를 무력화시켰다(실사용 재현
+검증, 2026-07-31). 배경 다양성은 3.2에서 이미 프롬프트 텍스트만으로
+증명됐으므로 앵커를 완전히 제거하고, 이 노드는 사람 참조 유무로 씬의
+`mode`/`face_id_ref`만 분류한다.
+"""
 import sys
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import nodes
 
 
-async def _run():
+def _run():
     scenes = [
         {
             "id": i,
@@ -21,41 +27,33 @@ async def _run():
         }
         for i, text in enumerate(("발사", "우주유영", "외계행성", "귀환"), 1)
     ]
-    generate = AsyncMock(
-        side_effect=lambda job_id, scene_id, prompt, seed=None:
-        f"/jobs/{job_id}/anchor_scene_{scene_id}.png"
-    )
-    with patch("tools.generate_scene_anchor", new=generate):
-        result = await nodes.node_generate_scene_anchors({
-            "job_id": "s1-astronaut",
-            "scenes": scenes,
-        })
+    result = nodes.node_classify_faceid_scenes({
+        "job_id": "s1-astronaut",
+        "scenes": scenes,
+    })
 
-    anchored = result["scenes"]
+    classified = result["scenes"]
     assert result["phase"] == "anchoring"
-    assert len(anchored) == 4
-    assert generate.await_count == 4
-    assert [scene["anchor_image"] for scene in anchored] == [
-        f"/jobs/s1-astronaut/anchor_scene_{i}.png" for i in range(1, 5)
-    ]
-    assert all(scene["face_id_ref"] == "astronaut.png" for scene in anchored)
-    assert [call.kwargs["prompt"] for call in generate.await_args_list] == [
-        f"scene {i} prompt" for i in range(1, 5)
-    ]
+    assert len(classified) == 4
+    assert all("anchor_image" not in scene for scene in classified), (
+        "앵커 필드는 더 이상 생성되면 안 됨"
+    )
+    assert all(scene["face_id_ref"] == "astronaut.png" for scene in classified)
+    assert all(scene["mode"] == "LTX_FACEID" for scene in classified)
 
     nonhuman = {
         **scenes[0],
         "subject_type": "nonhuman",
         "image_role": "character_ref",
     }
-    with patch("tools.generate_scene_anchor", new=AsyncMock(return_value="/tmp/anchor.png")):
-        guarded = await nodes.node_generate_scene_anchors({
-            "job_id": "guard",
-            "scenes": [nonhuman],
-        })
+    guarded = nodes.node_classify_faceid_scenes({
+        "job_id": "guard",
+        "scenes": [nonhuman],
+    })
     assert guarded["scenes"][0]["face_id_ref"] is None
+    assert guarded["scenes"][0]["mode"] == "T2V"
 
 
 if __name__ == "__main__":
-    asyncio.run(_run())
-    print("ok: four Flux anchors carry the astronaut Face-ID reference separately")
+    _run()
+    print("ok: scenes classify into LTX_FACEID/T2V without a Flux anchor call")
