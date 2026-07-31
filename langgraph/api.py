@@ -251,6 +251,28 @@ async def t2i(req: T2IRequest):
         raise HTTPException(status_code=502, detail=f"T2I backend unreachable: {e}")
 
 
+@app.post("/i2v")
+async def i2v_oneshot(
+    prompt: str = Form(...),
+    image: UploadFile = File(...),
+    seed: int | None = Form(None),
+):
+    """단발샷 I2V (LTX-Video-13B-distilled, ComfyUI :8188 프록시). job과 무관 —
+    이미지+프롬프트 한 번 받아 base64 영상(webp) 반환."""
+    prompt = prompt.strip()
+    if not prompt:
+        raise HTTPException(status_code=400, detail="prompt is required")
+    image_bytes = await image.read()
+    if not image_bytes:
+        raise HTTPException(status_code=422, detail="image is required")
+    try:
+        return await tools.generate_i2v_oneshot(image_bytes, prompt, seed)
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=502, detail=f"I2V backend unreachable: {e}")
+    except (ValueError, RuntimeError, TimeoutError) as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
 @app.post("/tts/narration")
 async def tts_narration(req: TTSNarrationRequest):
     """S1 video narration using the fixed CC0 Chatterbox narrator voice."""
