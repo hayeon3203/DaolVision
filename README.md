@@ -53,8 +53,8 @@ DaolVision 전체에 전파되지 않지만, 제품 번들로 배포할 때는 �
 
 ## 백엔드
 
-- `hunyuan_server/` — Wan2.2-TI2V-5B(:8500)·FLUX.1-schnell(:8501)·Wan2.2-Animate(:8600) 서버 코드 + systemd deploy unit(Task 3.7, video_generator에서 이전)
-- `langgraph/` — :8700 게이트웨이(S1 파이프 오케스트레이션, Task 4.1에서 이전)
+- `hunyuan_server/` — Wan2.2-TI2V-5B(:8500)·FLUX.1-schnell(:8501)·Wan2.2-Animate(:8600) 서버 코드 + systemd deploy unit(Task 3.7, video_generator에서 복제 — 원본 유지)
+- `langgraph/` — :8700 게이트웨이(S1 파이프 오케스트레이션, Task 4.1에서 복제 — 원본 유지)
 
 ## 제약
 

@@ -498,11 +498,14 @@ Face-ID LoRA 출력~샘플러 사이에 패치 삽입.
 
 상세 근거는 [docs/external-dependencies.md](../docs/external-dependencies.md).
 
-- **코드 이전**: `hunyuan_server/`(Wan :8500·Flux :8501·Animate :8600 서버·
-  deploy unit·모니터링·editing 스크립트, git 추적분 전량)를 video_generator에서
-  DaolVision으로 이전(commit `56672a0`), video_generator 쪽 코드는 삭제(commit
-  `dca401a`/`17dc548`). video_generator에 있던 uncommitted 수정(`run.sh`/
-  `run_animate.sh`의 `PYTORCH_CUDA_ALLOC_CONF` 추가)도 함께 이전해 유실 없음.
+- **코드 복제**(이전 아님, 사용자 지시로 정정): `hunyuan_server/`(Wan :8500·Flux
+  :8501·Animate :8600 서버·deploy unit·모니터링·editing 스크립트, git 추적분
+  전량)를 video_generator에서 DaolVision으로 복제(commit `56672a0`).
+  video_generator에 있던 uncommitted 수정(`run.sh`/`run_animate.sh`의
+  `PYTORCH_CUDA_ALLOC_CONF` 추가)도 함께 반영해 유실 없음. 처음엔 video_generator
+  쪽 원본을 삭제했으나(commit `dca401a`/`17dc548`) "이전 말고 복제"로 정정 지시받아
+  즉시 `revert`(`afa5baf`/`8dce4ec`) — video_generator에도 동일 코드가 원본
+  그대로 남아 있다. SSOT는 DaolVision, video_generator는 구 위치 사본.
 - **외부 의존성으로 명시적 문서화** (물리 이전 안 함): ComfyUI(:8188, ~150GB,
   GPL-3.0 vendored, `comfyui.service`로 상시 가동 중이라 무중단 이전 불가),
   Wan2.2-Animate 저장소, HuggingFace 캐시(~315GB). 셋 다 원래도 `.gitignore`

@@ -1,7 +1,8 @@
 # 외부 의존성 (git 비추적, 이 repo에 없음)
 
 Task 3.7 (video_generator 백엔드 이전) 산출물. `hunyuan_server/`의 코드는 이 repo에
-있지만, 아래 항목은 용량(수십~수백GB)·라이선스(GPL) 때문에 git으로 옮기지 않고
+**복제**돼 있다(video_generator 원본은 삭제하지 않고 그대로 유지 — 이전이 아니라
+복제). 아래 항목은 용량(수십~수백GB)·라이선스(GPL) 때문에 git으로 옮기지 않고
 명시적으로 외부 의존성으로 문서화한다. `git clone` 후 아래 경로에 배치(또는
 env로 재지정)하면 hunyuan_server/comfyui.service가 그대로 기동한다.
 
@@ -15,9 +16,10 @@ env로 재지정)하면 hunyuan_server/comfyui.service가 그대로 기동한다
 추적 안 함" 처리돼 있었고(`video_generator/.gitignore` 참고), ComfyUI(:8188)는
 현재 `comfyui.service`로 상시 가동 중인 라이브 서비스라 데이터를 옮기려면
 서비스 중단이 필요하다 — 사용자 확인 없이 진행하지 않았다. 코드(`hunyuan_server/`
-Python 서버·deploy unit·모니터링)만 이번에 DaolVision으로 옮겼다.
+Python 서버·deploy unit·모니터링)만 이번에 DaolVision으로 복제했다(video_generator
+쪽 원본 그대로 유지).
 
-## hunyuan_server 서비스 3종 (이번에 이전됨)
+## hunyuan_server 서비스 3종 (이번에 DaolVision에도 복제됨)
 
 | 서비스 | 포트 | 코드 | systemd unit | 상태(2026-07-31 확인) |
 |---|---|---|---|---|
