@@ -104,6 +104,11 @@ _WORKFLOW_DIR = Path(__file__).resolve().parent / "comfyui_workflows"
 I2V_WORKFLOW = _WORKFLOW_DIR / "i2v_14b.json"
 # face(사람): 얼굴 identity만 주입(Stand-In), 배경은 프롬프트 100%(빈 embeds). M3-9.
 FACE_WORKFLOW = _WORKFLOW_DIR / "standin_t2v.json"
+LTX_FACEID_WORKFLOW = _WORKFLOW_DIR / "ltx_faceid_api.json"
+LTX_FACEID_WIDTH = int(os.environ.get("AGENT_LTX_FACEID_WIDTH", "1024"))
+LTX_FACEID_HEIGHT = int(os.environ.get("AGENT_LTX_FACEID_HEIGHT", "576"))
+LTX_FACEID_FPS = int(os.environ.get("AGENT_LTX_FACEID_FPS", "24"))
+LTX_FACEID_STEPS = int(os.environ.get("AGENT_LTX_FACEID_STEPS", "8"))
 # 호환 alias (구 이름) — 기본 경로는 i2v.
 STANDIN_WORKFLOW = I2V_WORKFLOW
 # API 그래프 주입 노드 ID (comfyui_workflows/README.md 표 참조). 두 워크플로는 dims 노드만
@@ -493,29 +498,6 @@ async def generate_t2i_image(job_id: str, prompt: str, seed: int | None = None, 
     return str(out)
 
 
-async def generate_scene_anchor(
-    job_id: str,
-    scene_id: int,
-    prompt: str,
-    seed: int | None = None,
-) -> str:
-    """S1 씬별 Flux 첫 프레임 앵커. 사용자 이미지 분기의 gen_img_*와 충돌하지 않는다."""
-    body = {"prompt": prompt, "width": WIDTH, "height": HEIGHT}
-    if seed is not None:
-        body["seed"] = seed
-    timeout = httpx.Timeout(connect=10.0, read=180.0, write=60.0, pool=None)
-    async with oom.phase("t2i"), httpx.AsyncClient(timeout=timeout) as client:
-        resp = await client.post(f"{T2I_URL}/generate", json=body)
-        resp.raise_for_status()
-        image_url = resp.json()["image_url"]
-        png = await client.get(f"{T2I_URL}{image_url}")
-        png.raise_for_status()
-
-    out = job_dir(job_id) / f"anchor_scene_{scene_id}.png"
-    out.write_bytes(png.content)
-    return str(out)
-
-
 async def generate_t2i_anchor(
     prompt: str,
     width: int | None = None,
@@ -541,6 +523,166 @@ async def generate_t2i_anchor(
     return {
         "image_base64": base64.b64encode(png.content).decode(),
         "seconds": data.get("seconds"),
+    }
+
+
+# ── I2V 단발샷 (LTX-Video-13B-distilled, docs/spikes/3.8) ──────
+# 5.2/5.3(LTX Face-ID 22B GGUF)도 같은 ComfyUI(:8188, --highvram)를 공유한다.
+# --highvram은 체크포인트를 적극적으로 CPU로 내리지 않으므로, 이 경로와 5.x LTX
+# Face-ID 배치가 겹치면 두 체크포인트가 동시에 VRAM에 상주해 OOM 위험이 있다.
+# generate_ltx_faceid_batch는 별도 게이팅이 없어(5.2/5.3 재설계 계획에서 그 함수를
+# 직접 건드리는 중이라 여기서 손대지 않음) oom.phase만으로 완전한 상호배제는 아니다
+# — Wan/Stand-In i2v 경로와는 겹침을 막지만, 운영 시 이 엔드포인트와 5.x 파이프라인
+# job을 동시에 돌리지 않는 편이 안전하다.
+LTX13B_CHECKPOINT = os.environ.get(
+    "AGENT_LTX13B_CHECKPOINT", "ltxv-13b-0.9.8-distilled-fp8.safetensors")
+LTX13B_CLIP = os.environ.get("AGENT_LTX13B_CLIP", "t5xxl_fp8_e4m3fn_scaled.safetensors")
+LTX13B_STEPS = int(os.environ.get("AGENT_LTX13B_STEPS", "8"))
+LTX13B_FRAMES = int(os.environ.get("AGENT_LTX13B_FRAMES", "97"))
+LTX13B_FPS = int(os.environ.get("AGENT_LTX13B_FPS", "24"))
+# 긴 변 기준 캡(32배수). 3.8이 8-step/20초를 측정한 768x512와 같은 화소수 대역을
+# 유지하면서, 짧은 변은 입력 비율에 맞춰 32배수로 산정한다(아래 _ltx13b_dims).
+LTX13B_MAX_DIM = int(os.environ.get("AGENT_LTX13B_MAX_DIM", "768"))
+
+
+def _ltx13b_dims(img_width: int, img_height: int) -> tuple[int, int]:
+    """3.8 후속 버그 수정: 하드코딩 768x512(가로 고정) 대신 입력 사진의 실제 비율에
+    맞춰 긴 변=LTX13B_MAX_DIM, 짧은 변=비율 맞춤 32배수로 해상도를 산정한다.
+    세로 사진에 가로 고정값을 쓰면 얼굴 상단(이마)이 크롭되던 문제(3.8 산출물 기록)를
+    막는다. LTX latent는 VAE 시공간 다운샘플 때문에 32배수 제약이 있다."""
+    if img_width <= 0 or img_height <= 0:
+        raise ValueError(f"invalid image dimensions: {img_width}x{img_height}")
+    long_edge = LTX13B_MAX_DIM
+    if img_width >= img_height:
+        width = long_edge
+        height = max(32, round(long_edge * img_height / img_width / 32) * 32)
+    else:
+        height = long_edge
+        width = max(32, round(long_edge * img_width / img_height / 32) * 32)
+    return width, height
+
+
+def _normalize_i2v_input(image_bytes: bytes) -> tuple[bytes, int, int]:
+    """업로드된 원본 이미지를 EXIF 회전 반영 + RGB PNG로 정규화. 폭/높이는 회전 반영 후
+    값이어야 종횡비 산정(_ltx13b_dims)이 맞다."""
+    with Image.open(BytesIO(image_bytes)) as opened:
+        image = ImageOps.exif_transpose(opened).copy()
+    if "A" in image.getbands():
+        rgba = image.convert("RGBA")
+        background = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
+        image = Image.alpha_composite(background, rgba).convert("RGB")
+    else:
+        image = image.convert("RGB")
+    out = BytesIO()
+    image.save(out, format="PNG", optimize=True)
+    return out.getvalue(), image.width, image.height
+
+
+def _build_ltx13b_graph(
+    *, prompt: str, image_name: str, width: int, height: int, seed: int,
+) -> dict:
+    """docs/spikes/3.8 산출물(tests/probe_ltx13b_i2v.py)과 동일한 API-format 그래프.
+    LTX-2.3 Face-ID 워크플로와 달리 SetNode/GetNode pseudo-node가 없어 UI 변환 없이
+    직접 구성한다. ComfyUI 코어 내장 LTX 노드만 사용, Face-ID LoRA 없음."""
+    return {
+        "1": {"class_type": "CheckpointLoaderSimple",
+              "inputs": {"ckpt_name": LTX13B_CHECKPOINT}},
+        "2": {"class_type": "CLIPLoader",
+              "inputs": {"clip_name": LTX13B_CLIP, "type": "ltxv"}},
+        "3": {"class_type": "CLIPTextEncode", "inputs": {"text": prompt, "clip": ["2", 0]}},
+        "4": {"class_type": "CLIPTextEncode", "inputs": {
+            "text": "worst quality, blurry, jittery, distorted, low resolution",
+            "clip": ["2", 0],
+        }},
+        "5": {"class_type": "LoadImage", "inputs": {"image": image_name}},
+        "6": {"class_type": "ModelSamplingLTXV",
+              "inputs": {"model": ["1", 0], "max_shift": 2.05, "base_shift": 0.95}},
+        "12": {"class_type": "LTXVConditioning", "inputs": {
+            "positive": ["3", 0], "negative": ["4", 0], "frame_rate": float(LTX13B_FPS),
+        }},
+        "7": {"class_type": "LTXVImgToVideo", "inputs": {
+            "positive": ["12", 0], "negative": ["12", 1], "vae": ["1", 2],
+            "image": ["5", 0], "width": width, "height": height,
+            "length": LTX13B_FRAMES, "batch_size": 1, "strength": 1.0,
+        }},
+        "8": {"class_type": "LTXVScheduler", "inputs": {
+            "steps": LTX13B_STEPS, "max_shift": 2.05, "base_shift": 0.95,
+            "stretch": True, "terminal": 0.1,
+        }},
+        "9": {"class_type": "KSampler", "inputs": {
+            "model": ["6", 0], "seed": seed, "steps": LTX13B_STEPS, "cfg": 1.0,
+            "sampler_name": "euler", "scheduler": "normal",
+            "positive": ["7", 0], "negative": ["7", 1], "latent_image": ["7", 2],
+            "denoise": 1.0,
+        }},
+        "10": {"class_type": "VAEDecode", "inputs": {"samples": ["9", 0], "vae": ["1", 2]}},
+        "11": {"class_type": "SaveAnimatedWEBP", "inputs": {
+            "images": ["10", 0], "filename_prefix": "i2v_oneshot", "fps": LTX13B_FPS,
+            "lossless": False, "quality": 90, "method": "default",
+        }},
+    }
+
+
+async def generate_i2v_oneshot(image_bytes: bytes, prompt: str, seed: int | None = None) -> dict:
+    """:8700 /i2v 단발샷 (LTX-Video-13B-distilled, ComfyUI :8188 프록시).
+    job과 무관한 단발 호출 — base64 webp로 바로 반환."""
+    normalized, img_width, img_height = _normalize_i2v_input(image_bytes)
+    width, height = _ltx13b_dims(img_width, img_height)
+    if seed is None:
+        seed = int(time.time())
+
+    timeout = httpx.Timeout(connect=10.0, read=180.0, write=60.0, pool=None)
+    async with oom.phase("i2v"), httpx.AsyncClient(timeout=timeout) as client:
+        up = await client.post(
+            f"{COMFYUI_URL}/upload/image",
+            files={"image": ("i2v_oneshot_input.png", normalized, "image/png")},
+            data={"overwrite": "true"},
+        )
+        up.raise_for_status()
+        uj = up.json()
+        image_name = f"{uj['subfolder']}/{uj['name']}" if uj.get("subfolder") else uj["name"]
+
+        graph = _build_ltx13b_graph(
+            prompt=prompt, image_name=image_name, width=width, height=height, seed=seed)
+        resp = await client.post(f"{COMFYUI_URL}/prompt", json={"prompt": graph})
+        resp.raise_for_status()
+        prompt_id = resp.json()["prompt_id"]
+
+        started_at = time.time()
+        history_item = None
+        while history_item is None:
+            if time.time() - started_at > STANDIN_QUEUE_TIMEOUT:
+                raise TimeoutError("I2V 단발샷이 제한 시간 내 완료되지 않음")
+            history = (await client.get(f"{COMFYUI_URL}/history/{prompt_id}")).json()
+            if prompt_id in history:
+                history_item = history[prompt_id]
+            else:
+                await asyncio.sleep(2.0)
+
+        if history_item.get("status", {}).get("status_str") == "error":
+            raise RuntimeError(
+                f"I2V 단발샷 실행 오류 {history_item.get('status', {}).get('messages')}"
+            )
+
+        media = None
+        for node_out in history_item.get("outputs", {}).values():
+            media = node_out.get("videos") or node_out.get("gifs") or node_out.get("images")
+            if media:
+                break
+        if not media:
+            raise RuntimeError("I2V 단발샷 출력 영상 없음")
+        output = media[0]
+        video = await client.get(f"{COMFYUI_URL}/view", params={
+            "filename": output["filename"],
+            "subfolder": output.get("subfolder", ""),
+            "type": output.get("type", "output"),
+        })
+        video.raise_for_status()
+
+    return {
+        "video_base64": base64.b64encode(video.content).decode(),
+        "width": width,
+        "height": height,
     }
 
 
@@ -645,6 +787,151 @@ async def generate_subject_ref_clip(
     return await _generate_reference_clip(
         job_id, scene_id, prompt, ref_image, duration, seed, force_new,
         subject_ref=True, relight=relight)
+
+
+def _build_ltx_faceid_graph(
+    *, prompt: str, face_image: str, duration: float, seed: int, prefix: str,
+) -> dict:
+    """3.2와 동일한 base 워크플로 배선(앵커 lock 없음) — Face-ID LoRA가 identity를
+    전담한다. 2026-07-31: Flux 앵커로 첫 프레임을 강도 1.0으로 고정하던 버전은
+    앵커 자체에 identity 정보가 없어(Flux가 얼굴 참조를 안 받음) 무작위 얼굴이
+    나왔고, 그 강한 lock이 Face-ID Identity Transfer(node 129)를 무력화시켰다
+    (실사용 재현 검증 완료, docs/superpowers/specs/2026-07-31-ltx-faceid-anchor-removal-design.md).
+    """
+    graph = json.loads(LTX_FACEID_WORKFLOW.read_text())
+    graph["31"]["inputs"]["value"] = duration
+    graph["47"]["inputs"]["value"] = LTX_FACEID_FPS
+    graph["50"]["inputs"]["noise_seed"] = seed
+    graph["66"]["inputs"]["steps"] = LTX_FACEID_STEPS
+    graph["98"]["inputs"]["preview_rate"] = LTX_FACEID_STEPS
+    graph["100"]["inputs"].update(width=LTX_FACEID_WIDTH, height=LTX_FACEID_HEIGHT)
+    graph["102"]["inputs"]["value"] = (
+        prompt if prompt.lstrip().startswith("ref_t2v:") else f"ref_t2v: {prompt}"
+    )
+    graph["104"]["inputs"]["image"] = face_image
+    graph["101"]["inputs"]["filename_prefix"] = prefix
+    # S1 나레이션은 5.4에서 별도 TTS mux한다. 여기서 LTX 오디오를 디코드하면
+    # 씬 사이 AudioVAE 로드가 대형 모델 offload와 스왑 스래싱을 유발한다.
+    graph["56"]["inputs"].pop("audio", None)
+    return graph
+
+
+_LTX_SHARED_NODES = {
+    # 네 씬이 아래 로더/고정 conditioning을 같은 그래프 노드로 참조한다.
+    "8", "26", "27", "35", "41", "43", "47", "58", "67", "68", "78", "98", "99",
+}
+
+
+def _remap_graph_links(value, mapping: dict[str, str]):
+    if (
+        isinstance(value, list) and len(value) == 2
+        and isinstance(value[0], str) and value[0] in mapping
+    ):
+        return [mapping[value[0]], value[1]]
+    if isinstance(value, dict):
+        return {key: _remap_graph_links(item, mapping) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_remap_graph_links(item, mapping) for item in value]
+    return value
+
+
+def _build_ltx_faceid_batch_graph(
+    scenes: list[dict], uploaded: dict[str, str],
+) -> tuple[dict, dict[int, str]]:
+    """씬별 샘플러 가지를 합치되 무거운 로더 노드는 한 벌만 둔다."""
+    batch: dict = {}
+    output_nodes: dict[int, str] = {}
+    for scene in scenes:
+        scene_id = scene["id"]
+        graph = _build_ltx_faceid_graph(
+            prompt=scene["prompt"],
+            face_image=uploaded[scene["face_id_ref"]],
+            duration=float(scene.get("duration") or 3.0),
+            seed=int(scene.get("seed") or 0),
+            prefix=f"ltx_batch_scene_{scene_id}",
+        )
+        mapping = {
+            node_id: node_id if node_id in _LTX_SHARED_NODES else f"s{scene_id}_{node_id}"
+            for node_id in graph
+        }
+        for node_id, node in graph.items():
+            mapped_id = mapping[node_id]
+            if mapped_id in batch:
+                continue
+            batch[mapped_id] = _remap_graph_links(node, mapping)
+        output_nodes[scene_id] = mapping["101"]
+    return batch, output_nodes
+
+
+async def generate_ltx_faceid_batch(job_id: str, scenes: list[dict]) -> dict[int, str]:
+    """단일 ComfyUI prompt에서 로더를 공유해 LTX/Gemma/LoRA를 정확히 한 번 로드한다."""
+    if not scenes:
+        return {}
+    timeout = httpx.Timeout(connect=10.0, read=60.0, write=60.0, pool=None)
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        uploaded: dict[str, str] = {}
+        # 동일 캐릭터 참조는 배치 전체에서 한 번만 업로드한다.
+        for scene in scenes:
+            ref_name = scene["face_id_ref"]
+            if ref_name not in uploaded:
+                image_path = refs_dir(job_id) / ref_name
+                image_bytes = _prepare_reference_upload(image_path, subject_ref=False)
+                response = await client.post(
+                    f"{COMFYUI_URL}/upload/image",
+                    files={"image": (f"ltx_face_{image_path.stem}.png", image_bytes, "image/png")},
+                    data={"overwrite": "true"},
+                )
+                response.raise_for_status()
+                data = response.json()
+                uploaded[ref_name] = (
+                    f"{data.get('subfolder')}/{data['name']}"
+                    if data.get("subfolder") else data["name"]
+                )
+
+        graph, output_nodes = _build_ltx_faceid_batch_graph(scenes, uploaded)
+        response = await client.post(f"{COMFYUI_URL}/prompt", json={"prompt": graph})
+        response.raise_for_status()
+        prompt_id = response.json()["prompt_id"]
+
+        started_at = time.time()
+        history_item = None
+        while history_item is None:
+            if time.time() - started_at > STANDIN_QUEUE_TIMEOUT:
+                raise TimeoutError("LTX Face-ID batch가 제한 시간 내 완료되지 않음")
+            history = (await client.get(f"{COMFYUI_URL}/history/{prompt_id}")).json()
+            if prompt_id in history:
+                history_item = history[prompt_id]
+            else:
+                await asyncio.sleep(2.0)
+
+        if history_item.get("status", {}).get("status_str") == "error":
+            raise RuntimeError(
+                f"LTX Face-ID batch 실행 오류 "
+                f"{history_item.get('status', {}).get('messages')}"
+            )
+
+        results: dict[int, str] = {}
+        for scene_id, output_node in output_nodes.items():
+            node_output = history_item.get("outputs", {}).get(output_node, {})
+            # SaveVideo는 ComfyUI 버전에 따라 MP4도 images+animated로 보고한다.
+            media = (
+                node_output.get("videos")
+                or node_output.get("gifs")
+                or node_output.get("images")
+            )
+            if not media:
+                raise RuntimeError(f"씬 {scene_id}: LTX Face-ID 출력 영상 없음")
+            output = media[0]
+            video = await client.get(f"{COMFYUI_URL}/view", params={
+                "filename": output["filename"],
+                "subfolder": output.get("subfolder", ""),
+                "type": output.get("type", "output"),
+            })
+            video.raise_for_status()
+            path = job_dir(job_id) / f"clip{scene_id}.mp4"
+            path.write_bytes(video.content)
+            results[scene_id] = str(path)
+        return results
 
 
 REFERENCE_PREPROCESS_VERSION = 2
