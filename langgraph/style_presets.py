@@ -1,14 +1,12 @@
 """
 스타일 셀렉터 프롬프트 프리픽스 (Task 4.5, docs/PRD.md R7).
 
-S1(영상)·S2(이미지) 씬은 같은 scene["prompt"] 문자열을 공유한다(FLUX.1-schnell T2I 앵커 +
-LTX/Wan I2V 클립, nodes.py node_generate_scene_anchors 참조) — prefix 하나면 두 백엔드
-모두 커버된다.
+S2 I2I(얼굴사진 → 스타일 변환, Flux Kontext/ComfyUI :8188)용 프리픽스. S1(T2I 앵커/I2V)에는
+배선하지 않는다 — S1은 씬마다 LLM이 만드는 style_bible을 그대로 쓴다. S2 /i2i 엔드포인트가
+아직 이 레포에 없어 실제 주입 지점은 그 엔드포인트 구현 시 정한다.
 
-FLUX.1-schnell은 guidance_scale=0(CFG 꺼짐, inference_server/flux_server.py)이라
-negative prompt가 안 먹는다 — 여기 prefix는 순수 긍정 서술만 담는다. LTX/Wan은 이미
-첫 프레임(앵커 이미지) 조건으로 외형이 고정되므로, prefix는 외형 재서술 대신 렌더링
-기법/질감/조명 톤만 맡는다.
+순수 긍정 서술로만 써라 — FLUX 계열(Kontext 포함)은 distilled 저스텝 구성에서 negative
+prompt 효과가 약하거나 아예 없는 경우가 많다.
 """
 
 STYLE_PREFIXES: dict[str, str] = {
@@ -52,7 +50,7 @@ if __name__ == "__main__":  # 자체 점검
     }
     for key, prefix in STYLE_PREFIXES.items():
         assert style_prefix(key) == prefix
-        assert "no " not in prefix.lower(), f"{key}: negative-prompt 문구 금지(FLUX CFG=0)"
+        assert "no " not in prefix.lower(), f"{key}: negative-prompt 문구 금지(순수 긍정 서술)"
     assert style_prefix(None) == ""
     assert style_prefix("") == ""
     assert style_prefix("does-not-exist") == ""

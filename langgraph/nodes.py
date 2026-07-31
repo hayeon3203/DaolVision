@@ -18,7 +18,6 @@ from langgraph.graph import END
 from state import GraphState, Scene
 import tools
 import metrics
-from style_presets import style_prefix
 
 
 # ══════════════════════════════════════════════════════════
@@ -482,9 +481,6 @@ async def _make_style_bible(state: GraphState) -> str:
     image_query(있으면)가 정지 이미지 앵커의 화풍을 정의하므로, 영상 스타일이 그와
     독립적으로 결정되면 이미지·영상 그림체가 어긋난다 → image_query를 앵커로 넘겨
     같은 렌더링 기법을 따르도록 강제한다."""
-    preset = style_prefix(state.get("selected_style"))
-    if preset:  # 4.5: 사용자가 프리셋을 골랐으면 LLM 추론 대신 고정 프리픽스를 그대로 쓴다
-        return preset
     image_query = (state.get("image_query") or "").strip()
     system_prompt = (
           "You are an art director for a short video. "
