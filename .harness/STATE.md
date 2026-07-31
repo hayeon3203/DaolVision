@@ -494,6 +494,33 @@ Face-ID LoRA 출력~샘플러 사이에 패치 삽입.
 - **후속**: 진짜 완화책은 Task 4.4(OOM 오케스트레이터, 프로세스 간 동시
   대형 로드 직렬화/차단) 몫 — 3.6은 조사 완료로 종료, 추가 액션 없음.
 
+## Task 3.7 — video_generator 백엔드 이전 (2026-07-31, cc:완료)
+
+상세 근거는 [docs/external-dependencies.md](../docs/external-dependencies.md).
+
+- **코드 이전**: `hunyuan_server/`(Wan :8500·Flux :8501·Animate :8600 서버·
+  deploy unit·모니터링·editing 스크립트, git 추적분 전량)를 video_generator에서
+  DaolVision으로 이전(commit `56672a0`), video_generator 쪽 코드는 삭제(commit
+  `dca401a`/`17dc548`). video_generator에 있던 uncommitted 수정(`run.sh`/
+  `run_animate.sh`의 `PYTORCH_CUDA_ALLOC_CONF` 추가)도 함께 이전해 유실 없음.
+- **외부 의존성으로 명시적 문서화** (물리 이전 안 함): ComfyUI(:8188, ~150GB,
+  GPL-3.0 vendored, `comfyui.service`로 상시 가동 중이라 무중단 이전 불가),
+  Wan2.2-Animate 저장소, HuggingFace 캐시(~315GB). 셋 다 원래도 `.gitignore`
+  대상이었다 — 경로·크기·재배치 방법을 `docs/external-dependencies.md`에 표로 기록.
+  `hunyuan_server/weights/Z-Image-Turbo`(31GB)는 폐기된 선대 모델이라 제외.
+- **systemd**: repo 내 `deploy/*.service` 템플릿과 설치본
+  (`~/.config/systemd/user/{wan,flux,wan-animate}.service`) 모두 새 경로로
+  갱신. 셋 다 이전부터 `disabled`/`inactive`(현재 Wan/Flux는 수동 프로세스로
+  실행 중)라 `daemon-reload`·`enable`·`restart`는 하지 않음 — 라이브 서비스
+  무중단 원칙 유지. `comfyui.service`(유일하게 `Restart=always`로 상시
+  가동)는 경로 변경 없이 그대로 둠.
+- **충돌 재확인**: 3.3~3.6은 전부 cc:완료, 건드린 파일은 `docs/spikes/*.md`·
+  `langgraph/comfyui_workflows/`뿐 — `hunyuan_server/`와 경로·포트 겹침 없음.
+- **DoD 대비 남은 갭**: "DaolVision 클론만으로 전 서비스 기동"은 코드 기준
+  참(clone 즉시 `hunyuan_server/run*.sh` 실행 가능) — 단 ComfyUI 앱/모델과
+  HF 캐시는 별도로 문서 경로에 배치해야 실제 기동됨(문서화 완료, 자동화 스크립트는
+  범위 밖).
+
 ## 차단 요소
 
 - 없음
