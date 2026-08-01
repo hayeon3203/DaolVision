@@ -388,17 +388,26 @@ async def node_split_scenes(state: GraphState) -> dict:
     }, ensure_ascii=False)
 
     raw = await tools.call_llm(system_prompt, user_prompt)
-    scenes_raw = tools.parse_json_lenient(raw)
+    try:
+        scenes_raw = tools.parse_json_lenient(raw)
+    except ValueError:
+        # Nemotron Q4가 문법이 깨진 JSON을 낼 때가 실측 확인됨(배열 close 누락, 반복 생성
+        # 등, 2026-08-01). 그대로 두면 job 전체가 크래시한다 — 개수 오류와 동일한 교정
+        # 재시도 경로로 흡수한다.
+        scenes_raw = None
     # Nemotron Q4는 같은 프롬프트에서도 간헐적으로 3/5씬을 반환한다(Spike 2.3).
     # 잘못된 결과를 그대로 승인 게이트에 보내지 말고, 결과를 보존한 교정 요청을 한 번 수행한다.
-    # 개수 오류뿐 아니라 문장 중간 절단(목적어/동사 분리)도 같은 재시도 경로를 탄다.
+    # 개수 오류·JSON 파싱 실패뿐 아니라 문장 중간 절단(목적어/동사 분리)도 같은 경로를 탄다.
     fractured = isinstance(scenes_raw, list) and _scenes_look_fractured(scenes_raw, state["script_text"])
-    if not isinstance(scenes_raw, list) or len(scenes_raw) != 4 or fractured:
-        instruction = (
-            "이전 결과의 내용과 시간 순서를 보존하면서 정확히 4개 씬으로 다시 나눠라. "
-            "JSON 배열 외에는 아무것도 출력하지 마라."
-        )
-        if fractured:
+    if scenes_raw is None or not isinstance(scenes_raw, list) or len(scenes_raw) != 4 or fractured:
+        if scenes_raw is None:
+            instruction = (
+                "이전 응답은 문법이 깨진 JSON이었다(배열이나 객체의 괄호가 안 맞았다). "
+                "같은 내용을 반복해서 출력하지 말고, 배열은 반드시 '['로 열어 ']'로 정확히 "
+                "닫고 각 객체도 '{'...'}' 한 쌍으로 정확히 닫아라. 정확히 4개 씬으로 나누고 "
+                "JSON 배열 외에는 아무것도 출력하지 마라."
+            )
+        elif fractured:
             instruction = (
                 "이전 결과는 원문의 한 문장(주어+목적어+동사)을 씬 경계에서 중간에 잘랐다 "
                 "— 예: '우주선이 지구를' / '향해 다가간다'처럼 목적어와 동사가 다른 씬으로 "
@@ -407,14 +416,22 @@ async def node_split_scenes(state: GraphState) -> dict:
                 "같은 문장을 다른 각도·디테일로 확장해 채워라. JSON 배열 외에는 아무것도 "
                 "출력하지 마라."
             )
+        else:
+            instruction = (
+                "이전 결과의 내용과 시간 순서를 보존하면서 정확히 4개 씬으로 다시 나눠라. "
+                "JSON 배열 외에는 아무것도 출력하지 마라."
+            )
         correction_prompt = json.dumps({
             "instruction": instruction,
             "script_text": state["script_text"],
             "ref_images": ref_info,
-            "previous_result": scenes_raw,
+            "previous_result": scenes_raw if scenes_raw is not None else raw[:500],
         }, ensure_ascii=False)
         raw = await tools.call_llm(system_prompt, correction_prompt)
-        scenes_raw = tools.parse_json_lenient(raw)
+        try:
+            scenes_raw = tools.parse_json_lenient(raw)
+        except ValueError:
+            scenes_raw = None
     if not isinstance(scenes_raw, list):
         scenes_raw = []
     scenes_raw = _normalise_scene_count(scenes_raw)

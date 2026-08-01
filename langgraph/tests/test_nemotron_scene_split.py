@@ -48,6 +48,57 @@ async def _run():
     assert len(retried["scenes"]) == 4
 
 
+# 실제 Nemotron-4B(Q4)가 낸 문법 깨진 JSON — 라이브 재현으로 확보(2026-08-01).
+MALFORMED_MISSING_ARRAY_CLOSE = (
+    '[{"time_start":"시작","scene_text":"광활한 우주 공간, 별들이 반짝이고 저 멀리 '
+    '푸른 지구가 보인다."},{"time_start":"중간1","scene_text":"우주선이 지구를 향해 '
+    '천천히 다가간다."},{"time_start":"중간2","scene_text":""} ,{"time_start":"끝",'
+    '"scene_text":""}}'  # 배열 close(']') 없이 object close('}')가 하나 더 붙음
+)
+MALFORMED_REPEATED_NESTING = (
+    '[{"scene_text": "광활한 우주 공간, 별들이 반짝이고 저 멀리 푸른 지구가 보인다. '
+    '우주선이 지구를 향해 천천히 다가간다."}, {"scene_text": "광활한 우주 공간, 별들이 '
+    '반짝이고 저 멀리 푸른 지구가 보인다. 우주선이 지구를 향해 천천히 다가간다.", '
+    '{"scene_text": "광활한 우주 공간, 별들이 반짝이고 저 멀리 푸른 지구가 보인다. '
+    '우주선이 지구를 향해 천천히 다가간다.", "scene_text": "광활한 우주 공간, 별들이 '
+    '반짝이고 저 멀리 푸른 지구가 보인다. 우주선이 지구를 향해 천천히 다가간다."}]'
+    # 두 번째 object가 안 닫히고 바로 '{'가 또 열림(반복 생성 아티팩트)
+)
+
+
+def test_parse_json_lenient_raises_value_error_on_malformed_json():
+    """폴백 블록(text[i:j+1])까지 문법이 깨졌으면 parse_json_lenient의 문서화된 계약대로
+    ValueError로 떨어져야 한다(성공적으로 파싱되거나 예외를 못 던지고 죽으면 안 됨) —
+    node_split_scenes의 재시도 경로가 이 계약(항상 ValueError)에 의존한다."""
+    for bad in (MALFORMED_MISSING_ARRAY_CLOSE, MALFORMED_REPEATED_NESTING):
+        try:
+            tools.parse_json_lenient(bad)
+            raise AssertionError(f"malformed input이 예외 없이 파싱됨: {bad!r}")
+        except ValueError:
+            pass
+
+
+async def _run_node_split_scenes_survives_malformed_json():
+    """node_split_scenes가 parse_json_lenient 실패로 job 전체를 죽이지 않고, 개수
+    불일치와 동일한 교정 재시도 경로를 타야 한다."""
+    corrected = json.dumps([
+        {"text": "광활한 우주 공간, 별들이 반짝이고", "duration": 2, "mood": "calm", "subject_type": "nonhuman"},
+        {"text": "저 멀리 푸른 지구가 보인다.", "duration": 2, "mood": "calm", "subject_type": "nonhuman"},
+        {"text": "우주선이 지구를 향해 천천히 다가간다.", "duration": 2, "mood": "calm", "subject_type": "nonhuman"},
+        {"text": "착륙한다.", "duration": 2, "mood": "calm", "subject_type": "nonhuman"},
+    ], ensure_ascii=False)
+    for bad in (MALFORMED_MISSING_ARRAY_CLOSE, MALFORMED_REPEATED_NESTING):
+        retry_llm = AsyncMock(side_effect=[bad, corrected])
+        with patch("tools.call_llm", new=retry_llm):
+            result = await nodes.node_split_scenes({
+                "script_text": "광활한 우주 공간, 별들이 반짝이고 저 멀리 푸른 지구가 보인다. 우주선이 지구를 향해 천천히 다가간다.",
+                "ref_images": [],
+                "ref_captions": {},
+            })
+        assert retry_llm.await_count == 2, f"malformed JSON이 교정 재시도를 안 탐: {bad[:50]!r}"
+        assert len(result["scenes"]) == 4, result["scenes"]
+
+
 def test_normalise_scene_count_never_splits_mid_clause():
     """진짜 근본원인: LLM이 2개만 반환해도 _normalise_scene_count가 4개로 맞추면서
     단어수 반토막으로 '우주선이 지구를'/'향해 다가간다'처럼 목적어·동사를 갈라놓던 버그."""
@@ -131,7 +182,11 @@ if __name__ == "__main__":
     test_split_scene_text_safely_prefers_punctuation_over_word_count()
     test_scenes_look_fractured_detects_mid_sentence_cut()
     asyncio.run(_run_fracture_retry())
+    test_parse_json_lenient_raises_value_error_on_malformed_json()
+    asyncio.run(_run_node_split_scenes_survives_malformed_json())
     print("ok: Nemotron-4B default + Korean story split into exactly 4 scenes")
     print("ok: _normalise_scene_count no longer splits a clause mid-object/verb (root cause fix)")
     print("ok: _split_scene_text_safely prefers punctuation, duplicates when no safe cut point")
     print("ok: mid-sentence fracture detected and triggers correction retry")
+    print("ok: parse_json_lenient raises ValueError (not a leaked JSONDecodeError) on malformed JSON")
+    print("ok: node_split_scenes survives malformed LLM JSON via correction retry, no job crash")

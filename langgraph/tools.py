@@ -372,7 +372,12 @@ def parse_json_lenient(text: str):
     for open_c, close_c in (("[", "]"), ("{", "}")):
         i, j = text.find(open_c), text.rfind(close_c)
         if i != -1 and j > i:
-            return json.loads(text[i:j + 1])
+            try:
+                return json.loads(text[i:j + 1])
+            except json.JSONDecodeError:
+                continue  # 이 블록도 문법이 깨졌으면 다음 후보(중괄호)로 넘어간다 —
+                          # 여기서 raw JSONDecodeError를 그대로 흘리면 호출부가 예외
+                          # 타입 하나(ValueError)만 잡아 재시도하는 계약이 깨진다.
     raise ValueError(f"LLM 응답에서 JSON 파싱 실패: {text[:200]}")
 
 
