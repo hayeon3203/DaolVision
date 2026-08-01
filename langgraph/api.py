@@ -340,7 +340,7 @@ async def tts_clone(
 @app.post("/approval-intent")
 async def approval_intent(req: ApprovalIntentRequest):
     """OWU 승인 턴을 LLM으로 분류한다. 그래프 상태는 변경하지 않는다."""
-    supported = ("2-3", "1-4", "3-5", "4-5")
+    supported = ("2-3", "1-4", "3-5")
     if not req.checkpoint.startswith(supported):
         raise HTTPException(status_code=400, detail="지원하지 않는 승인 게이트입니다")
     return await tools.classify_approval_intent(req.checkpoint, req.text)

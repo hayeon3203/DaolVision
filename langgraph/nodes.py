@@ -1,6 +1,6 @@
 """
 Phase 1~5 노드 구현
-- interrupt(): 사람 승인이 필요한 3개 체크포인트 (1-4, 3-5, 4-5)
+- interrupt(): 사람 승인이 필요한 2개 체크포인트 (1-4, 3-5). 4-5 자막편집 게이트는 제외.
 - Send: 씬별 클립 생성을 fan-out으로 병렬 처리
 - Command(goto=...): 사람이 승인/재생성/반려를 선택한 뒤 그래프 흐름을 분기
 """
@@ -80,7 +80,7 @@ async def node_generate_image(state: GraphState) -> dict:
 
 def node_checkpoint_image_approval(state: GraphState) -> Command:
     """checkpoint 2-3 (M2, 선택 분기): 생성 이미지(들) 승인 게이트.
-    기존 3게이트(1-4/3-5/4-5) interrupt/Command 패턴 그대로 복제.
+    기존 2게이트(1-4/3-5) interrupt/Command 패턴 그대로 복제.
     approve → 다음 단계(기존 파이프라인 진입). 자연어 수정 → M2-1(rewrite)부터 재실행(전체 재생성)."""
     paths = state.get("gen_image_paths") or []
     queries = state.get("image_queries") or []
@@ -983,20 +983,6 @@ def fmt_ts(seconds: float) -> str:
     m, s = divmod(rem, 60)
     ms = int((seconds - int(seconds)) * 1000)
     return f"{h:02}:{m:02}:{s:02},{ms:03}"
-
-
-def node_checkpoint_edit_review(state: GraphState) -> Command:
-    """checkpoint 4-5 (필수): 최종 편집본 검수. 마지막 게이트."""
-    decision = interrupt({
-        "checkpoint": "4-5_edit_review",
-        "message": "편집본을 확인해주세요. 트랜지션/자막/전체 흐름을 검토해주세요.",
-        "preview_path": state["edited_preview_path"],
-    })
-    if decision.get("approved"):
-        return Command(goto="node_final_render")
-    else:
-        # 반려 시 어느 단계로 돌아갈지는 사유에 따라 분기 가능 (여기선 편집 단계 재실행)
-        return Command(goto="node_edit_concat")
 
 
 # ══════════════════════════════════════════════════════════

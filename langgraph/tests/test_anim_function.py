@@ -2,7 +2,7 @@
 OWU Function(openwebui_anim_function.py) 검증 — OWU UI 없이 멀티턴 대화를 시뮬레이션.
 
 1) 순수 로직(상태 복원, resume 파싱) 단위 assert
-2) 라이브 API(:8700)에 4턴 대화: 시작 → approve → approve → approve → 최종본
+2) 라이브 API(:8700)에 3턴 대화: 시작 → approve → approve → 최종본 (4-5 자막편집 게이트 제외)
 
   ./.venv/bin/python test_anim_function.py            # 순수 로직만
   ./.venv/bin/python test_anim_function.py --live      # 라이브 멀티턴(영상 생성, 수 분)
@@ -302,13 +302,9 @@ def test_live():
     assert "3-5" in r2 and "/files/" in r2, "3-5 클립 링크 없음"
 
     r3 = turn("approve")
-    print("\n[턴3 클립승인→편집]\n", r3[:300])
-    assert "4-5" in r3, "4-5 편집검수 없음"
-
-    r4 = turn("approve")
-    print("\n[턴4 최종]\n", r4[:300])
-    assert "최종 영상" in r4 and "/files/" in r4, "최종본 링크 없음"
-    print("\nPASS: 라이브 멀티턴 (시작→3승인→최종본)")
+    print("\n[턴3 클립승인→최종]\n", r3[:300])
+    assert "최종 영상" in r3 and "/files/" in r3, "최종본 링크 없음"
+    print("\nPASS: 라이브 멀티턴 (시작→2승인→최종본, 4-5 자막편집 게이트 제외)")
 
 
 if __name__ == "__main__":
