@@ -13,6 +13,7 @@ from pathlib import Path
 
 import httpx
 from fastapi import FastAPI, File, Form, HTTPException, Response, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from langgraph.types import Command
@@ -24,6 +25,14 @@ import style_presets
 from graph import compile_graph
 
 app = FastAPI(title="anim_video_agent")
+# Task 6.3: LocalAI 프론트(:8094)가 브라우저에서 직접 이 게이트웨이(:8700)를 호출한다 —
+# 오프라인 단일 사용자 로컬 데모라 오리진을 좁힐 신뢰 경계가 없다(원격 배포 시 재검토).
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 app.mount("/files", StaticFiles(directory=str(tools.JOBS_DIR)), name="files")
 app.mount("/static", StaticFiles(directory=str(Path(__file__).resolve().parent / "static")), name="static")
 
