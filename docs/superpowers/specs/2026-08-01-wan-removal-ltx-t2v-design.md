@@ -72,6 +72,29 @@ LTX-Video-0.9.8-13B-distilled(Task 4.6, `/i2v` 원샷 엔드포인트가 쓰는 
 생략된다. I2V 폴백 경로는 이미지 업로드를 유지하되 `_build_ltx13b_graph()`를
 그대로 재사용한다(신규 그래프 불필요, 4.6 그래프가 이미 image-conditioned).
 
+**request_key 해시 필드(명시)**: `_generate_reference_clip`을 그대로
+베껴 쓰면 안 되는 지점 — `ref_image`/`reference_mode`/`relight`/`face_lora`
+필드는 T2V에 해당 없음. 두 경로 모두 `prompt`를 반드시 해시에 포함해야
+한다(누락 시 씬 프롬프트를 수정하고 `force_new=False`로 재실행해도
+구프롬프트로 만든 캐시 클립을 그대로 반환하는 버그가 생김 — `scene_id`가
+DB 조회 WHERE절에 별도 컬럼으로 있어도 request_key 자체가 프롬프트 변경을
+반영 못 하면 stale 캐시를 못 걸러냄).
+
+```python
+# generate_t2v_clip 쪽 request_key 페이로드
+{
+    "scene_id": scene_id, "prompt": prompt, "duration": duration, "seed": seed,
+    "steps": LTX13B_STEPS, "fps": LTX13B_FPS, "width": WIDTH, "height": HEIGHT,
+    "workflow": "ltx13b_t2v_v1",  # 그래프 구조 바뀌면 캐시 무효화용 버전 문자열
+}
+# generate_i2v_fallback_clip 쪽은 위에 matched_image까지 추가
+{
+    "scene_id": scene_id, "prompt": prompt, "matched_image": matched_image,
+    "duration": duration, "seed": seed, "steps": LTX13B_STEPS, "fps": LTX13B_FPS,
+    "width": WIDTH, "height": HEIGHT, "workflow": "ltx13b_i2v_fallback_v1",
+}
+```
+
 ### 3. 얇은 wrapper 2개 (`tools.py`, `call_video` 호출부 대체)
 
 ```python
