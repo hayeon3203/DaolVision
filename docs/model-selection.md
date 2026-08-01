@@ -15,7 +15,7 @@ DaolVision은 NVIDIA GB10(119GiB 통합 메모리) 한 대에서 LangGraph 파�
 | 참조 이미지 캡션 VLM | 미확정 | 재선정 중 |
 | TTS | Chatterbox Multilingual V3 | 채택 |
 | T2I 앵커 | FLUX.1-schnell | 채택 |
-| I2I 얼굴 변환 | FLUX.1 Kontext [dev] | 검증 대기 |
+| I2I 얼굴 변환 | FLUX.1 Kontext [dev] | 배선·1차 실측 완료(Task 6.1), 상업 라이선스 미확정 |
 | I2V 얼굴 일관 영상 | LTX-2.3 22B Q6_K + Distill + Best Face-ID | 품질 통과, 속도 개선 필요 |
 | I2V 단발샷(비Face-ID) | LTX-Video-0.9.8-13B-distilled | 채택, 30초/5초분량 실측. 해상도 종횡비 버그 수정 후 재검증 필요 |
 
