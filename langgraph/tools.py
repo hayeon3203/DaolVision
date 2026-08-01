@@ -636,6 +636,57 @@ def _build_ltx13b_graph(
     }
 
 
+def to_ltx_len(frames: float) -> int:
+    """LTXV VAE 시공간 다운샘플 8 → length는 8k+1이어야 한다(LTX13B_FRAMES=97=8*12+1과
+    동일 패턴, to_4k1의 LTX 8-배수 변형). 최소 25(≈1s@24fps)."""
+    n = max(25, int(round(frames)))
+    k = round((n - 1) / 8)
+    return max(25, 8 * k + 1)
+
+
+def _build_ltx13b_t2v_graph(
+    *, prompt: str, width: int, height: int, length: int, seed: int,
+) -> dict:
+    """_build_ltx13b_graph(4.6, image-conditioned I2V)의 T2V 형제. LoadImage +
+    LTXVImgToVideo 대신 EmptyLTXVLatentVideo로 순수 노이즈 latent에서 시작한다
+    (이미지 조건 없음, Task 6.x Wan 제거 — docs/superpowers/specs/2026-08-01-
+    wan-removal-ltx-t2v-design.md)."""
+    return {
+        "1": {"class_type": "CheckpointLoaderSimple",
+              "inputs": {"ckpt_name": LTX13B_CHECKPOINT}},
+        "2": {"class_type": "CLIPLoader",
+              "inputs": {"clip_name": LTX13B_CLIP, "type": "ltxv"}},
+        "3": {"class_type": "CLIPTextEncode", "inputs": {"text": prompt, "clip": ["2", 0]}},
+        "4": {"class_type": "CLIPTextEncode", "inputs": {
+            "text": "worst quality, blurry, jittery, distorted, low resolution",
+            "clip": ["2", 0],
+        }},
+        "6": {"class_type": "ModelSamplingLTXV",
+              "inputs": {"model": ["1", 0], "max_shift": 2.05, "base_shift": 0.95}},
+        "12": {"class_type": "LTXVConditioning", "inputs": {
+            "positive": ["3", 0], "negative": ["4", 0], "frame_rate": float(LTX13B_FPS),
+        }},
+        "7": {"class_type": "EmptyLTXVLatentVideo", "inputs": {
+            "width": width, "height": height, "length": length, "batch_size": 1,
+        }},
+        "8": {"class_type": "LTXVScheduler", "inputs": {
+            "steps": LTX13B_STEPS, "max_shift": 2.05, "base_shift": 0.95,
+            "stretch": True, "terminal": 0.1,
+        }},
+        "9": {"class_type": "KSampler", "inputs": {
+            "model": ["6", 0], "seed": seed, "steps": LTX13B_STEPS, "cfg": 1.0,
+            "sampler_name": "euler", "scheduler": "normal",
+            "positive": ["12", 0], "negative": ["12", 1], "latent_image": ["7", 0],
+            "denoise": 1.0,
+        }},
+        "10": {"class_type": "VAEDecode", "inputs": {"samples": ["9", 0], "vae": ["1", 2]}},
+        "11": {"class_type": "SaveAnimatedWEBP", "inputs": {
+            "images": ["10", 0], "filename_prefix": "t2v_job", "fps": LTX13B_FPS,
+            "lossless": False, "quality": 90, "method": "default",
+        }},
+    }
+
+
 async def generate_i2v_oneshot(image_bytes: bytes, prompt: str, seed: int | None = None) -> dict:
     """:8700 /i2v 단발샷 (LTX-Video-13B-distilled, ComfyUI :8188 프록시).
     job과 무관한 단발 호출 — base64 webp로 바로 반환."""
