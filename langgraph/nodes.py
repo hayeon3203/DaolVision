@@ -220,6 +220,24 @@ def _needs_relight(mood: str) -> bool:
 SUBJECT_TYPES = ("human", "nonhuman", "none")
 
 
+def _split_scene_text_safely(text: str) -> tuple:
+    """절 중간(주어+목적어+동사)을 끊지 않고 텍스트를 둘로 나눈다. 문장종결 부호(./!/?)나
+    쉼표가 끝이 아닌 중간에 있으면 그 지점에서 나누고, 나눌 안전한 지점이 없으면(완결된
+    절 하나뿐) 같은 text를 그대로 복제해 두 씬으로 만든다(각도·디테일 차이는 하류 영어
+    재작성 단계가 담당) — 단어 수로 무작정 반토막 내던 예전 방식이 '우주선이 지구를'/
+    '향해 다가간다'처럼 목적어와 동사를 갈라놓는 버그의 원인이었다."""
+    body = text.rstrip()
+    if len(body) <= 1:
+        return None, None
+    matches = list(re.finditer(r"[.!?,]", body[:-1]))  # 끝 문장부호는 분할 지점에서 제외
+    if matches:
+        cut = matches[-1].end()
+        first, second = body[:cut].strip(), body[cut:].strip()
+        if first and second:
+            return first, second
+    return text, text
+
+
 def _normalise_scene_count(items: list, target: int = 4) -> list:
     """LLM의 3/5씬 변동을 원문 순서를 유지한 채 목표 개수로 정규화한다."""
     scenes = [dict(item) for item in items if isinstance(item, dict) and item.get("text")]
@@ -233,11 +251,9 @@ def _normalise_scene_count(items: list, target: int = 4) -> list:
     while scenes and len(scenes) < target:
         index = max(range(len(scenes)), key=lambda i: len(str(scenes[i].get("text", ""))))
         source = scenes[index]
-        words = str(source["text"]).split()
-        if len(words) < 2:
+        first, second = _split_scene_text_safely(str(source["text"]))
+        if first is None:
             break
-        cut = max(1, len(words) // 2)
-        first, second = " ".join(words[:cut]), " ".join(words[cut:])
         scenes[index:index + 1] = [
             {**source, "text": first},
             {**source, "text": second},
@@ -307,6 +323,28 @@ def _normalise_image_role(matched: str | None, role: str | None,
     return role if role in ("start", "ref", "character_ref") else None
 
 
+_SENTENCE_TERMINALS = (".", "!", "?", "다", "요", "까", "네", ",")
+
+
+def _scenes_look_fractured(scenes_raw: list, script_text: str) -> bool:
+    """인접 두 씬의 text가 원문 한 문장을 절 중간에서 자른 조각인지 감지한다.
+    두 조각을 이어붙인 문자열이 원문의 연속 부분문자열이면서, 앞 조각이 문장종결
+    표지(./!/?/다/요/까/네/,) 없이 끝나면 — 목적어/동사 같은 문법 단위가 씬 경계에서
+    잘렸다고 본다(예: '우주선이 지구를' / '향해 다가간다')."""
+    compact_script = re.sub(r"\s+", "", script_text)
+    for i in range(len(scenes_raw) - 1):
+        a = scenes_raw[i] if isinstance(scenes_raw[i], dict) else {}
+        b = scenes_raw[i + 1] if isinstance(scenes_raw[i + 1], dict) else {}
+        a_text, b_text = str(a.get("text", "")), str(b.get("text", ""))
+        a_stripped = a_text.rstrip()
+        if not a_stripped or a_stripped[-1] in _SENTENCE_TERMINALS:
+            continue
+        combined = re.sub(r"\s+", "", a_text + b_text)
+        if combined and combined in compact_script:
+            return True
+    return False
+
+
 async def node_split_scenes(state: GraphState) -> dict:
     """1-3: 씬 분할 (AI)"""
     captions = state.get("ref_captions") or {}
@@ -318,12 +356,14 @@ async def node_split_scenes(state: GraphState) -> dict:
         "반드시 4개의 객체만 반환하고, 시나리오의 시작부터 끝까지 시간 순서대로 고르게 배분하라. "
         "text는 반드시 입력 시나리오와 '같은 언어'로 써라 — 다른 언어(특히 중국어/영어)로 "
         "번역하지 마라. 시나리오 문장을 임의로 요약·창작하지 말고 원문의 내용과 순서를 보존하라. "
-        "한 문장(주어+목적어+동사)을 문법 단위 중간에서 두 씬으로 쪼개지 마라 — 예를 들어 "
-        "'우주선이 지구를 향해 다가간다'를 '우주선이 지구를' / '향해 다가간다'로 나누면 그 씬의 "
-        "핵심 대상(지구)이 다른 씬으로 넘어가 두 씬 다 무슨 장면인지 알 수 없게 된다. 각 씬의 "
-        "text는 그 자체로 '누가/무엇이 무엇을 하는지' 완결되게 읽혀야 한다. 문장 수가 4개보다 "
-        "적으면 한 문장을 다른 각도·디테일로 확장해 채우고, 많으면 의미가 이어지는 문장끼리 "
-        "묶어서 4개로 만들어라 — 절대 문장을 반으로 자르지 마라. "
+        "한 문장(주어+목적어+동사)을 문법 단위 중간에서 두 씬으로 쪼개지 마라. "
+        "나쁜 예: 원문 '우주선이 지구를 향해 천천히 다가간다.' → 씬A text='우주선이 지구를', "
+        "씬B text='향해 천천히 다가간다.' (틀림 — 목적어 '지구'와 동사가 분리돼 두 씬 다 "
+        "무슨 장면인지 알 수 없다). 좋은 예: 씬 text='우주선이 지구를 향해 천천히 다가간다.' "
+        "그대로 한 씬에 담고, 부족한 씬 개수는 다른 씬에서 다른 각도·디테일로 채운다. "
+        "각 씬의 text는 그 자체로 '누가/무엇이 무엇을 하는지' 완결되게 읽혀야 한다. 문장 수가 "
+        "4개보다 적으면 한 문장을 다른 각도·디테일로 확장해 채우고, 많으면 의미가 이어지는 "
+        "문장끼리 묶어서 4개로 만들어라 — 절대 문장을 반으로 자르지 마라. "
         "각 씬은 다음 키를 가진 객체다: text(씬 설명, 입력과 동일 언어), "
         "duration(초, 숫자, 2~3 사이 — 3초를 넘기지 마라, 긴 장면은 여러 씬으로 쪼개라), "
         f"mood(반드시 다음 영어 단어 중 하나: {', '.join(MOODS)}), "
@@ -351,12 +391,24 @@ async def node_split_scenes(state: GraphState) -> dict:
     scenes_raw = tools.parse_json_lenient(raw)
     # Nemotron Q4는 같은 프롬프트에서도 간헐적으로 3/5씬을 반환한다(Spike 2.3).
     # 잘못된 결과를 그대로 승인 게이트에 보내지 말고, 결과를 보존한 교정 요청을 한 번 수행한다.
-    if not isinstance(scenes_raw, list) or len(scenes_raw) != 4:
+    # 개수 오류뿐 아니라 문장 중간 절단(목적어/동사 분리)도 같은 재시도 경로를 탄다.
+    fractured = isinstance(scenes_raw, list) and _scenes_look_fractured(scenes_raw, state["script_text"])
+    if not isinstance(scenes_raw, list) or len(scenes_raw) != 4 or fractured:
+        instruction = (
+            "이전 결과의 내용과 시간 순서를 보존하면서 정확히 4개 씬으로 다시 나눠라. "
+            "JSON 배열 외에는 아무것도 출력하지 마라."
+        )
+        if fractured:
+            instruction = (
+                "이전 결과는 원문의 한 문장(주어+목적어+동사)을 씬 경계에서 중간에 잘랐다 "
+                "— 예: '우주선이 지구를' / '향해 다가간다'처럼 목적어와 동사가 다른 씬으로 "
+                "분리됐다. 문장을 자르지 말고 각 씬 text가 완결된 문장(또는 완결된 절)이 "
+                "되도록 다시 나눠라. 내용과 시간 순서는 보존하되, 문장 수가 4개보다 적으면 "
+                "같은 문장을 다른 각도·디테일로 확장해 채워라. JSON 배열 외에는 아무것도 "
+                "출력하지 마라."
+            )
         correction_prompt = json.dumps({
-            "instruction": (
-                "이전 결과의 내용과 시간 순서를 보존하면서 정확히 4개 씬으로 다시 나눠라. "
-                "JSON 배열 외에는 아무것도 출력하지 마라."
-            ),
+            "instruction": instruction,
             "script_text": state["script_text"],
             "ref_images": ref_info,
             "previous_result": scenes_raw,
