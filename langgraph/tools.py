@@ -767,8 +767,10 @@ async def generate_i2v_fallback_clip(
     맡던 것 중 I2V 절반. 기존 4.6 _build_ltx13b_graph(image-conditioned)를 그대로
     재사용, 신규 그래프 불필요."""
     resolved_seed = seed if seed is not None else int(time.time())
-    timeout = httpx.Timeout(connect=10.0, read=60.0, write=60.0, pool=None)
-    async with httpx.AsyncClient(timeout=timeout) as client:
+    async with (
+        oom.phase("i2v"),
+        httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=60.0, write=60.0, pool=None)) as client,
+    ):
         img_path = refs_dir(job_id) / matched_image
         up = await client.post(
             f"{COMFYUI_URL}/upload/image",
