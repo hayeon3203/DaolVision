@@ -8,7 +8,6 @@ export AGENT_OLLAMA_URL="${AGENT_OLLAMA_URL:-http://127.0.0.1:11434/api/chat}"
 export AGENT_LLM_MODEL="${AGENT_LLM_MODEL:-hf.co/nvidia/NVIDIA-Nemotron-3-Nano-4B-GGUF:Q4_K_M}"
 export AGENT_VISION_MODEL="${AGENT_VISION_MODEL:-qwen3.5:9b}"  # qwen3.5:9b = text+vision 겸용. qwen2.5:7b+gemma3:4b 대체(단일 모델 로드)
 export AGENT_CAPTION_REFS="${AGENT_CAPTION_REFS:-1}"          # 1=참조 캡션 ON. VISION_MODEL=qwen3.5:9b가 텍스트용으로 이미 상주 → 추가 모델 로드 0(옛 gemma 18.5GB 우려 소멸). shows 기반 씬↔이미지 매칭 정확도↑
-export AGENT_WAN_URL="${AGENT_WAN_URL:-http://127.0.0.1:8500}"
 export AGENT_T2I_URL="${AGENT_T2I_URL:-http://127.0.0.1:8501}"  # 정지 이미지 앵커(M2) 전용, FLUX.1-schnell
 export AGENT_KOKORO_URL="${AGENT_KOKORO_URL:-http://127.0.0.1:8503}"  # S1 나레이션 전용 Kokoro
 export AGENT_CHATTERBOX_URL="${AGENT_CHATTERBOX_URL:-http://127.0.0.1:8504}"  # 사용자 음성 복제 전용 Chatterbox V3
