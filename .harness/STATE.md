@@ -558,6 +558,23 @@ Face-ID LoRA 출력~샘플러 사이에 패치 삽입.
 
 ## 최종 갱신
 
+- 2026-08-01, Task 6.3 완료(LocalAI 프론트 → :8700 게이트웨이 배선). LocalAI
+  포크(`/home/admin/LocalAI`, DaolVision 밖 별도 git repo, master
+  `43242b1`)에 신규 사이드바 섹션(Agent/I2V 단발샷/I2I/TTS/T2I) 5개 페이지를
+  추가했다. **기존 LocalAI Images/Video/TTS 탭(ImageGen/VideoGen/TTS.jsx)은
+  건드리지 않음** — ModelSelector·voice-profile 레지스트리 등 LocalAI 자체
+  다중모델 기능과 결이 달라(게이트웨이는 고정 단일모델 multipart 계약)
+  억지로 재활용하면 impedance mismatch만 커진다고 판단, 별도 페이지로 분리.
+  `utils/api.js`에 `gatewayApi`(t2i/i2v/i2i/ttsClone/startJob/jobStatus/
+  resumeJob) 추가, 절대 URL(`http://<host>:8700`)로 크로스오리진 호출 —
+  게이트웨이(`langgraph/api.py`, DaolVision 커밋 `818cb9d`)에 CORSMiddleware
+  추가 필요했음(오프라인 단일 사용자 로컬 데모라 `allow_origins=*`). GatewayAgent
+  페이지는 phase 스텝퍼 없이 최소 폴링+승인 UI만(스텝퍼는 Task 6.4). `npm run
+  build`/`lint` 클린(신규 에러 0). 컨테이너(`localai-spike`)가 내려가 있어
+  실제 인증된 브라우저 E2E는 미검증 — 코드 리뷰 + vite dev 트랜스폼 확인까지만.
+  **사용자 지시로 2026-07-31 T2I 폐지 결정을 번복**해 5번째 카테고리로 복원
+  (`/t2i`는 이미 `/i2v`·`/i2i`와 동일하게 job-독립 단발 엔드포인트라 자연스럽게
+  같은 패턴으로 추가 — Agent 내부 T2I 스텝은 그대로 유지, 건드리지 않음).
 - 2026-07-31, S1 나레이션 엔진을 Kokoro에서 Chatterbox V3 + 고정 CC0
   한국어 화자로 교체. Kokoro `af_heart`는 한국어 G2P만 가능하고 한국어
   네이티브 화자가 없어 실청취에서 외국인 억양으로 기각했다. Lingua Libre
