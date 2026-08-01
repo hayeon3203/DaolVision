@@ -141,6 +141,59 @@ def test_webp_bytes_to_mp4_produces_real_mp4():
     print("ok: webp 바이트가 ffprobe로 검증 가능한 진짜 h264 mp4로 재인코딩됨")
 
 
+def test_webp_bytes_to_mp4_reaps_ffmpeg_on_mid_loop_failure():
+    """리뷰 지적: 프레임 루프/write/communicate 도중 예외가 나면 ffmpeg proc이 reap 안
+    되고 좀비/행 상태로 남는다. 두 번째 프레임에서 강제로 예외를 터뜨려(ffmpeg는 나머지
+    입력을 기다리며 살아있는 상태) except 경로가 proc.kill()+wait()로 실제 회수하는지
+    검증한다."""
+    import io
+    from unittest import mock
+    from PIL import Image as PILImage
+
+    frames = [PILImage.new("RGB", (64, 64), color=(i * 40, 100, 150)) for i in range(5)]
+    buf = io.BytesIO()
+    frames[0].save(buf, format="WEBP", save_all=True, append_images=frames[1:],
+                    duration=100, loop=0)
+    webp_bytes = buf.getvalue()
+
+    real_popen = tools.subprocess.Popen
+    created = []
+
+    def spy_popen(*a, **kw):
+        p = real_popen(*a, **kw)
+        created.append(p)
+        return p
+
+    call_count = {"n": 0}
+    orig_convert = PILImage.Image.convert
+
+    def flaky_convert(self, *a, **kw):
+        call_count["n"] += 1
+        if call_count["n"] == 2:
+            raise RuntimeError("simulated mid-loop failure")
+        return orig_convert(self, *a, **kw)
+
+    with mock.patch("tools.subprocess.Popen", side_effect=spy_popen), \
+         mock.patch.object(PILImage.Image, "convert", flaky_convert):
+        try:
+            tools._webp_bytes_to_mp4(webp_bytes, fps=10)
+            raised = False
+        except RuntimeError:
+            raised = True
+
+    assert raised, "프레임 루프 중 예외가 삼켜짐"
+    assert created, "Popen이 호출되지 않음"
+    proc = created[0]
+    try:
+        proc.wait(timeout=5)
+    except tools.subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+        raise AssertionError("except 경로가 ffmpeg를 kill하지 않음 — 좀비/행 프로세스")
+    assert proc.returncode is not None
+    print("ok: 프레임 루프 도중 실패해도 ffmpeg proc이 kill/wait로 reap됨(좀비 방지)")
+
+
 def main():
     test_to_ltx_len_snaps_to_8k_plus_1()
     test_t2v_graph_has_no_image_nodes()
@@ -150,6 +203,7 @@ def main():
     test_new_wrapper_signatures()
     test_dispatch_routes_to_new_functions()
     test_webp_bytes_to_mp4_produces_real_mp4()
+    test_webp_bytes_to_mp4_reaps_ffmpeg_on_mid_loop_failure()
 
 
 if __name__ == "__main__":

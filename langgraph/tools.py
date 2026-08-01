@@ -664,6 +664,7 @@ def _webp_bytes_to_mp4(webp_bytes: bytes, fps: int) -> bytes:
         n_frames = getattr(im, "n_frames", 1)
         with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
             tmp_path = tmp.name
+        proc = None
         try:
             proc = subprocess.Popen(
                 ["ffmpeg", "-y", "-f", "image2pipe", "-framerate", str(fps), "-i", "-",
@@ -680,6 +681,13 @@ def _webp_bytes_to_mp4(webp_bytes: bytes, fps: int) -> bytes:
                 raise RuntimeError(
                     f"webp→mp4 재인코딩 실패: {stderr.decode(errors='replace')[-500:]}")
             return Path(tmp_path).read_bytes()
+        except Exception:
+            # 프레임 루프/write/communicate 타임아웃 등 도중 실패 시 ffmpeg 좀비 방지
+            # (communicate가 정상 완료된 뒤라면 이미 reap된 상태라 poll()이 None이 아님)
+            if proc is not None and proc.poll() is None:
+                proc.kill()
+                proc.wait()
+            raise
         finally:
             Path(tmp_path).unlink(missing_ok=True)
 
