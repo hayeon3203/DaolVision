@@ -584,3 +584,41 @@ Face-ID LoRA 출력~샘플러 사이에 패치 삽입.
   조건인 `face_id_ref`를 별도 필드로 보존한다. 사람의 `start/ref`만 Face-ID
   참조가 전달되며 비인간 참조는 제외한다. 4씬 앵커 계약 테스트, 기존 생성 순서·
   스타일 회귀, Python 컴파일, `driver.py --dry` 모두 PASS.
+- 2026-07-31, Task 5.3 완료. 3.2에서 품질 통과한 LTX-2.3-22B Q6_K +
+  distill LoRA + Best-Face-ID 워크플로를 UI 변환이 필요 없는
+  `ltx_faceid_api.json`으로 고정했다. 4씬은 개별 `/prompt`가 아니라 하나의
+  ComfyUI prompt 안에서 모델/Gemma/VAE/LoRA 로더를 공유하고 샘플러 가지
+  4개만 분리한다. 따라서 배치당 GGUF/Gemma 로더 각 1개, LoRA 로더 2개로
+  씬별 재로드를 구조적으로 방지한다. Face-ID 참조도 동일 파일이면 한 번만
+  업로드한다. ComfyUI 41개 노드 타입 호환 확인, 단일 배치 계약 테스트,
+  Python 컴파일, `driver.py --dry` PASS.
+  - **라이브 Acceptance 추가**: job `task53-live-20260731`에서 동의된 사용자
+    얼굴 참조(`건호군.jpg`)로 발사·우주유영·외계행성·귀환 클립 4개 실제 생성.
+    전부 1024×576, 24fps, 2.041667초 H.264 MP4이며
+    `langgraph/jobs/task53-live-20260731/clip{1..4}.mp4`에 보존했다.
+    중간 프레임 contact sheet 눈판정에서 장면별 배경 구분은 확인됐으나, 동일
+    인물 여부는 이후 재검증에서 뒤집힘 — 아래 재설계(정정) 항목 참고.
+  - 원본 워크플로의 LTX 오디오 디코드가 씬 2 후 AudioVAE 로드 중 스왑
+    스래싱을 일으켜 첫 배치를 중단했다. S1 오디오는 5.4 TTS mux가 담당하므로
+    `CreateVideo.audio` 연결을 제거해 영상 전용으로 재실행했고 나머지 3씬 완주.
+    ComfyUI 0.25 `SaveVideo`가 MP4를 `outputs.images + animated=true`로
+    보고하는 형식도 production downloader에 반영했다.
+- 2026-07-31, Task 5.2/5.3 재설계(정정). 위 Task 5.2/5.3 완료 기록은 Flux
+  앵커(`node_generate_scene_anchors`)를 `LTXVImgToVideo strength=1.0`으로
+  첫 프레임에 고정하는 설계였으나, 라이브 재생성 육안 검증(job
+  `task53-live-20260731` 프레임 비교)에서 두 결함 확인:
+  (1) Flux 앵커 생성이 얼굴 참조를 전혀 받지 않아 매번 무작위 얼굴 생성,
+  (2) 그 무작위 얼굴을 강도 1.0으로 첫 프레임에 고정해 뒤따르는 Face-ID
+  Identity Transfer(node 129)가 참조 얼굴로 override할 여지가 전혀 없었음
+  — 최종 영상이 참조 얼굴과 무관한 사람으로 나옴(재현: 재검증 앵커가 완전히
+  다른 여성 얼굴로 생성됨을 직접 확인). 씬 프롬프트의 "camera push-in" 문구도
+  2초 클립 안에서 인물이 급격히 확대되는 별도 문제로 확인.
+  **조치**: Flux 앵커 생성(`generate_scene_anchor`)과 앵커 lock 배선(node
+  130/131, node 117/129 override)을 전부 제거하고 3.2가 검증한 순수 Face-ID
+  배선(100 `EmptyLTXVLatentVideo` → 117 → 129←83)으로 복귀. 배경 다양성은
+  3.2에서 이미 증명된 대로 씬 프롬프트 텍스트가 전담(앵커 불필요). 씬
+  프롬프트는 push-in을 제거하고 3.2 기본값(wide/establishing shot, static
+  camera, character small in frame)으로 통일. 설계 근거:
+  `docs/superpowers/specs/2026-07-31-ltx-faceid-anchor-removal-design.md`.
+  부가 효과: 씬당 ~177초였던 Flux 앵커 호출이 통째로 사라져 생성 시간도
+  단축됨.
