@@ -14,3 +14,6 @@ inference_server/process_checkpoint/
 inference_server/.cache/
 inference_server/bench_out/
 inference_server/outputs/
+
+# git worktrees (superpowers:using-git-worktrees)
+.worktrees/
