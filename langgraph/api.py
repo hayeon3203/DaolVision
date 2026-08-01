@@ -20,6 +20,7 @@ from langgraph.types import Command
 import tools
 import metrics
 import dashboard
+import style_presets
 from graph import compile_graph
 
 app = FastAPI(title="anim_video_agent")
@@ -269,6 +270,28 @@ async def i2v_oneshot(
         return await tools.generate_i2v_oneshot(image_bytes, prompt, seed)
     except httpx.HTTPError as e:
         raise HTTPException(status_code=502, detail=f"I2V backend unreachable: {e}")
+    except (ValueError, RuntimeError, TimeoutError) as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@app.post("/i2i")
+async def i2i_style(
+    style: str = Form(...),
+    image: UploadFile = File(...),
+    seed: int | None = Form(None),
+):
+    """S2 Flux Kontext 스타일 변환 (Task 6.1). style_presets.py(4.5)의 6종 프리픽스를
+    style_prefix() 그대로 재사용 — 신규 스타일 정의 없음. job과 무관 — base64 PNG 반환."""
+    style = style.strip()
+    if style not in style_presets.STYLE_PREFIXES:
+        raise HTTPException(status_code=400, detail=f"unsupported style: {style}")
+    image_bytes = await image.read()
+    if not image_bytes:
+        raise HTTPException(status_code=422, detail="image is required")
+    try:
+        return await tools.generate_i2i_style(image_bytes, style, seed)
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=502, detail=f"I2I backend unreachable: {e}")
     except (ValueError, RuntimeError, TimeoutError) as e:
         raise HTTPException(status_code=502, detail=str(e))
 

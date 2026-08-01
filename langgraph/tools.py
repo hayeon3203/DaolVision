@@ -24,6 +24,7 @@ import httpx
 from PIL import Image, ImageOps
 
 import oom_orchestrator as oom
+import style_presets
 
 # ── 환경 설정 ────────────────────────────────────────────────
 OLLAMA_URL = os.environ.get("AGENT_OLLAMA_URL", "http://127.0.0.1:11434/api/chat")
@@ -693,6 +694,144 @@ async def generate_i2v_oneshot(image_bytes: bytes, prompt: str, seed: int | None
 
     return {
         "video_base64": base64.b64encode(video.content).decode(),
+        "width": width,
+        "height": height,
+    }
+
+
+# ── I2I 스타일 변환 (Flux Kontext dev, docs/model-selection-i2i.md, Task 6.1) ──
+# style_presets.py(4.5)의 6종 프리픽스를 그대로 재사용한다 — 신규 스타일 정의 없음.
+FLUX_KONTEXT_UNET = os.environ.get(
+    "AGENT_FLUX_KONTEXT_UNET", "flux1-dev-kontext_fp8_scaled.safetensors")
+FLUX_KONTEXT_CLIP_L = os.environ.get("AGENT_FLUX_KONTEXT_CLIP_L", "clip_l.safetensors")
+FLUX_KONTEXT_T5 = os.environ.get(
+    "AGENT_FLUX_KONTEXT_T5", "t5xxl_fp8_e4m3fn_scaled.safetensors")  # 5.x LTX와 공유
+FLUX_KONTEXT_VAE = os.environ.get("AGENT_FLUX_KONTEXT_VAE", "ae.safetensors")
+FLUX_KONTEXT_STEPS = int(os.environ.get("AGENT_FLUX_KONTEXT_STEPS", "20"))
+FLUX_KONTEXT_GUIDANCE = float(os.environ.get("AGENT_FLUX_KONTEXT_GUIDANCE", "2.5"))
+
+# ComfyUI comfy_extras/nodes_flux.py의 FluxKontextImageScale이 내부적으로 고르는
+# 해상도 버킷과 동일 목록 — EmptySD3LatentImage에 같은 width/height를 넣어야 latent
+# 크기가 어긋나지 않는다(그래프 실행 전 파이썬에서 미리 같은 알고리즘으로 계산).
+FLUX_KONTEXT_RESOLUTIONS = [
+    (672, 1568), (688, 1504), (720, 1456), (752, 1392), (800, 1328),
+    (832, 1248), (880, 1184), (944, 1104), (1024, 1024), (1104, 944),
+    (1184, 880), (1248, 832), (1328, 800), (1392, 752), (1456, 720),
+    (1504, 688), (1568, 672),
+]
+
+
+def _flux_kontext_dims(img_width: int, img_height: int) -> tuple[int, int]:
+    """FluxKontextImageScale과 동일한 최근접 종횡비 버킷 산정(ComfyUI 소스 미러)."""
+    if img_width <= 0 or img_height <= 0:
+        raise ValueError(f"invalid image dimensions: {img_width}x{img_height}")
+    aspect = img_width / img_height
+    _, width, height = min(
+        (abs(aspect - w / h), w, h) for w, h in FLUX_KONTEXT_RESOLUTIONS)
+    return width, height
+
+
+def _build_flux_kontext_graph(
+    *, prompt: str, image_name: str, width: int, height: int, seed: int,
+) -> dict:
+    """docs.comfy.org/tutorials/flux/flux-1-kontext-dev 공식 워크플로와 동일한
+    API-format 그래프(LoadImage→FluxKontextImageScale→VAEEncode→ReferenceLatent로
+    입력 얼굴사진을 조건으로 건 뒤 EmptySD3LatentImage에서 새로 샘플링)."""
+    return {
+        "1": {"class_type": "UNETLoader",
+              "inputs": {"unet_name": FLUX_KONTEXT_UNET, "weight_dtype": "default"}},
+        "2": {"class_type": "DualCLIPLoader", "inputs": {
+            "clip_name1": FLUX_KONTEXT_CLIP_L, "clip_name2": FLUX_KONTEXT_T5, "type": "flux",
+        }},
+        "3": {"class_type": "VAELoader", "inputs": {"vae_name": FLUX_KONTEXT_VAE}},
+        "4": {"class_type": "CLIPTextEncode", "inputs": {"text": prompt, "clip": ["2", 0]}},
+        "5": {"class_type": "ConditioningZeroOut", "inputs": {"conditioning": ["4", 0]}},
+        "6": {"class_type": "LoadImage", "inputs": {"image": image_name}},
+        "7": {"class_type": "FluxKontextImageScale", "inputs": {"image": ["6", 0]}},
+        "8": {"class_type": "VAEEncode", "inputs": {"pixels": ["7", 0], "vae": ["3", 0]}},
+        "9": {"class_type": "ReferenceLatent",
+              "inputs": {"conditioning": ["4", 0], "latent": ["8", 0]}},
+        "10": {"class_type": "FluxGuidance",
+               "inputs": {"conditioning": ["9", 0], "guidance": FLUX_KONTEXT_GUIDANCE}},
+        "11": {"class_type": "EmptySD3LatentImage",
+               "inputs": {"width": width, "height": height, "batch_size": 1}},
+        "12": {"class_type": "KSampler", "inputs": {
+            "model": ["1", 0], "seed": seed, "steps": FLUX_KONTEXT_STEPS, "cfg": 1.0,
+            "sampler_name": "euler", "scheduler": "simple",
+            "positive": ["10", 0], "negative": ["5", 0], "latent_image": ["11", 0],
+            "denoise": 1.0,
+        }},
+        "13": {"class_type": "VAEDecode", "inputs": {"samples": ["12", 0], "vae": ["3", 0]}},
+        "14": {"class_type": "SaveImage",
+               "inputs": {"images": ["13", 0], "filename_prefix": "i2i_style"}},
+    }
+
+
+async def generate_i2i_style(image_bytes: bytes, style: str, seed: int | None = None) -> dict:
+    """:8700 /i2i 얼굴사진→스타일 변환 (Flux Kontext dev, ComfyUI :8188 프록시).
+    job과 무관한 단발 호출 — base64 PNG로 바로 반환. style은 style_presets.py의
+    6종 키 중 하나여야 한다(신규 스타일 정의 없음, 미지원 키는 여기서 거부)."""
+    if style not in style_presets.STYLE_PREFIXES:
+        raise ValueError(f"unsupported style: {style}")
+    prompt = (
+        f"Change the style of the photo to: {style_presets.style_prefix(style)}. "
+        "Keep the same facial features, pose, and composition."
+    )
+    normalized, img_width, img_height = _normalize_i2v_input(image_bytes)
+    width, height = _flux_kontext_dims(img_width, img_height)
+    if seed is None:
+        seed = int(time.time())
+
+    timeout = httpx.Timeout(connect=10.0, read=180.0, write=60.0, pool=None)
+    async with oom.phase("i2i"), httpx.AsyncClient(timeout=timeout) as client:
+        up = await client.post(
+            f"{COMFYUI_URL}/upload/image",
+            files={"image": ("i2i_style_input.png", normalized, "image/png")},
+            data={"overwrite": "true"},
+        )
+        up.raise_for_status()
+        uj = up.json()
+        image_name = f"{uj['subfolder']}/{uj['name']}" if uj.get("subfolder") else uj["name"]
+
+        graph = _build_flux_kontext_graph(
+            prompt=prompt, image_name=image_name, width=width, height=height, seed=seed)
+        resp = await client.post(f"{COMFYUI_URL}/prompt", json={"prompt": graph})
+        resp.raise_for_status()
+        prompt_id = resp.json()["prompt_id"]
+
+        started_at = time.time()
+        history_item = None
+        while history_item is None:
+            if time.time() - started_at > STANDIN_QUEUE_TIMEOUT:
+                raise TimeoutError("I2I 스타일 변환이 제한 시간 내 완료되지 않음")
+            history = (await client.get(f"{COMFYUI_URL}/history/{prompt_id}")).json()
+            if prompt_id in history:
+                history_item = history[prompt_id]
+            else:
+                await asyncio.sleep(2.0)
+
+        if history_item.get("status", {}).get("status_str") == "error":
+            raise RuntimeError(
+                f"I2I 스타일 변환 실행 오류 {history_item.get('status', {}).get('messages')}"
+            )
+
+        media = None
+        for node_out in history_item.get("outputs", {}).values():
+            media = node_out.get("images")
+            if media:
+                break
+        if not media:
+            raise RuntimeError("I2I 스타일 변환 출력 이미지 없음")
+        output = media[0]
+        png = await client.get(f"{COMFYUI_URL}/view", params={
+            "filename": output["filename"],
+            "subfolder": output.get("subfolder", ""),
+            "type": output.get("type", "output"),
+        })
+        png.raise_for_status()
+
+    return {
+        "image_base64": base64.b64encode(png.content).decode(),
         "width": width,
         "height": height,
     }
