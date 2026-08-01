@@ -63,11 +63,29 @@ def test_i2v_fallback_request_key_changes_with_prompt_and_image():
     print("ok: I2V 폴백 request_key가 prompt/matched_image 변화를 반영")
 
 
+def test_call_video_and_wan_url_removed():
+    assert not hasattr(tools, "call_video"), "call_video가 남아있음 — Wan 배제 목적 위반"
+    assert not hasattr(tools, "WAN_URL"), "WAN_URL이 남아있음"
+    print("ok: call_video/WAN_URL 완전 제거")
+
+
+def test_new_wrapper_signatures():
+    t2v_params = list(inspect.signature(tools.generate_t2v_clip).parameters)
+    assert t2v_params == ["job_id", "scene_id", "prompt", "duration", "seed", "force_new"], t2v_params
+    i2v_params = list(inspect.signature(tools.generate_i2v_fallback_clip).parameters)
+    assert i2v_params == [
+        "job_id", "scene_id", "prompt", "matched_image", "duration", "seed", "force_new",
+    ], i2v_params
+    print("ok: generate_t2v_clip/generate_i2v_fallback_clip 시그니처 확정")
+
+
 def main():
     test_to_ltx_len_snaps_to_8k_plus_1()
     test_t2v_graph_has_no_image_nodes()
     test_t2v_request_key_changes_with_prompt_and_scene()
     test_i2v_fallback_request_key_changes_with_prompt_and_image()
+    test_call_video_and_wan_url_removed()
+    test_new_wrapper_signatures()
 
 
 if __name__ == "__main__":
