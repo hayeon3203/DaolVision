@@ -318,6 +318,12 @@ async def node_split_scenes(state: GraphState) -> dict:
         "반드시 4개의 객체만 반환하고, 시나리오의 시작부터 끝까지 시간 순서대로 고르게 배분하라. "
         "text는 반드시 입력 시나리오와 '같은 언어'로 써라 — 다른 언어(특히 중국어/영어)로 "
         "번역하지 마라. 시나리오 문장을 임의로 요약·창작하지 말고 원문의 내용과 순서를 보존하라. "
+        "한 문장(주어+목적어+동사)을 문법 단위 중간에서 두 씬으로 쪼개지 마라 — 예를 들어 "
+        "'우주선이 지구를 향해 다가간다'를 '우주선이 지구를' / '향해 다가간다'로 나누면 그 씬의 "
+        "핵심 대상(지구)이 다른 씬으로 넘어가 두 씬 다 무슨 장면인지 알 수 없게 된다. 각 씬의 "
+        "text는 그 자체로 '누가/무엇이 무엇을 하는지' 완결되게 읽혀야 한다. 문장 수가 4개보다 "
+        "적으면 한 문장을 다른 각도·디테일로 확장해 채우고, 많으면 의미가 이어지는 문장끼리 "
+        "묶어서 4개로 만들어라 — 절대 문장을 반으로 자르지 마라. "
         "각 씬은 다음 키를 가진 객체다: text(씬 설명, 입력과 동일 언어), "
         "duration(초, 숫자, 2~3 사이 — 3초를 넘기지 마라, 긴 장면은 여러 씬으로 쪼개라), "
         f"mood(반드시 다음 영어 단어 중 하나: {', '.join(MOODS)}), "
@@ -729,6 +735,10 @@ def _scene_prompt_system(standin: bool, has_wardrobe: bool = False) -> str:
         "EXPRESSION and emotional state matching the mood; (4) camera movement. "
         "Favor natural, dynamic motion and a lively expression — avoid static, stiff or "
         "frozen poses and blank faces. "
+        "CRITICAL: keep every specific named subject, object, or place mentioned in the "
+        "scene text explicit in your English prompt — if the scene names something concrete "
+        "(e.g. Earth, a spaceship, a specific landmark), your prompt must name that exact "
+        "thing too, not a vague substitute or generic background detail. Never drop it. "
     )
     if standin:
         base += (
