@@ -129,7 +129,7 @@
 |------|------|-----|------------|---------|--------|----|
 | 8.1 | 라이브 리허설 + 폴백 사다리 점검 [tdd:skip:rehearsal] | 오프라인 E2E(S2→S1) 완주, 폴백 경로 각 1회 검증, STATE.md 기록 | - | 7.1, 7.5 | cc:TODO | - |
 | 8.2 | 재현 스크립트 (클론→기동 한방) | scripts로 전 서비스 기동, 실행권한 | test -x scripts/start_studio.sh | 8.1 | cc:TODO | - |
-| 8.2.1 | 모델 서버 OpenShell 샌드박스 격리 (Ollama/Wan:8500/ComfyUI:8188/T2I:8501/Kokoro:8503/Chatterbox:8504 각 `--gpu` 샌드박스 + `forward`로 기존 localhost 포트 유지, tools.py 코드 변경 없음) | 6종 서비스 전부 openshell sandbox에서 기동, 기존 AGENT_*_URL localhost:PORT로 그대로 응답, driver.py --dry PASS | openshell sandbox list \| grep -c Ready \| grep -q 6 && cd langgraph && ./.venv/bin/python driver.py --dry | 8.2 | cc:TODO | - |
+| 8.2.1 | 모델 서버 OpenShell 샌드박스 격리 (Ollama/ComfyUI:8188/T2I:8501/Kokoro:8503/Chatterbox:8504 각 `--gpu` 샌드박스 + `forward`로 기존 localhost 포트 유지, tools.py 코드 변경 없음) | 5종 서비스 전부 openshell sandbox에서 기동, 기존 AGENT_*_URL localhost:PORT로 그대로 응답, driver.py --dry PASS | openshell sandbox list \| grep -c Ready \| grep -q 5 && cd langgraph && ./.venv/bin/python driver.py --dry | 8.2 | cc:TODO | - |
 | 8.3 | README 갱신 (오픈셸 구성·기동법·국적표) [tdd:skip:docs-only] | README에 스튜디오 구성·기동·모델국적표 반영 | grep -qi openshell README.md | 8.2.1 | cc:TODO | - |
 
 ---

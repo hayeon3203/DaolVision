@@ -11,10 +11,14 @@
   런타임에 로드하는 `comfyui_workflows/i2v_14b.json`·`standin_t2v.json`, 자체
   `.venv`) + 앞으로 붙일 신규 코드(LocalAI 포크 프론트, 스텝퍼/대시보드) +
   스파이크 기록의 집.
-- **GPU 상주 미디어 서버만 `video_generator`에 남음**: hunyuan_server(:8500
-  Wan T2V/I2V, :8501 Flux T2I), ComfyUI(:8188, Stand-In·LTX Face-ID 스파이크).
+- **GPU 상주 미디어 서버만 `video_generator`에 남음**: hunyuan_server(:8501
+  Flux T2I), ComfyUI(:8188, Stand-In·LTX Face-ID·LTX T2V/I2V 폴백 스파이크).
   DaolVision의 langgraph 게이트웨이는 이들을 **HTTP로만 소비**(URL은
-  `AGENT_WAN_URL`/`AGENT_T2I_URL`/`AGENT_COMFYUI_URL` env, 전부 127.0.0.1).
+  `AGENT_T2I_URL`/`AGENT_COMFYUI_URL` env, 전부 127.0.0.1).
+  **2026-08-01 Task 12(Wan 제거) 이후**: 기존 hunyuan_server(:8500 Wan
+  T2V/I2V, 중국 원산)를 부르던 `AGENT_WAN_URL`/`call_video`가 삭제되고
+  T2V/I2V 폴백 경로가 전부 LTX-Video-0.9.8-13B-distilled(:8188 ComfyUI)로
+  통합됨 — `c4c36c4`(animate_server :8600 제거)와 동일 전례.
   **2026-07-30 Task 4.1 직후 이전**: 게이트웨이 코드가 물리적으로도
   video_generator에 있어 원칙과 어긋나던 걸 바로잡음(커밋: video_generator
   `59e5462`(삭제) / DaolVision 이번 커밋(추가), 히스토리 보존 없이 새 커밋).

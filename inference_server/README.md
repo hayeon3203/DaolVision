@@ -1,79 +1,52 @@
-# hunyuanvideo-pipeline
+# inference_server
 
-Video generation inference server (FastAPI) with Open WebUI integration, tuned for
-the **NVIDIA GB10 / Grace-Blackwell (DGX Spark)** unified-memory platform.
+Host-GPU inference servers (FastAPI) for the DaolVision studio, tuned for the
+**NVIDIA GB10 / Grace-Blackwell (DGX Spark)** unified-memory platform.
 
-> **Backend: Wan2.2-TI2V-5B.** A single 5B checkpoint serves **both** text-to-video
-> (T2V) and image-to-video (I2V). It replaced the original HunyuanVideo 1.5 setup
-> (two ~44GB models that could not coexist on the 119GB GB10); Wan keeps one shared
-> ~23GB weight set for both modes and runs ~6.7× faster per step on this hardware.
-> The repo name is kept for continuity.
+> **Backend: FLUX.1-schnell.** Dedicated text-to-image server for the agent's
+> "generate anchor image" step. Video generation (T2V/I2V) is handled separately
+> by LTX-Video-0.9.8-13B-distilled via ComfyUI (:8188) — not part of this
+> directory. The old Wan2.2-TI2V-5B video server (`server.py`, :8500) and the
+> Wan2.2-Animate server (`animate_server.py`, :8600) that used to live here were
+> both removed as dead code once `langgraph/` stopped calling them (see git
+> history / `.harness/STATE.md`).
 
 ## Components
 
 | File | Purpose |
 |------|---------|
-| `server.py` | FastAPI server. `POST /generate` (T2V), `POST /generate_i2v` (I2V), `POST /cancel`, `/health`, `/metrics`. Loads `WanPipeline` once; the I2V pipeline reuses its components (no extra memory). |
-| `run.sh` | Start script (env defaults + launch). |
-| `hunyuanvideo_pipeline.py` | Open WebUI **Pipelines** plugin. Routes chat (with/without image) to the server; streams heartbeats so a user "stop" calls `POST /cancel`. |
-| `openwebui_function.py` | Open WebUI **Function** variant of the integration. |
+| `flux_server.py` | FastAPI server. `POST /generate` (T2I), `/health`, `/outputs/<file>.png`. |
+| `run_flux.sh` | Start script (env defaults + launch). |
+| `bench_t2i.py` | One-shot T2I benchmark harness used to pick the FLUX.1-schnell model (see file docstring). |
 | `metrics.py` | Prometheus metrics (per-step timing, generation duration, GPU/RAM). |
+| `deploy/flux.service` | systemd user unit for `run_flux.sh`. |
 | `monitoring/` | Prometheus + Grafana dashboard for the `/metrics` endpoint. |
-
-## Why Wan2.2-TI2V-5B on GB10
-
-- **One model, both modes.** `WanPipeline` (T2V) and `WanImageToVideoPipeline` (I2V)
-  share the same transformer / umT5 text encoder / VAE. I2V conditions on the image
-  via VAE-latent concatenation (no separate image encoder).
-- **Fast.** ~3.3 s/step at 832×480 (vs ~21.5 s/step for HunyuanVideo) — the Wan VAE
-  (16× spatial) plus transformer `patch_size=2` yields far fewer tokens, so the
-  attention memory traffic that bottlenecks the bandwidth-bound GB10 drops sharply.
-- **Memory-light.** One shared ~23GB weight set covers T2V+I2V, so no swap / pipeline
-  juggling. **Important:** share components with the constructor
-  `WanImageToVideoPipeline(**t2v.components, expand_timesteps=t2v.config.expand_timesteps)` —
-  `from_pipe()` silently duplicates the weights (+34GB) and triggers a ~3× slowdown.
-- **Attention.** flash-attn is broken on Blackwell, so SDPA is forced via
-  `set_attention_backend("native")` / `DIFFUSERS_ATTENTION_BACKEND=native`.
+| `editing/` | `make_ad.sh` — standalone shell pipeline that concatenates clips with Korean subtitles + BGM (unrelated to the inference server; see `editing/README.md`). |
 
 ## Run
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install "diffusers>=0.39.0.dev0" torch transformers accelerate \
-            fastapi uvicorn pillow prometheus-client psutil pynvml ftfy
-./run.sh
+            fastapi uvicorn pillow prometheus-client psutil pynvml
+./run_flux.sh
 ```
 
-Server listens on `http://0.0.0.0:8500`. (`ftfy` is required by the Wan prompt
-preprocessing — I2V errors without it.)
+Server listens on `http://0.0.0.0:8501`.
 
 ### Environment variables
 
 | Var | Default | Meaning |
 |-----|---------|---------|
-| `WAN_MODEL_ID` | `Wan-AI/Wan2.2-TI2V-5B-Diffusers` | model repo / local path |
-| `WAN_WIDTH` / `WAN_HEIGHT` | `832` / `480` | default frame size (overridable per request) |
-| `HYV_HOST` / `HYV_PORT` | `0.0.0.0` / `8500` | bind address |
-| `HYV_DTYPE` | `bfloat16` | `bfloat16` \| `float16` |
-| `DIFFUSERS_ATTENTION_BACKEND` | `native` | keep SDPA on Blackwell |
+| `FLUX_MODEL_PATH` | `black-forest-labs/FLUX.1-schnell` | model repo / local path |
+| `FLUX_WIDTH` / `FLUX_HEIGHT` | `1024` / `1024` | default frame size (overridable per request) |
+| `FLUX_STEPS` | `4` | schnell's distilled step count |
+| `FLUX_KEEP_RESIDENT` | `0` | `0` = unload after every request (coexist with comfyui.service); `1` only if no other GPU-heavy service needs the freed headroom |
+| `HYV_HOST` / `HYV_PORT` | `0.0.0.0` / `8501` | bind address |
 
 ### API
 
 ```
-POST /generate       {prompt, [negative_prompt, num_frames, num_inference_steps,
-                       height, width, guidance_scale, fps, seed]}
-POST /generate_i2v   {image (base64/data-URI), prompt, ...same...}
-POST /cancel         aborts the running generation at the next denoising step
-GET  /health  GET /metrics  GET /outputs/<file>.mp4
+POST /generate   {prompt, [width, height, num_inference_steps, seed]}
+GET  /health  GET /outputs/<file>.png
 ```
-
-`num_frames` must be `4k+1` (Wan VAE temporal factor 4). Wan2.2-TI2V-5B is a base
-model (not step-distilled): ~20 steps is a good speed/quality point.
-
-## Open WebUI integration
-
-Install `hunyuanvideo_pipeline.py` into the Open WebUI **pipelines** container (or
-load `openwebui_function.py` as a Function). Set the `SERVER_URL` valve to this
-server (default `localhost:8500`; from a container use the host's address). A
-text-only message routes to T2V, a message with an attached image routes to I2V.
-Stopping the chat aborts the server-side job via `POST /cancel`.

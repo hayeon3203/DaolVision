@@ -177,7 +177,7 @@ UI 플로우: 카테고리 선택 → 스타일 프리셋 선택 → 입력 → 
 | Day | 작업 | 게이트(통과 못하면 폴백) |
 |---|---|---|
 | **1** | 환경 스파이크: LocalAI 빌드 · Nemotron-VL-8B Ollama 서빙 · Nemotron-4B 한국어 · **전 모델 상주 OOM 실측** | 빌드 실패→UI 전면 재검토 · VL-8B 안붙음→Llama3.2-Vision · 상주 실패→배치 언로드 |
-| **2** | **LTX distilled + Face-ID + BFS노드 스파이크** (얼굴+화풍 일관성 데모수준?) · LoRA 라이센스·distilled 호환 확인 | 미달→Wan Stand-In 폴백 확정 |
+| **2** | **LTX distilled + Face-ID + BFS노드 스파이크** (얼굴+화풍 일관성 데모수준?) · LoRA 라이센스·distilled 호환 확인 | 미달→base LTX 무드형 폴백 확정 |
 | **3** | :8700 게이트웨이 확장(T2I/TTS/대시보드 엔드포인트) · 배치 오케 · 스타일 셀렉터 프리픽스 | — |
 | **4** | S1 파이프(우주 4씬, Face-ID 참조, 승인 3게이트, TTS mux) | — |
 | **5** | S2(Flux Kontext 4스타일) · S2→S1 연결 · LocalAI 프론트 배선(카테고리/스텝퍼) | — |
