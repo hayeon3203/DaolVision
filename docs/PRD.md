@@ -108,7 +108,7 @@ UI 플로우: 카테고리 선택 → 스타일 프리셋 선택 → 입력 → 
 | I2V(주력, Agent용) | **LTX-2.3-22B-dev(GGUF Q6_K) + distill LoRA + LTX-Best-Face-ID LoRA** | 🇮🇱 | 캐릭터+화풍 일관. BFS 커스텀노드. Day2 게이트. 3.1에서 "LTX-Video distilled(13B)" 가정 폐기·재정의(docs/spikes/3.1-ltx-faceid-compat.md). 5초/523초 — S1 멀티씬 전용, 단발샷엔 안 씀 |
 | I2V(단발샷 카테고리용) | **LTX-Video-0.9.8-13B-distilled(fp8)** | 🇮🇱 | Face-ID 없이 사진 1장이 첫 프레임 조건부 입력. 5초/30초 실측(docs/spikes/3.8-ltx13b-oneshot-i2v.md). 종횡비 버그 수정 후 재검증 예정 |
 | I2V(벤치, 제외) | **Cosmos-Predict2-2B-Video2World** | 🇺🇸 NVIDIA | identity 보존 기능 없어 I2V 용도 최종 제외. 향후 T2V 카테고리(단발샷) 후보로 재검토 |
-| I2V(폴백) | **Wan2.1-14B Stand-In** | 🇨🇳 | 롤백 보존(지우지 않음). 얼굴 일관성 검증됨 |
+| I2V(폴백, 제거됨 2026-08-01) | ~~Wan2.1-14B Stand-In~~ | 🇨🇳 | Task 6.5로 제거 — 얼굴일관 폴백은 STANDIN(ComfyUI)이 대체 |
 | 영상 나레이션 TTS | **Chatterbox Multilingual V3** (0.5B) | 🇨🇦 | S1 고정 CC0 한국어 화자 |
 | 독립 사용자 음성 TTS | **Chatterbox Multilingual V3** (0.5B) | 🇨🇦 | 한국어 zero-shot clone, MIT, GB10 약 3.0GiB 실측 |
 
@@ -160,7 +160,7 @@ UI 플로우: 카테고리 선택 → 스타일 프리셋 선택 → 입력 → 
 | R7 | 스타일 셀렉터(시네마틱/애니/픽셀/사이버펑크)가 S1·S2 프롬프트에 프리픽스 주입 | should |
 | R8 | TTS 이중 경로: S1 영상은 Chatterbox V3의 고정 CC0 한국어 화자, 독립 TTS는 사용자 참조 음성. `/tts/narration`과 `/tts/clone`을 분리한다 | must |
 | R9 | 자립 대시보드: 오프라인 배지 + 실행트레이스(External calls:0 실측) + GB10 메모리 게이지 | must |
-| R10 | 전 모델 비중국/NVIDIA (Wan 폴백은 예외, 발표시 명시). 신규 모델 도입시 국적 확인 | must |
+| R10 | 전 모델 비중국/NVIDIA (2026-08-01부터 예외 없음, Wan 제거됨). 신규 모델 도입시 국적 확인 | must |
 | R11 | OOM: 전 모델 상주 실측(Day1) → 성공시 상주, 실패시 배치 언로드. 데모중 OOM 0건 | must |
 | R12 | 각 시나리오 사전 녹화본 확보(라이브 실패 백업) | must |
 
@@ -202,6 +202,7 @@ UI 플로우: 카테고리 선택 → 스타일 프리셋 선택 → 입력 → 
 | 2026-07-28 | 국적 = 비중국 우선 + 품질 예외 허용 | 비중국 얼굴보존/I2V 선택지 희소(대부분 중국) | 비중국 하드룰(구현 불가 구간 발생) |
 | 2026-07-31 | TTS 역할 분리: S1 영상=Kokoro, 독립 사용자 음성=Chatterbox Multilingual V3 *(후속 결정으로 대체)* | 초기 API 형식 검증 기준 | S1까지 Chatterbox 사용 |
 | 2026-07-31 | S1 영상 나레이션도 Chatterbox V3 + 고정 CC0 한국어 화자로 전환 | Kokoro `af_heart` 실청취에서 외국인 억양 확인. Lingua Libre `CHK2605` CC0 음원으로 한국어 화자 고정 | Kokoro 유지(한국어 네이티브 화자 없음) |
+| 2026-08-01 | Wan2.1-14B Stand-In 폴백(R10 예외) 완전 제거, T2V/I2V 폴백을 LTX-13B-distilled로 통합 | 얼굴 일관성 폴백 역할은 이미 STANDIN(ComfyUI, 2026-07-31 재설계)으로 이관 완료 — Wan은 남은 역할(순수 T2V·희귀 I2V 폴백)뿐이라 국적 예외를 유지할 이유 소멸 | 유지(2026-07-28 결정대로 예외 존속) |
 
 ## Open Questions / 리스크
 

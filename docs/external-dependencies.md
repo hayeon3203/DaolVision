@@ -22,7 +22,7 @@ Python 서버·deploy unit·모니터링)만 이번에 DaolVision으로 복제�
 
 | 서비스 | 포트 | 코드 | systemd unit | 상태(2026-07-31 확인) |
 |---|---|---|---|---|
-| Wan2.2-TI2V-5B (T2V/I2V) | :8500 | `inference_server/server.py` | `inference_server/deploy/wan.service` | 수동 실행 중(systemd 비활성) |
+| Wan2.2-TI2V-5B (T2V/I2V) | :8500 | ~~inference_server/server.py~~(Task 6.5로 DaolVision에서 삭제, video_generator/hunyuan_server 원본은 유지) | ~~inference_server/deploy/wan.service~~ | Task 6.5로 DaolVision 사용 중단 |
 | FLUX.1-schnell (T2I) | :8501 | `inference_server/flux_server.py` | `inference_server/deploy/flux.service` | 수동 실행 중(systemd 비활성) |
 
 deploy unit 2종은 `WorkingDirectory`/`ExecStart`를 `/home/admin/DaolVision/inference_server`로

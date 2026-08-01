@@ -12,7 +12,7 @@
 | 에이전트 | LangGraph + SQLite 체크포인터 | 승인 3게이트(interrupt), thread_id=job_id 재개 |
 | LLM 서빙 | Ollama (:11434) | Nemotron-4B/VL-8B GGUF, keep_alive 제어 |
 | 이미지 | Flux.1/SDXL(:8501) · Flux Kontext(ComfyUI :8188) | T2I 앵커 / I2I 얼굴변환 |
-| 영상 | ComfyUI(:8188): LTX distilled+Face-ID / Cosmos벤치 / Wan폴백 | 캐릭터+화풍 일관 I2V |
+| 영상 | ComfyUI(:8188): LTX distilled+Face-ID / Cosmos벤치 (Wan 제거, Task 6.5) | 캐릭터+화풍 일관 I2V, T2V |
 | 영상 나레이션 TTS | Chatterbox Multilingual V3 | S1 전용 고정 CC0 한국어 화자 |
 | 사용자 음성 TTS | Chatterbox Multilingual V3 | 독립 TTS 전용, 한국어 zero-shot clone, GPU 약 3.0GiB 실측 |
 | 저장 | SQLite(체크포인트) · 파일시스템(mp4/이미지) | 단일 사용자, 로컬 전용 |
@@ -25,7 +25,7 @@ flowchart LR
     FE[LocalAI 포크 프론트<br/>Go+Alpine] -->|HTTP| GW[:8700 게이트웨이<br/>FastAPI]
     GW --> OL[Ollama :11434<br/>Nemotron-4B/VL-8B]
     GW --> T2I[T2I :8501<br/>Flux/SDXL]
-    GW --> CF[ComfyUI :8188<br/>LTX+FaceID / Kontext / Wan]
+    GW --> CF[ComfyUI :8188<br/>LTX+FaceID / Kontext]
     GW --> KTS[TTS 나레이션<br/>Chatterbox V3 + CC0 화자]
     GW --> CTS[TTS 사용자 음성<br/>Chatterbox V3]
     GW --> DB[(SQLite<br/>체크포인트)]
@@ -39,7 +39,7 @@ flowchart LR
 | LangGraph 에이전트 | S1 파이프 상태머신, 승인 3게이트, 재개 | Ollama·:8501·:8188·Chatterbox·SQLite |
 | Ollama | 씬분할(텍스트)·캡션(비전) | 모델 GGUF |
 | T2I(:8501) | 앵커/단발 이미지 | Flux/SDXL 가중치 |
-| ComfyUI(:8188) | I2V(캐릭터 일관) + I2I(Flux Kontext) | LTX+Face-ID LoRA·BFS노드·Wan(폴백) |
+| ComfyUI(:8188) | I2V(캐릭터 일관 + T2V/폴백) + I2I(Flux Kontext) | LTX+Face-ID LoRA·BFS노드 |
 | Chatterbox TTS | S1 고정 CC0 화자 나레이션(`/tts/narration`) 및 사용자 음성(`/tts/clone`) | Chatterbox V3·`private/tts/voices/` |
 | 대시보드 집계 | 실행트레이스·External calls(ss)·메모리게이지 | ss·ollama-serve.log·프로세스 VRAM |
 
@@ -103,7 +103,7 @@ sequenceDiagram
 
 - **오프라인 자립**: 모든 백엔드 127.0.0.1, External outbound = 0 (ss 실측). 외부 API·CDN 의존 0
 - **OOM**: GB10 119GB 통합메모리. 전 모델 상주(~55-60GB) 실측 게이트 → 실패시 배치 언로드. 데모중 OOM 0건
-- **국적**: 전 모델 비중국/NVIDIA(Wan 폴백 예외). 신규 도입시 국적·라이센스 확인
+- **국적**: 전 모델 비중국/NVIDIA(Task 6.5로 Wan 예외 해소, 예외 없음). 신규 도입시 국적·라이센스 확인
 - **재개성**: SQLite 체크포인트(thread_id=job_id) — 승인 지연/세션 종료 후 재개
 - **격리**: systemd user units, 서비스별 독립 기동/로그
 - **폴백 생존**: 각 레이어 폴백 사다리(PRD) + 시나리오 사전 녹화본
