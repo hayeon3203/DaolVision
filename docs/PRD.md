@@ -87,7 +87,7 @@ UI 플로우: 카테고리 선택 → 스타일 프리셋 선택 → 입력 → 
 :8700 FastAPI 게이트웨이  ── 라우팅 · OOM 배치 오케 · 대시보드 메타 집계
    ├─> :11434  Ollama (Nemotron-4B 씬분할 / Nemotron-VL-8B 캡션)
    ├─> :8501   T2I (Flux.1-schnell)
-   ├─> :8188   ComfyUI (I2V: LTX distilled+Face-ID / Cosmos 벤치 / Wan 폴백, I2I: Flux Kontext)
+   ├─> :8188   ComfyUI (I2V: LTX distilled+Face-ID / Cosmos 벤치, I2I: Flux Kontext)
    ├─> TTS 나레이션 (Chatterbox V3 + CC0 한국어 화자, POST /tts/narration)
    └─> TTS 사용자 음성 (Chatterbox V3, POST /tts/clone)
 ```
@@ -153,7 +153,7 @@ UI 플로우: 카테고리 선택 → 스타일 프리셋 선택 → 입력 → 
 |---|---------|---------|
 | R1 | LocalAI 포크가 GB10에서 빌드·기동되고 사이드바 4카테고리가 우리 백엔드(:8700)로 배선된다 | must |
 | R2 | S1: 스토리 텍스트 → 씬분할(승인) → 앵커 → I2V 클립(캐릭터+화풍 일관) → 자막편집(승인) → TTS mux → 최종 mp4, 전 과정 오프라인 로컬 | must |
-| R3 | S1 캐릭터 일관성: LTX distilled+Face-ID로 4씬 얼굴+화풍 유지 (Day2 게이트, 미달시 Wan 폴백) | must |
+| R3 | S1 캐릭터 일관성: LTX distilled+Face-ID로 4씬 얼굴+화풍 유지 (Day2 게이트) | must |
 | R4 | S2: 얼굴사진 1장 → Flux Kontext 4스타일(애니/유화초상화/프로필/우주비행사) 출력 | must |
 | R5 | S2 우주비행사 결과가 S1 Face-ID 참조로 전달된다 (S2→S1 연결) | should |
 | R6 | Agent 카테고리 상단 노드 스텝퍼가 phase 진행을 표시, 승인 3게이트가 챗 멀티턴으로 동작 | must |
@@ -215,7 +215,7 @@ UI 플로우: 카테고리 선택 → 스타일 프리셋 선택 → 입력 → 
 
 ## 폴백 사다리 (라이브 데모 생존)
 
-1. **I2V 캐릭터**: LTX distilled+Face-ID → (실패) Wan Stand-In → (실패) base LTX 무드형
+1. **I2V 캐릭터**: LTX distilled+Face-ID → (실패) base LTX 무드형
 2. **비전 LLM**: Nemotron-VL-8B → (안붙음) Llama3.2-Vision
 3. **씬분할 LLM**: Nemotron-4B → (한국어 미달) Llama3.1
 4. **OOM**: 전 모델 상주 → (fragmentation) 배치 언로드
