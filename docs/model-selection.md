@@ -17,7 +17,8 @@ DaolVision은 NVIDIA GB10(119GiB 통합 메모리) 한 대에서 LangGraph 파�
 | T2I 앵커 | FLUX.1-schnell | 채택 |
 | I2I 얼굴 변환 | FLUX.1 Kontext [dev] | 배선·1차 실측 완료(Task 6.1), 상업 라이선스 미확정 |
 | I2V 얼굴 일관 영상 | LTX-2.3 22B Q6_K + Distill + Best Face-ID | 품질 통과, 속도 개선 필요 |
-| I2V 단발샷(비Face-ID) | LTX-Video-0.9.8-13B-distilled | 채택, 30초/5초분량 실측. 해상도 종횡비 버그 수정 후 재검증 필요 |
+| I2V(T2V/폴백, 舊 Wan2.2) | LTX-Video-0.9.8-13B-distilled | Task 6.5로 Wan2.2(중국원산) 교체, 실측 4씬(각 3.0s, 832x480) 배치 총 ~110초(평균 ~27s/클립, ComfyUI 순차 제출·다운로드 포함, 로더 공유 배치 아님) |
+| I2V 단발샷(비Face-ID) | LTX-Video-0.9.8-13B-distilled | 채택, 30초/5초분량 실측. 해상도 종횡비 버그 수정 후 재검증 필요 · 6.5부터 job 파이프라인 T2V/I2V-폴백도 동일 체크포인트 공유 |
 
 역할별 근거와 제약은 다음 문서에 분리한다.
 

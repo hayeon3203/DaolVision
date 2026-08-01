@@ -1,8 +1,8 @@
 """
 헤드리스 검증 드라이버.
 
-  python driver.py --dry     # Ollama/Wan 미호출, 가짜 클립으로 그래프+ffmpeg 전 경로 검증
-  python driver.py           # 실서버(Ollama Nemotron-4B + Wan :8500) end-to-end
+  python driver.py --dry     # Ollama/ComfyUI 미호출, 가짜 클립으로 그래프+ffmpeg 전 경로 검증
+  python driver.py           # 실서버(Ollama Nemotron-4B + LTX-13B-distilled :8188 ComfyUI) end-to-end
 
 --dry 는 배선/interrupt/resume/xfade/자막 로직을, 실모드는 진짜 생성을 확인한다.
 사람 승인 자리는 자동 승인 payload로 대체.
@@ -34,7 +34,7 @@ def _auto_decision(cp: dict) -> dict:
 
 
 def _install_fakes():
-    """--dry: tools.call_llm / call_video 를 가짜로 교체."""
+    """--dry: tools.call_llm / generate_t2v_clip / generate_i2v_fallback_clip / generate_standin_clip 를 가짜로 교체."""
     import json
 
     async def fake_llm(system_prompt: str, user_prompt: str) -> str:
@@ -67,8 +67,11 @@ def _install_fakes():
         )
         return str(out)
 
-    async def fake_video(job_id, scene_id, prompt, mode, matched_image,
-                         duration=2.0, seed=None, num_frames=None):
+    async def fake_t2v(job_id, scene_id, prompt, duration=2.0, seed=None, force_new=False):
+        return _fake_clip(job_id, scene_id)
+
+    async def fake_i2v_fallback(job_id, scene_id, prompt, matched_image,
+                                duration=2.0, seed=None, force_new=False):
         return _fake_clip(job_id, scene_id)
 
     async def fake_standin(job_id, scene_id, prompt, ref_image, duration=2.0, seed=None, force_new=False):
@@ -89,7 +92,8 @@ def _install_fakes():
         return {scene["id"]: _fake_clip(job_id, scene["id"]) for scene in scenes}
 
     tools.call_llm = fake_llm
-    tools.call_video = fake_video
+    tools.generate_t2v_clip = fake_t2v
+    tools.generate_i2v_fallback_clip = fake_i2v_fallback
     tools.generate_standin_clip = fake_standin
     tools.generate_t2i_image = fake_t2i_image
     tools.generate_ltx_faceid_batch = fake_ltx_faceid_batch

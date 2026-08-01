@@ -59,7 +59,7 @@ flowchart TD
 ```
 
 **엣지 케이스**
-- Face-ID 일관성 미달(Day2 게이트 실패) → Wan Stand-In 폴백 경로
+- Face-ID 일관성 미달(Day2 게이트 실패) → base LTX 무드형 폴백 경로
 - OOM 발생 → 배치 언로드 모드로 자동 전환(게이트웨이 총괄)
 - 승인 없이 세션 종료 → SQLite 체크포인트(thread_id=job_id)로 나중 재개
 - 나레이션 > 클립 길이 → 마지막 프레임 홀드로 흡수(경량 mux)

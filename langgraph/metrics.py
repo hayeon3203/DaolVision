@@ -26,9 +26,9 @@ SCENES_PER_VIDEO = Histogram(
 CLIPS_GENERATED = Counter("anim_clips_generated_total", "scene clips generated", ["mode"])
 REGENERATIONS = Counter("anim_regenerations_total", "human-requested scene regenerations")
 
-# ---- denoising step 집계 (기존 :8500 서버의 step 지표를 영상(job) 단위로 모음) ----
-# 클립당 step 수는 요청 시 결정적이다(:8500 T2V/I2V=DEFAULT_STEPS, ComfyUI Stand-In/Subject
-# =STANDIN_STEPS) → :8500을 폴링할 필요 없이 정확히 합산한다.
+# ---- denoising step 집계 (개별 백엔드의 step 지표를 영상(job) 단위로 모음) ----
+# 클립당 step 수는 요청 시 결정적이다(LTX T2V/I2V 폴백=LTX13B_STEPS, ComfyUI Stand-In/Subject
+# =STANDIN_STEPS) → 백엔드를 폴링할 필요 없이 정확히 합산한다.
 CLIP_STEPS = Counter("anim_clip_steps_total", "denoising steps executed by scene clips", ["mode"])
 VIDEO_STEPS = Histogram(
     "anim_video_steps", "total denoising steps per finished video",

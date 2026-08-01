@@ -2,7 +2,7 @@
 실제 인프라 호출부 (GB10 실서버 배선).
 
 - LLM: Ollama 네이티브 chat API (`/api/chat`), NVIDIA Nemotron 3 Nano 4B GGUF
-- 비디오: Wan2.2-TI2V-5B FastAPI (:8500) — /generate(T2V), /generate_i2v(I2V, base64 image)
+- 비디오: LTX-Video-0.9.8-13B-distilled via ComfyUI (:8188) — T2V/I2V 폴백, Stand-In(참조-얼굴)
 - ffmpeg: concat + xfade + 자막 번인
 
 nodes.py는 이 파일의 함수 시그니처에만 의존한다. 엔드포인트/모델이 바뀌면 여기만 교체.
@@ -15,6 +15,7 @@ import os
 import re
 import sqlite3
 import subprocess
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -34,7 +35,6 @@ LLM_MODEL = os.environ.get(
     "hf.co/nvidia/NVIDIA-Nemotron-3-Nano-4B-GGUF:Q4_K_M",
 )
 VISION_MODEL = os.environ.get("AGENT_VISION_MODEL", "qwen3.5:9b")  # qwen3.5:9b = text+vision 겸용. qwen2.5:7b+gemma3:4b 대체. run_agent.sh와 동일 기본값
-WAN_URL = os.environ.get("AGENT_WAN_URL", "http://127.0.0.1:8500")
 T2I_URL = os.environ.get("AGENT_T2I_URL", "http://127.0.0.1:8501")
 KOKORO_URL = os.environ.get("AGENT_KOKORO_URL", "http://127.0.0.1:8503")
 CHATTERBOX_URL = os.environ.get("AGENT_CHATTERBOX_URL", "http://127.0.0.1:8504")
@@ -54,7 +54,8 @@ CHATTERBOX_NARRATION_REFERENCE = Path(
 
 # ── ComfyUI Stand-In (참조-이미지 씬의 얼굴 일관성 경로) ──────────
 COMFYUI_URL = os.environ.get("AGENT_COMFYUI_URL", "http://127.0.0.1:8188")
-# 참조 이미지가 있는 씬을 Stand-In(ComfyUI)으로 보낼지 스위치. off면 전부 call_video(:8500)로.
+# 참조 이미지가 있는 씬을 Stand-In(ComfyUI)으로 보낼지 스위치. off면 전부
+# generate_t2v_clip/generate_i2v_fallback_clip(둘 다 ComfyUI :8188)로.
 USE_STANDIN = os.environ.get("AGENT_USE_STANDIN", "1").lower() not in ("0", "false", "no", "")
 # 0이면 참조 이미지 캡션(gemma vision) 생략 → 이미지↔씬은 사람이 지정. gemma 미로드로 GPU 압박↓.
 CAPTION_REFS = os.environ.get("AGENT_CAPTION_REFS", "1").lower() not in ("0", "false", "no", "")
@@ -62,7 +63,7 @@ STANDIN_STEPS = int(os.environ.get("AGENT_STANDIN_STEPS", "4"))     # lightx2v d
 # Stand-In 기반 Wan2.1 14B의 네이티브 fps=16. 24fps 생성은 프레임 50% 낭비(스텝시간이
 # 프레임 수에 초선형). 편집 단계에서 DEFAULT_FPS로 정규화하므로 다른 클립과 섞여도 안전.
 STANDIN_FPS = int(os.environ.get("AGENT_STANDIN_FPS", "16"))
-# I2V-14B 체크포인트가 480P 전용(이름 그대로) — :8500 T2V 경로의 WIDTH/HEIGHT(quality
+# I2V-14B 체크포인트가 480P 전용(이름 그대로) — LTX T2V 경로의 WIDTH/HEIGHT(quality
 # 프리셋 기본 1280x704)를 그대로 쓰면 해상도 초과로 100초 목표를 못 맞춤(실측 65s→159s).
 # 이 경로만 별도로 832x480 고정.
 STANDIN_WIDTH = int(os.environ.get("AGENT_STANDIN_WIDTH", "832"))
@@ -96,7 +97,8 @@ STANDIN_EXEC_TIMEOUT = float(os.environ.get("AGENT_STANDIN_EXEC_TIMEOUT",
 STANDIN_QUEUE_TIMEOUT = float(os.environ.get("AGENT_STANDIN_QUEUE_TIMEOUT", "86400"))
 STANDIN_MISSING_TIMEOUT = float(os.environ.get("AGENT_STANDIN_MISSING_TIMEOUT", "30"))
 # 클립 생성 동시 실행 상한. Send fan-out은 씬들을 한 이벤트 루프에서 동시에 돌리므로
-# 상한이 없으면 :8500(Wan)+:8188(ComfyUI) 확산이 같은 순간 피크를 쳐 GB10 통합메모리 OOM.
+# 상한이 없으면 LTX T2V/I2V 폴백 + Stand-In/Subject-Ref(둘 다 :8188 ComfyUI) 확산이
+# 같은 순간 피크를 쳐 GB10 통합메모리 OOM.
 # 1=완전 직렬(기본), 2=백엔드당 하나. ref: gb10-gpu-contention-comfyui-ollama.
 MAX_CONCURRENT_CLIPS = int(os.environ.get("AGENT_MAX_CONCURRENT_CLIPS", "1"))
 _gen_semaphore = asyncio.Semaphore(MAX_CONCURRENT_CLIPS)  # 실행 루프는 await 시점에 바인딩(py3.10+)
@@ -139,7 +141,6 @@ if VIDEO_PRESET not in VIDEO_PRESETS:
     raise ValueError(f"unknown AGENT_VIDEO_PRESET={VIDEO_PRESET!r}; choose quality or fast")
 _PRESET = VIDEO_PRESETS[VIDEO_PRESET]
 DEFAULT_FPS = int(os.environ.get("AGENT_FPS", "24"))
-DEFAULT_STEPS = int(os.environ.get("AGENT_STEPS", str(_PRESET["steps"])))
 WIDTH = int(os.environ.get("AGENT_WIDTH", str(_PRESET["width"])))
 HEIGHT = int(os.environ.get("AGENT_HEIGHT", str(_PRESET["height"])))
 
@@ -432,63 +433,12 @@ def clean_llm_prompt(text: str) -> str:
     return text
 
 
-# ── 비디오 (Wan2.2-TI2V-5B) ──────────────────────────────────
+# ── 프레임 길이 헬퍼 + 정지 이미지 앵커 (FLUX.1-schnell) ──────────
 def to_4k1(frames: float) -> int:
     """Wan VAE temporal factor 4 → num_frames 는 4k+1 이어야 함. 최소 17."""
     n = max(17, int(round(frames)))
     k = round((n - 1) / 4)
     return max(17, 4 * k + 1)
-
-
-async def call_video(
-    job_id: str,
-    scene_id: int,
-    prompt: str,
-    mode: str,
-    matched_image: str | None,
-    duration: float = 2.0,
-    seed: int | None = None,
-    num_frames: int | None = None,
-) -> str:
-    """씬 하나 생성. return: 다운로드된 클립 로컬 경로.
-    num_frames 지정 시 duration 대신 그 값을 그대로 사용(이미지 생성=num_frames=1)."""
-    if num_frames is None:
-        num_frames = to_4k1(duration * DEFAULT_FPS)
-    body = {
-        "prompt": prompt,
-        "num_frames": num_frames,
-        "num_inference_steps": DEFAULT_STEPS,
-        "width": WIDTH,
-        "height": HEIGHT,
-        "fps": DEFAULT_FPS,
-    }
-    if seed is not None:  # 같은 job의 씬들이 같은 초기 노이즈에서 출발 → 그림체 흔들림 감소
-        body["seed"] = seed
-    if mode == "I2V":
-        if not matched_image:
-            raise ValueError(f"씬 {scene_id}: I2V인데 matched_image 없음")
-        img_path = refs_dir(job_id) / matched_image
-        body["image"] = base64.b64encode(img_path.read_bytes()).decode()
-        endpoint = "/generate_i2v"
-    else:
-        endpoint = "/generate"
-
-    # Send fan-out은 N개 클립 요청을 동시에 보내지만 Wan은 GPU 1개+단일 lock으로 직렬 처리한다.
-    # 고정 read 타임아웃은 "큐 대기 시각"부터 카운트돼, 뒤 순번 클립(3~4번째)이 생성도 시작하기 전에
-    # 만료돼버린다(씬 3개↑면 항상 재현). Wan은 신뢰된 로컬 서버 + 연결 끊겨도 생성을 취소 안 하므로
-    # read 타임아웃을 없앤다(응답은 언젠가 반드시 온다). connect만 유지해 서버가 죽으면 빠르게 실패.
-    # ponytail: read=None. 실제로 서버가 무한 hang하면 job이 running에 묶임 → /status로 감지·재시작.
-    timeout = httpx.Timeout(connect=10.0, read=None, write=60.0, pool=None)
-    async with oom.phase("i2v"), httpx.AsyncClient(timeout=timeout) as client:
-        resp = await client.post(f"{WAN_URL}{endpoint}", json=body)
-        resp.raise_for_status()
-        video_url = resp.json()["video_url"]
-        mp4 = await client.get(f"{WAN_URL}{video_url}")
-        mp4.raise_for_status()
-
-    out = job_dir(job_id) / f"clip{scene_id}.mp4"
-    out.write_bytes(mp4.content)
-    return str(out)
 
 
 async def generate_t2i_image(job_id: str, prompt: str, seed: int | None = None, index: int = 0) -> str:
@@ -634,6 +584,252 @@ def _build_ltx13b_graph(
             "lossless": False, "quality": 90, "method": "default",
         }},
     }
+
+
+def to_ltx_len(frames: float) -> int:
+    """LTXV VAE 시공간 다운샘플 8 → length는 8k+1이어야 한다(LTX13B_FRAMES=97=8*12+1과
+    동일 패턴, to_4k1의 LTX 8-배수 변형). 최소 25(≈1s@24fps)."""
+    n = max(25, int(round(frames)))
+    k = round((n - 1) / 8)
+    return max(25, 8 * k + 1)
+
+
+def _build_ltx13b_t2v_graph(
+    *, prompt: str, width: int, height: int, length: int, seed: int,
+) -> dict:
+    """_build_ltx13b_graph(4.6, image-conditioned I2V)의 T2V 형제. LoadImage +
+    LTXVImgToVideo 대신 EmptyLTXVLatentVideo로 순수 노이즈 latent에서 시작한다
+    (이미지 조건 없음, Task 6.x Wan 제거 — docs/superpowers/specs/2026-08-01-
+    wan-removal-ltx-t2v-design.md)."""
+    return {
+        "1": {"class_type": "CheckpointLoaderSimple",
+              "inputs": {"ckpt_name": LTX13B_CHECKPOINT}},
+        "2": {"class_type": "CLIPLoader",
+              "inputs": {"clip_name": LTX13B_CLIP, "type": "ltxv"}},
+        "3": {"class_type": "CLIPTextEncode", "inputs": {"text": prompt, "clip": ["2", 0]}},
+        "4": {"class_type": "CLIPTextEncode", "inputs": {
+            "text": "worst quality, blurry, jittery, distorted, low resolution",
+            "clip": ["2", 0],
+        }},
+        "6": {"class_type": "ModelSamplingLTXV",
+              "inputs": {"model": ["1", 0], "max_shift": 2.05, "base_shift": 0.95}},
+        "12": {"class_type": "LTXVConditioning", "inputs": {
+            "positive": ["3", 0], "negative": ["4", 0], "frame_rate": float(LTX13B_FPS),
+        }},
+        "7": {"class_type": "EmptyLTXVLatentVideo", "inputs": {
+            "width": width, "height": height, "length": length, "batch_size": 1,
+        }},
+        "8": {"class_type": "LTXVScheduler", "inputs": {
+            "steps": LTX13B_STEPS, "max_shift": 2.05, "base_shift": 0.95,
+            "stretch": True, "terminal": 0.1,
+        }},
+        "9": {"class_type": "KSampler", "inputs": {
+            "model": ["6", 0], "seed": seed, "steps": LTX13B_STEPS, "cfg": 1.0,
+            "sampler_name": "euler", "scheduler": "normal",
+            "positive": ["12", 0], "negative": ["12", 1], "latent_image": ["7", 0],
+            "denoise": 1.0,
+        }},
+        "10": {"class_type": "VAEDecode", "inputs": {"samples": ["9", 0], "vae": ["1", 2]}},
+        "11": {"class_type": "SaveAnimatedWEBP", "inputs": {
+            "images": ["10", 0], "filename_prefix": "t2v_job", "fps": LTX13B_FPS,
+            "lossless": False, "quality": 90, "method": "default",
+        }},
+    }
+
+
+def _t2v_request_key(scene_id: int, prompt: str, duration: float, seed: int | None) -> str:
+    return hashlib.sha256(json.dumps({
+        "scene_id": scene_id, "prompt": prompt, "duration": duration, "seed": seed,
+        "steps": LTX13B_STEPS, "fps": LTX13B_FPS, "width": WIDTH, "height": HEIGHT,
+        "workflow": "ltx13b_t2v_v1",  # 그래프 구조 바뀌면 캐시 무효화용 버전 문자열
+    }, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
+
+def _i2v_fallback_request_key(
+    scene_id: int, prompt: str, matched_image: str, duration: float, seed: int | None,
+) -> str:
+    return hashlib.sha256(json.dumps({
+        "scene_id": scene_id, "prompt": prompt, "matched_image": matched_image,
+        "duration": duration, "seed": seed, "steps": LTX13B_STEPS, "fps": LTX13B_FPS,
+        "width": WIDTH, "height": HEIGHT, "workflow": "ltx13b_i2v_fallback_v1",
+    }, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
+
+def _webp_bytes_to_mp4(webp_bytes: bytes, fps: int) -> bytes:
+    """SaveAnimatedWEBP가 ComfyUI 표준 관례로 EXIF에 워크플로 메타데이터를 심는데,
+    ffmpeg의 webp 디먹서가 이 비표준 EXIF를 못 읽고 전체 디코드를 포기한다(PIL은
+    문제없이 읽음). 다운스트림 node_edit_concat/ffmpeg_concat이 ffmpeg로 이 파일을
+    그대로 열기 때문에, PIL로 프레임을 뽑아 ffmpeg image2pipe로 진짜 mp4 재인코딩한다."""
+    with Image.open(BytesIO(webp_bytes)) as im:
+        n_frames = getattr(im, "n_frames", 1)
+        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
+            tmp_path = tmp.name
+        proc = None
+        try:
+            proc = subprocess.Popen(
+                ["ffmpeg", "-y", "-f", "image2pipe", "-framerate", str(fps), "-i", "-",
+                 "-pix_fmt", "yuv420p", tmp_path],
+                stdin=subprocess.PIPE, stderr=subprocess.PIPE,
+            )
+            for i in range(n_frames):
+                im.seek(i)
+                buf = BytesIO()
+                im.convert("RGB").save(buf, format="PNG")
+                proc.stdin.write(buf.getvalue())
+            _, stderr = proc.communicate(timeout=60)  # stdin close도 communicate가 처리
+            if proc.returncode != 0:
+                raise RuntimeError(
+                    f"webp→mp4 재인코딩 실패: {stderr.decode(errors='replace')[-500:]}")
+            return Path(tmp_path).read_bytes()
+        except Exception:
+            # 프레임 루프/write/communicate 타임아웃 등 도중 실패 시 ffmpeg 좀비 방지
+            # (communicate가 정상 완료된 뒤라면 이미 reap된 상태라 poll()이 None이 아님)
+            if proc is not None and proc.poll() is None:
+                proc.kill()
+                proc.wait()
+            raise
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+
+
+async def _generate_ltx_job_clip(
+    job_id: str, scene_id: int, graph: dict, request_key: str, force_new: bool,
+) -> str:
+    """T2V/I2V 폴백 공용 — _generate_reference_clip(STANDIN/SUBJECT_REF)과 동일한
+    SQLite 재개형 패턴(큐/missing/exec 타임아웃)을 그래프 dict만 바꿔 재사용한다."""
+    async with (
+        oom.phase("i2v"),
+        httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=60.0, write=60.0, pool=None)) as client,
+    ):
+        existing = None if force_new else _recoverable_prompt(job_id, scene_id, request_key)
+        if existing:
+            prompt_id = existing["prompt_id"]
+        else:
+            resp = await client.post(f"{COMFYUI_URL}/prompt", json={"prompt": graph})
+            resp.raise_for_status()
+            prompt_id = resp.json()["prompt_id"]
+            _save_prompt(prompt_id, job_id, scene_id, request_key)
+
+        submitted_at = float(existing["submitted_at"]) if existing else time.time()
+        execution_started_at = (float(existing["execution_started_at"])
+                                if existing and existing["execution_started_at"] else None)
+        missing_since = None
+        media = None
+        while True:
+            await asyncio.sleep(2.0)
+            h = (await client.get(f"{COMFYUI_URL}/history/{prompt_id}")).json()
+            if prompt_id not in h:
+                queue = (await client.get(f"{COMFYUI_URL}/queue")).json()
+                running_ids = {item[1] for item in queue.get("queue_running", [])}
+                pending_ids = {item[1] for item in queue.get("queue_pending", [])}
+                if prompt_id in running_ids:
+                    if execution_started_at is None:
+                        execution_started_at = time.time()
+                    _update_prompt(prompt_id, "running",
+                                   execution_started_at=execution_started_at)
+                elif prompt_id in pending_ids:
+                    _update_prompt(prompt_id, "queued")
+                elif time.time() - submitted_at > STANDIN_QUEUE_TIMEOUT:
+                    msg = f"씬 {scene_id}: ComfyUI 큐에서 {STANDIN_QUEUE_TIMEOUT:.0f}s 내 시작되지 않음"
+                    _update_prompt(prompt_id, "error", error=msg)
+                    raise TimeoutError(msg)
+                else:
+                    missing_since = missing_since or time.time()
+                    if time.time() - missing_since > STANDIN_MISSING_TIMEOUT:
+                        msg = (f"씬 {scene_id}: ComfyUI prompt가 history/queue에서 사라짐 "
+                               f"(prompt_id={prompt_id})")
+                        _update_prompt(prompt_id, "error", error=msg)
+                        raise TimeoutError(msg)
+                if prompt_id in running_ids or prompt_id in pending_ids:
+                    missing_since = None
+                if execution_started_at and time.time() - execution_started_at > STANDIN_EXEC_TIMEOUT:
+                    msg = (f"씬 {scene_id}: LTX 실행이 {STANDIN_EXEC_TIMEOUT:.0f}s를 초과함 "
+                           f"(prompt_id={prompt_id})")
+                    _update_prompt(prompt_id, "error", error=msg)
+                    raise TimeoutError(msg)
+                continue
+            status = h[prompt_id]["status"]
+            for kind, data in status.get("messages", []):
+                if kind == "execution_start":
+                    execution_started_at = data.get("timestamp", 0) / 1000 or time.time()
+                    _update_prompt(prompt_id, "running",
+                                   execution_started_at=execution_started_at)
+            if status.get("status_str") == "error":
+                msg = f"씬 {scene_id}: ComfyUI 실행 오류 {status.get('messages')}"
+                _update_prompt(prompt_id, "error", error=msg)
+                raise RuntimeError(msg)
+            for node_out in h[prompt_id].get("outputs", {}).values():
+                # Both graphs this helper serves (T2V/I2V-fallback) terminate in SaveAnimatedWEBP,
+                # which only ever emits "images" -- no "videos"/"gifs" key to fall back to.
+                media = node_out.get("images")
+                if media:
+                    break
+            if media:
+                _update_prompt(prompt_id, "completed", output_filename=media[0]["filename"])
+                break
+            if execution_started_at and time.time() - execution_started_at > STANDIN_EXEC_TIMEOUT:
+                msg = (f"씬 {scene_id}: LTX 실행이 {STANDIN_EXEC_TIMEOUT:.0f}s를 초과함 "
+                       f"(prompt_id={prompt_id})")
+                _update_prompt(prompt_id, "error", error=msg)
+                raise TimeoutError(msg)
+
+        output = media[0]
+        vid = await client.get(f"{COMFYUI_URL}/view", params={
+            "filename": output["filename"], "subfolder": output.get("subfolder", ""),
+            "type": output.get("type", "output"),
+        })
+        vid.raise_for_status()
+
+    out = job_dir(job_id) / f"clip{scene_id}.mp4"
+    mp4_bytes = await asyncio.to_thread(_webp_bytes_to_mp4, vid.content, LTX13B_FPS)
+    out.write_bytes(mp4_bytes)
+    return str(out)
+
+
+async def generate_t2v_clip(
+    job_id: str, scene_id: int, prompt: str,
+    duration: float = 2.0, seed: int | None = None, force_new: bool = False,
+) -> str:
+    """이미지 없는 씬(mode=T2V) — Wan call_video가 맡던 것 중 T2V 절반.
+    같은 job 씬들이 같은 seed로 출발하면(호출부에서 payload.seed 그대로 넘김)
+    그림체 흔들림이 줄어드는 건 기존 Wan 경로와 동일 관례."""
+    resolved_seed = seed if seed is not None else int(time.time())
+    length = to_ltx_len(duration * LTX13B_FPS)
+    graph = _build_ltx13b_t2v_graph(
+        prompt=prompt, width=WIDTH, height=HEIGHT, length=length, seed=resolved_seed)
+    request_key = _t2v_request_key(scene_id, prompt, duration, seed)
+    return await _generate_ltx_job_clip(job_id, scene_id, graph, request_key, force_new)
+
+
+async def generate_i2v_fallback_clip(
+    job_id: str, scene_id: int, prompt: str, matched_image: str,
+    duration: float = 2.0, seed: int | None = None, force_new: bool = False,
+) -> str:
+    """USE_STANDIN=0일 때만 타는 드문 폴백(mode=I2V, 이미지 있음) — Wan call_video가
+    맡던 것 중 I2V 절반. 기존 4.6 _build_ltx13b_graph(image-conditioned)를 그대로
+    재사용, 신규 그래프 불필요."""
+    resolved_seed = seed if seed is not None else int(time.time())
+    async with (
+        oom.phase("i2v"),
+        httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=60.0, write=60.0, pool=None)) as client,
+    ):
+        img_path = refs_dir(job_id) / matched_image
+        up = await client.post(
+            f"{COMFYUI_URL}/upload/image",
+            files={"image": (f"i2v_fallback_{Path(matched_image).name}",
+                             img_path.read_bytes(), "image/png")},
+            data={"overwrite": "true"},
+        )
+        up.raise_for_status()
+        uj = up.json()
+        image_name = f"{uj['subfolder']}/{uj['name']}" if uj.get("subfolder") else uj["name"]
+
+    length = to_ltx_len(duration * LTX13B_FPS)
+    graph = _build_ltx13b_graph(
+        prompt=prompt, image_name=image_name, width=WIDTH, height=HEIGHT, seed=resolved_seed)
+    graph["7"]["inputs"]["length"] = length  # 4.6 오네샷은 LTX13B_FRAMES 고정, 여긴 씬 duration 반영
+    request_key = _i2v_fallback_request_key(scene_id, prompt, matched_image, duration, seed)
+    return await _generate_ltx_job_clip(job_id, scene_id, graph, request_key, force_new)
 
 
 async def generate_i2v_oneshot(image_bytes: bytes, prompt: str, seed: int | None = None) -> dict:

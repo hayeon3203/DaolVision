@@ -1,6 +1,6 @@
 """Send fan-out된 씬 클립 생성이 _gen_semaphore 상한을 절대 넘지 않는지 검증.
 
-회귀 방지: 이 상한이 사라지면 씬 4개가 :8500(Wan)+:8188(ComfyUI) 확산을 같은 순간에
+회귀 방지: 이 상한이 사라지면 씬 4개가 :8188(ComfyUI) 확산을 같은 순간에
 피크로 몰아 GB10 통합메모리 OOM → ReadTimeout/정지. 참조: [[gb10-gpu-contention-comfyui-ollama]]
 
     ./.venv/bin/python tests/test_clip_concurrency.py
@@ -28,11 +28,13 @@ async def _run(limit: int, n_scenes: int = 6):
         return "clip.mp4"
 
     # 세 백엔드 경로를 모두 같은 fake로 대체 — 어느 모드든 단일 길목을 통과함을 확인.
-    tools.call_video = fake_gen
+    tools.generate_t2v_clip = fake_gen
+    tools.generate_i2v_fallback_clip = fake_gen
     tools.generate_standin_clip = fake_gen
     tools.generate_subject_ref_clip = fake_gen
 
-    # 모드를 섞어 :8500/:8188 양쪽 경로가 하나의 세마포어로 합산 게이팅되는지 본다.
+    # 모드를 섞어(LTX T2V/I2V 폴백 vs Stand-In/Subject-Ref) 양쪽 다 :8188 하나의
+    # 세마포어로 합산 게이팅되는지 본다.
     modes = ["T2V", "STANDIN", "SUBJECT_REF", "I2V", "STANDIN", "T2V"][:n_scenes]
     scenes = [{"id": i, "mode": m, "prompt": "p", "matched_image": "r.png", "duration": 2.0}
               for i, m in enumerate(modes)]

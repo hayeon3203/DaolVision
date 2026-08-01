@@ -20,15 +20,22 @@ import tools
 driver._install_fakes()
 
 # 씬별 완료 시점을 어긋나게 해 '일부만 완성된' running 상태를 폴링이 관측하게 한다.
-_orig_video = tools.call_video
+_orig_t2v = tools.generate_t2v_clip
+_orig_i2v_fallback = tools.generate_i2v_fallback_clip
 
 
-async def _staggered_video(job_id, scene_id, *a, **kw):
+async def _staggered_t2v(job_id, scene_id, *a, **kw):
     await asyncio.sleep(0.3 if scene_id == 1 else 2.0)
-    return await _orig_video(job_id, scene_id, *a, **kw)
+    return await _orig_t2v(job_id, scene_id, *a, **kw)
 
 
-tools.call_video = _staggered_video
+async def _staggered_i2v_fallback(job_id, scene_id, *a, **kw):
+    await asyncio.sleep(0.3 if scene_id == 1 else 2.0)
+    return await _orig_i2v_fallback(job_id, scene_id, *a, **kw)
+
+
+tools.generate_t2v_clip = _staggered_t2v
+tools.generate_i2v_fallback_clip = _staggered_i2v_fallback
 
 import api  # tools 패치 후 import (graph가 tools 참조를 바인딩하기 전)
 

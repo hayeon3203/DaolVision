@@ -17,3 +17,6 @@ inference_server/outputs/
 
 # git worktrees (superpowers:using-git-worktrees)
 .worktrees/
+
+# superpowers SDD scratch (ledger, briefs, reports, review diffs)
+.superpowers/

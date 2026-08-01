@@ -61,7 +61,7 @@ async def node_rewrite_image_query(state: GraphState) -> dict:
 
 async def node_generate_image(state: GraphState) -> dict:
     """M2-2/M2-5: image_queries(최대 3개) → FLUX.1-schnell(:8501)로 정지 이미지 앵커를 한 번에 생성.
-    이전엔 Wan(:8500) 영상 파이프라인을 num_frames=1로 돌려썼는데(1장 뽑는 데 ~120s),
+    이전엔 Wan2.2-TI2V-5B(:8500, 이후 제거됨) 영상 파이프라인을 num_frames=1로 돌려썼는데(1장 뽑는 데 ~120s),
     전용 T2I 모델로 교체해 ~10-15s로 단축. 산출: jobs/<job_id>/gen_img_N.png.
     여러 장을 같은 seed로 생성해 화풍/색감 상관성을 높인다(모델이 이미지 조건 입력을
     지원하지 않아 seed 공유가 화풍 통일을 위해 취할 수 있는 실질적인 방법)."""
@@ -868,7 +868,7 @@ async def node_generate_one_clip(payload: dict) -> dict:
     job_id: str = payload["job_id"]
 
     # 동시 실행 상한(_gen_semaphore): fan-out된 씬이 GPU를 동시에 물지 않게 게이팅.
-    # 모든 백엔드가 이 단일 길목을 통과하므로 여기 하나만 걸면 :8500/:8188 합산 동시성이 잡힌다.
+    # 모든 백엔드가 이 단일 길목을 통과하므로 여기 하나만 걸면 :8188 합산 동시성이 잡힌다.
     relight = _needs_relight(scene.get("mood", "neutral"))  # M3-8: mood 괴리 씬만 재조명 노브
     async with tools._gen_semaphore:
         if scene["mode"] == "SUBJECT_REF":
@@ -889,21 +889,31 @@ async def node_generate_one_clip(payload: dict) -> dict:
                 force_new=payload.get("force_new", False),
                 relight=relight,
             )
-        else:                                # T2V/I2V → Wan2.2-TI2V-5B (:8500)
-            clip_path = await tools.call_video(
-                job_id=job_id,
-                scene_id=scene["id"],
-                prompt=scene["prompt"],
-                mode=scene["mode"],
-                matched_image=scene.get("matched_image"),
-                duration=scene.get("duration", 2.0),
-                seed=payload.get("seed"),
-            )
+        else:                                # T2V/I2V 폴백 → LTX-13B-distilled (:8188)
+            if scene["mode"] == "I2V":
+                clip_path = await tools.generate_i2v_fallback_clip(
+                    job_id=job_id,
+                    scene_id=scene["id"],
+                    prompt=scene["prompt"],
+                    matched_image=scene["matched_image"],
+                    duration=scene.get("duration", 2.0),
+                    seed=payload.get("seed"),
+                    force_new=payload.get("force_new", False),
+                )
+            else:                            # T2V
+                clip_path = await tools.generate_t2v_clip(
+                    job_id=job_id,
+                    scene_id=scene["id"],
+                    prompt=scene["prompt"],
+                    duration=scene.get("duration", 2.0),
+                    seed=payload.get("seed"),
+                    force_new=payload.get("force_new", False),
+                )
 
-    # 클립당 step 수는 모드에 따라 결정적: :8500(T2V/I2V)=DEFAULT_STEPS,
+    # 클립당 step 수는 모드에 따라 결정적: LTX(T2V/I2V 폴백)=LTX13B_STEPS,
     # ComfyUI(STANDIN/SUBJECT_REF)=STANDIN_STEPS. 영상당 합산은 final_render에서.
     steps = (tools.STANDIN_STEPS if scene["mode"] in ("STANDIN", "SUBJECT_REF")
-             else tools.DEFAULT_STEPS)
+             else tools.LTX13B_STEPS)
     metrics.clip_generated(scene["mode"])
     metrics.clip_steps(scene["mode"], steps)
     updated_scene: Scene = {
