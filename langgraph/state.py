@@ -20,9 +20,8 @@ class Scene(TypedDict, total=False):
     subject_type: Optional[Literal["human", "nonhuman", "none"]]  # 라우팅 진실원천(캡션 기반 보정)
     setting: str                   # 이 씬의 장소/배경. 연속 씬은 직전 씬에서 forward-fill(배경 연속성)
     prompt: str                    # Phase 2에서 생성된 최종 프롬프트
-    anchor_image: str              # Phase 2.5 Flux가 생성한 씬별 I2V 첫 프레임 앵커
     face_id_ref: Optional[str]     # LTX Face-ID에 별도 첨부할 사람 identity 참조 파일명
-    mode: Literal["I2V", "T2V", "STANDIN", "SUBJECT_REF"]
+    mode: Literal["I2V", "T2V", "STANDIN", "SUBJECT_REF", "LTX_FACEID"]
     clip_path: Optional[str]       # Phase 3 생성 결과
     steps: int                     # 이 클립이 돌린 denoising step 수 (영상당 합산에 사용)
     quality_score: Optional[float]

@@ -666,23 +666,19 @@ async def node_generate_prompts(state: GraphState) -> dict:
     return {"scenes": updated_scenes, "style_bible": bible, "phase": "prompting"}
 
 
-async def node_generate_scene_anchors(state: GraphState) -> dict:
-    """2-3: 승인된 모든 씬의 Flux 앵커를 생성하고 Face-ID 참조를 별도 첨부한다.
+def node_classify_faceid_scenes(state: GraphState) -> dict:
+    """2-3: 사람 참조가 있는 씬을 LTX_FACEID 모드로 분류한다.
 
-    anchor_image는 장면 구도/배경의 첫 프레임 조건이고, face_id_ref는 사람 identity
-    조건이다. 둘을 분리해야 5.3의 LTX I2V가 앵커 구도를 받으면서도 같은 얼굴을
-    전 씬에 유지할 수 있다.
+    2026-07-31 재설계: 원래 이 노드는 Flux로 씬별 배경 앵커를 생성해
+    LTXVImgToVideo에 강도 1.0으로 고정했으나, 앵커 생성이 얼굴 참조를 전혀
+    받지 않아 identity가 무작위였고 그 강한 lock이 뒤따르는 Face-ID Identity
+    Transfer 노드를 무력화했다(참조 얼굴과 무관한 얼굴이 나옴, 실사용 재현
+    검증 완료). 배경 다양성은 3.2에서 이미 증명됐듯 씬 프롬프트 텍스트만으로
+    충분해 앵커가 불필요 — 순수 분류만 남긴다.
     """
-    job_id = state["job_id"]
     scenes = state.get("scenes") or []
 
-    async def generate(scene: Scene) -> Scene:
-        anchor = await tools.generate_scene_anchor(
-            job_id=job_id,
-            scene_id=scene["id"],
-            prompt=scene["prompt"],
-            seed=scene_seed(job_id, scene["id"]),
-        )
+    def classify(scene: Scene) -> Scene:
         matched = scene.get("matched_image")
         face_id_ref = (
             matched
@@ -691,10 +687,14 @@ async def node_generate_scene_anchors(state: GraphState) -> dict:
             and scene.get("image_role") in ("start", "ref")
             else None
         )
-        return {**scene, "anchor_image": anchor, "face_id_ref": face_id_ref}
+        return {
+            **scene,
+            "face_id_ref": face_id_ref,
+            "mode": "LTX_FACEID" if face_id_ref else scene.get("mode", "T2V"),
+        }
 
-    anchored = await asyncio.gather(*(generate(scene) for scene in scenes))
-    return {"scenes": list(anchored), "phase": "anchoring"}
+    classified = [classify(scene) for scene in scenes]
+    return {"scenes": classified, "phase": "anchoring"}
 
 
 def _scene_prompt_system(standin: bool, has_wardrobe: bool = False) -> str:
@@ -777,6 +777,62 @@ def node_dispatch_generation(state: GraphState) -> list[Send]:
     return [Send("node_generate_one_clip",
                  {"scene": s, "job_id": job_id, "seed": scene_seed(job_id, s["id"])})
             for s in scenes_to_run]
+
+
+async def node_generate_ltx_batch(state: GraphState) -> dict:
+    """3-1: Face-ID 씬을 한 큐 배치로 제출해 LTX 모델 로드는 작업당 한 번만 수행한다."""
+    target_ids = set(state.get("regen_target_ids") or [])
+    targets = [
+        scene for scene in state["scenes"]
+        if not target_ids or scene["id"] in target_ids
+    ]
+    face_scenes = [scene for scene in targets if scene.get("mode") == "LTX_FACEID"]
+    fallback_scenes = [scene for scene in targets if scene.get("mode") != "LTX_FACEID"]
+
+    batch_payload = [
+        {
+            **scene,
+            "seed": scene_seed(state["job_id"], scene["id"])
+            if not target_ids else int(time.time_ns() % (2 ** 31)),
+        }
+        for scene in face_scenes
+    ]
+    paths = await tools.generate_ltx_faceid_batch(state["job_id"], batch_payload)
+    generated: list[Scene] = []
+    for scene in face_scenes:
+        metrics.clip_generated("LTX_FACEID")
+        metrics.clip_steps("LTX_FACEID", tools.LTX_FACEID_STEPS)
+        generated.append({
+            **scene,
+            "clip_path": paths[scene["id"]],
+            "steps": tools.LTX_FACEID_STEPS,
+            "quality_score": None,
+            "quality_flag": "pending",
+        })
+
+    # 비인간/무참조 씬은 기존 생성 경로를 유지한다.
+    if fallback_scenes:
+        fallback_results = await asyncio.gather(*[
+            node_generate_one_clip({
+                "scene": scene,
+                "job_id": state["job_id"],
+                "seed": None if target_ids else scene_seed(state["job_id"], scene["id"]),
+                "force_new": bool(target_ids),
+            })
+            for scene in fallback_scenes
+        ])
+        generated.extend(
+            result["clip_results"][0] for result in fallback_results
+        )
+
+    by_id = {scene["id"]: scene for scene in generated}
+    merged = [by_id.get(scene["id"], scene) for scene in state["scenes"]]
+    return {
+        "scenes": merged,
+        "clip_results": [],
+        "regen_target_ids": [],
+        "phase": "generating",
+    }
 
 
 async def node_generate_one_clip(payload: dict) -> dict:
@@ -863,14 +919,8 @@ def node_checkpoint_clip_approval(state: GraphState) -> Command:
     elif action == "regenerate":
         target_ids = decision["scene_ids"]
         metrics.regeneration(len(target_ids))
-        targets = [s for s in state["scenes"] if s["id"] in target_ids]
-        job_id = state["job_id"]
-        ordered_targets = [s for _, s in _order_scenes_for_generation(targets)]
-        # Command가 직접 Send 리스트를 goto로 반환 → 지정된 씬만 재생성 fan-out.
-        # 재생성은 seed=None(랜덤): 고정 시드+같은 프롬프트면 똑같은 결과가 나와 재생성이 무의미.
         return Command(
-            goto=[Send("node_generate_one_clip", {"scene": s, "job_id": job_id, "seed": None, "force_new": True})
-                  for s in ordered_targets],
+            goto="node_generate_ltx_batch",
             update={"regen_target_ids": target_ids},
         )
 

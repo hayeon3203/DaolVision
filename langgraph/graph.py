@@ -37,9 +37,10 @@ def build_graph():
 
     # Phase 2
     g.add_node("node_generate_prompts", nodes.node_generate_prompts)
-    g.add_node("node_generate_scene_anchors", nodes.node_generate_scene_anchors)
+    g.add_node("node_classify_faceid_scenes", nodes.node_classify_faceid_scenes)
 
     # Phase 3
+    g.add_node("node_generate_ltx_batch", nodes.node_generate_ltx_batch)
     g.add_node("node_generate_one_clip", nodes.node_generate_one_clip)
     g.add_node("node_merge_clip_results", nodes.node_merge_clip_results)
     g.add_node("node_checkpoint_clip_approval", nodes.node_checkpoint_clip_approval)
@@ -69,19 +70,11 @@ def build_graph():
     g.add_edge("node_split_scenes", "node_checkpoint_scene_approval")
     # node_checkpoint_scene_approval은 Command(goto=...)로 자체 분기하므로 add_edge 불필요
 
-    # 씬별 Flux 앵커 + Face-ID 참조 첨부 후 Send API로 클립 생성을 fan-out한다.
-    g.add_edge("node_generate_prompts", "node_generate_scene_anchors")
-    # Send API fan-out: node_generate_scene_anchors 다음 conditional_edges의
-    # path 함수(node_dispatch_generation)가 list[Send]를 반환하면
-    # LangGraph가 자동으로 node_generate_one_clip을 씬 개수만큼 병렬 호출한다.
-    # (재생성 루프도 동일 경로를 재진입하므로 별도 노드로 분리하지 않음)
-    g.add_conditional_edges(
-        "node_generate_scene_anchors",
-        nodes.node_dispatch_generation,
-        ["node_generate_one_clip"],
-    )
-    # 재생성 루프(3-3)는 node_checkpoint_clip_approval이 Command(goto=[Send(...), ...])를
-    # 직접 반환하므로 여기서 별도 conditional_edges 등록이 필요 없음
+    # 사람 참조 씬을 LTX_FACEID로 분류한 뒤 배치 생성으로 넘긴다(앵커 없음, 3.2와 동일 배선).
+    g.add_edge("node_generate_prompts", "node_classify_faceid_scenes")
+    g.add_edge("node_classify_faceid_scenes", "node_generate_ltx_batch")
+    g.add_edge("node_generate_ltx_batch", "node_checkpoint_clip_approval")
+    # 구형 fan-out 노드는 비-LTX 폴백과 호환성을 위해 유지한다.
     g.add_edge("node_generate_one_clip", "node_merge_clip_results")
     g.add_edge("node_merge_clip_results", "node_checkpoint_clip_approval")
     # node_checkpoint_clip_approval도 Command(goto=...)로 자체 분기
