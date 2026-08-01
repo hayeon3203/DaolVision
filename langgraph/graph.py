@@ -74,7 +74,10 @@ def build_graph():
     g.add_edge("node_generate_prompts", "node_classify_faceid_scenes")
     g.add_edge("node_classify_faceid_scenes", "node_generate_ltx_batch")
     g.add_edge("node_generate_ltx_batch", "node_checkpoint_clip_approval")
-    # 구형 fan-out 노드는 비-LTX 폴백과 호환성을 위해 유지한다.
+    # node_generate_one_clip/node_merge_clip_results는 그래프 엣지로는 도달 불가(dead edge).
+    # 비-LTX_FACEID 폴백 씬은 node_generate_ltx_batch가 node_generate_one_clip을
+    # asyncio.gather로 직접 인프로세스 호출해 처리하고 스스로 병합한다 — 이 엣지를 타지 않음.
+    # 두 노드/엣지는 등록 구조 완결성 유지 목적으로만 남겨둔다.
     g.add_edge("node_generate_one_clip", "node_merge_clip_results")
     g.add_edge("node_merge_clip_results", "node_checkpoint_clip_approval")
     # node_checkpoint_clip_approval도 Command(goto=...)로 자체 분기

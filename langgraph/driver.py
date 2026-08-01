@@ -83,10 +83,16 @@ def _install_fakes():
         )
         return str(out)
 
+    async def fake_ltx_faceid_batch(job_id, scenes):
+        # ponytail: 실 storyboard가 아직 matched_image를 채우지 않아 오늘은 안 불리지만,
+        # 미래에 --dry 픽스처가 인물 참조를 넣으면 실 ComfyUI 호출을 막는 안전망.
+        return {scene["id"]: _fake_clip(job_id, scene["id"]) for scene in scenes}
+
     tools.call_llm = fake_llm
     tools.call_video = fake_video
     tools.generate_standin_clip = fake_standin
     tools.generate_t2i_image = fake_t2i_image
+    tools.generate_ltx_faceid_batch = fake_ltx_faceid_batch
     tools.CAPTION_REFS = False  # dry: 비전(gemma) 미호출 — 이미지 분기 승인 후 ref 캡션 스킵
 
 

@@ -811,7 +811,9 @@ async def node_generate_ltx_batch(state: GraphState) -> dict:
         })
 
     # 비인간/무참조 씬은 기존 생성 경로를 유지한다.
+    # 같은 mode/ref끼리 묶어 ComfyUI 캐시 재사용률을 높인다 (node_dispatch_generation과 동일 원칙).
     if fallback_scenes:
+        fallback_scenes = [s for _, s in _order_scenes_for_generation(fallback_scenes)]
         fallback_results = await asyncio.gather(*[
             node_generate_one_clip({
                 "scene": scene,
