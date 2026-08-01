@@ -109,6 +109,9 @@ LTX_FACEID_WIDTH = int(os.environ.get("AGENT_LTX_FACEID_WIDTH", "1024"))
 LTX_FACEID_HEIGHT = int(os.environ.get("AGENT_LTX_FACEID_HEIGHT", "576"))
 LTX_FACEID_FPS = int(os.environ.get("AGENT_LTX_FACEID_FPS", "24"))
 LTX_FACEID_STEPS = int(os.environ.get("AGENT_LTX_FACEID_STEPS", "8"))
+# node 129(LTXIdentityOverlapConditioning)의 identity 강도 노브. 기본값 1.0은 워크플로
+# JSON 원본값 그대로 — 얼굴 일관성이 아쉬우면 1.2~1.5로 올려본다(배경/포즈 자유도와 trade-off).
+LTX_FACEID_GUIDANCE = float(os.environ.get("AGENT_LTX_FACEID_GUIDANCE", "1.0"))
 # 호환 alias (구 이름) — 기본 경로는 i2v.
 STANDIN_WORKFLOW = I2V_WORKFLOW
 # API 그래프 주입 노드 ID (comfyui_workflows/README.md 표 참조). 두 워크플로는 dims 노드만
@@ -300,8 +303,17 @@ async def classify_approval_intent(checkpoint: str, text: str) -> dict:
 
 async def caption_image(image_path: str) -> str:
     """비전 모델로 이미지의 주요 피사체를 영어 한 구절로 캡션.
-    씬↔이미지 내용 매칭 + 캐릭터록(인물 묘사 텍스트) 주입에 쓰인다."""
-    b64 = base64.b64encode(Path(image_path).read_bytes()).decode()
+    씬↔이미지 내용 매칭 + 캐릭터록(인물 묘사 텍스트) 주입에 쓰인다.
+
+    _prepare_reference_upload와 동일하게 PIL로 정규화 후 PNG로 재인코딩한다 — 원본
+    파일이 확장자와 실제 포맷이 다른 경우(예: .jpg로 저장된 WebP) 원본 바이트를 그대로
+    보내면 Ollama 비전 모델이 디코드 못 해 "No visual content provided" 식으로 침묵
+    실패하고, 그 결과 matched_image가 전 씬에서 null이 되어 T2V로 조용히 강등된다."""
+    with Image.open(image_path) as opened:
+        image = ImageOps.exif_transpose(opened).convert("RGB")
+    buf = BytesIO()
+    image.save(buf, format="PNG")
+    b64 = base64.b64encode(buf.getvalue()).decode()
     async with oom.phase("llm"), httpx.AsyncClient(timeout=180) as client:
         resp = await client.post(OLLAMA_GEN_URL, json={
             "model": VISION_MODEL,
@@ -810,6 +822,7 @@ def _build_ltx_faceid_graph(
     )
     graph["104"]["inputs"]["image"] = face_image
     graph["101"]["inputs"]["filename_prefix"] = prefix
+    graph["129"]["inputs"]["reference_guidance_scale"] = LTX_FACEID_GUIDANCE
     # S1 나레이션은 5.4에서 별도 TTS mux한다. 여기서 LTX 오디오를 디코드하면
     # 씬 사이 AudioVAE 로드가 대형 모델 offload와 스왑 스래싱을 유발한다.
     graph["56"]["inputs"].pop("audio", None)
@@ -1126,13 +1139,17 @@ def _probe_duration(path: str) -> float:
     return float(r.stdout.strip())
 
 
-def ffmpeg_concat(clip_paths: list[str], transitions: list[str], out_path: str) -> str:
-    """트랜지션 포함 이어붙이기. transitions[i] = clip i→i+1 사이 ('crossfade'|'cut')."""
+def ffmpeg_concat(clip_paths: list[str], transitions: list[str], out_path: str,
+                   width: int = WIDTH, height: int = HEIGHT) -> str:
+    """트랜지션 포함 이어붙이기. transitions[i] = clip i→i+1 사이 ('crossfade'|'cut').
+    width/height 기본값은 T2V fast/quality 프리셋(832x480 등) — LTX_FACEID 씬이 섞인
+    잡은 호출부(node_edit_concat)가 LTX_FACEID_WIDTH/HEIGHT(1024x576)를 넘겨써야
+    LTX 클립이 이 프리셋으로 다운스케일되지 않는다(Face-ID 화질 손실 방지)."""
     if len(clip_paths) == 1:
         subprocess.run(["ffmpeg", "-y", "-i", clip_paths[0], "-c", "copy", out_path],
                        check=True, capture_output=True)
         return out_path
-    filter_complex, last = build_concat_filter(clip_paths, transitions)
+    filter_complex, last = build_concat_filter(clip_paths, transitions, width, height)
     inputs = []
     for p in clip_paths:
         inputs += ["-i", p]
@@ -1144,7 +1161,8 @@ def ffmpeg_concat(clip_paths: list[str], transitions: list[str], out_path: str) 
     return out_path
 
 
-def build_concat_filter(clip_paths: list[str], transitions: list[str]):
+def build_concat_filter(clip_paths: list[str], transitions: list[str],
+                         width: int = WIDTH, height: int = HEIGHT):
     """
     cut → concat 필터, crossfade → xfade(0.5s).
 
@@ -1161,7 +1179,7 @@ def build_concat_filter(clip_paths: list[str], transitions: list[str]):
     # settb=AVTB: concat 출력(1/1000000)과 fps 필터 출력(1/24)의 timebase가 달라
     # xfade가 "timebase do not match"로 실패한다 → 모든 입력을 AVTB로 통일.
     parts = [
-        f"[{i}:v]fps={DEFAULT_FPS},scale={WIDTH}:{HEIGHT},setsar=1,"
+        f"[{i}:v]fps={DEFAULT_FPS},scale={width}:{height},setsar=1,"
         f"setpts=PTS-STARTPTS,settb=AVTB[n{i}]"
         for i in range(len(clip_paths))
     ]

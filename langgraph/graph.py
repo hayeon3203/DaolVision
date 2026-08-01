@@ -47,7 +47,6 @@ def build_graph():
 
     # Phase 4
     g.add_node("node_edit_concat", nodes.node_edit_concat)
-    g.add_node("node_generate_subtitles", nodes.node_generate_subtitles)
 
     # Phase 5
     g.add_node("node_final_render", nodes.node_final_render)
@@ -84,9 +83,8 @@ def build_graph():
     g.add_edge("node_merge_clip_results", "node_checkpoint_clip_approval")
     # node_checkpoint_clip_approval도 Command(goto=...)로 자체 분기
 
-    g.add_edge("node_edit_concat", "node_generate_subtitles")
-    # 자막편집 게이트(4-5) 제외: 승인 2게이트(1-4/3-5)만 유지, 편집본은 자동 확정.
-    g.add_edge("node_generate_subtitles", "node_final_render")
+    # 자막 생성 노드 제거(5.5 후속) — 편집본이 그대로 최종본, 승인 2게이트(1-4/3-5)만 유지.
+    g.add_edge("node_edit_concat", "node_final_render")
 
     g.add_edge("node_final_render", END)
 

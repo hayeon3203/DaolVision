@@ -482,6 +482,13 @@ async def _make_style_bible(state: GraphState) -> str:
     독립적으로 결정되면 이미지·영상 그림체가 어긋난다 → image_query를 앵커로 넘겨
     같은 렌더링 기법을 따르도록 강제한다."""
     image_query = (state.get("image_query") or "").strip()
+    # 실제 인물 사진(Face-ID) 참조 씬이 있으면 화풍을 photoreal로 강제한다 — 안 그러면
+    # LLM이 애니메이션/플랫벡터 화풍을 골라도 막을 게 없어서, Face-ID LoRA가 얼굴만
+    # 실사로 박아넣는 동안 배경·소품은 그림체로 렌더링되는 불일치가 생긴다.
+    has_face_ref = any(
+        s.get("subject_type") == "human" and s.get("image_role") in ("start", "ref")
+        for s in (state.get("scenes") or [])
+    )
     system_prompt = (
           "You are an art director for a short video. "
           "Create ONE global style bible from the complete story and scene list. "
@@ -494,6 +501,16 @@ async def _make_style_bible(state: GraphState) -> str:
               "3D render, or photoreal). Extract the rendering style from the anchor "
               "prompt and carry it through unchanged. "
               if image_query else ""
+          )
+
+          + (
+              "A real person's face will be identity-locked into this video from a real "
+              "photo (Face-ID). The style MUST be photorealistic, cinematic live-action — "
+              "real-world materials, natural lighting, photographic texture and detail "
+              "density. Do NOT choose anime, flat vector, illustration, 3D-cartoon, or any "
+              "other stylized/non-photoreal rendering technique — a stylized background "
+              "would clash with the photoreal locked face. "
+              if has_face_ref else ""
           )
 
           + "Define ONLY the invariant visual rules that stay IDENTICAL across every "
@@ -719,6 +736,12 @@ def _scene_prompt_system(standin: bool, has_wardrobe: bool = False) -> str:
             "image, so do NOT invent their appearance, age, gender, ethnicity or hair. "
             + ("A user-provided WARDROBE LOCK follows. Translate it faithfully into English, state the exact garments and colors, and keep them unchanged. " if has_wardrobe else "Do not invent or describe clothing. ")
             + "Describe what they DO and FEEL — expression, gaze, gesture, movement — and the shot composition. "
+            # Task 3.2 눈판정으로 확정된 기본값(STATE.md Task 3.2/5.2 재설계): 클로즈업은
+            # identity 전이 신뢰도와 배경 퀄리티 둘 다 떨어뜨린다 — wide shot으로 고정.
+            "OVERRIDE the shot-size instruction above for this character: ALWAYS use a wide "
+            "or establishing shot with the character small within an expansive, detailed "
+            "background — never a close-up or medium close-up. Keep the camera static or "
+            "slow-panning, not pushing in. "
         )
     return base + "Output ONLY the prompt text — no preamble, no quotes, no explanation, no markdown."
 
@@ -953,36 +976,19 @@ async def node_edit_concat(state: GraphState) -> dict:
     ]
 
     preview_path = str(tools.job_dir(state["job_id"]) / "preview_low.mp4")
+    # LTX_FACEID 씬이 하나라도 있으면 concat 타겟 해상도를 그 네이티브 해상도(1024x576)로
+    # 올린다 — 기본 WIDTH/HEIGHT(T2V fast/quality 프리셋, 예: 832x480)로 그대로 스케일하면
+    # 이미 더 좋은 화질로 뽑힌 LTX 클립이 합치기 단계에서 다운스케일돼 얼굴 디테일이
+    # 뭉개진다(Face-ID 화질 손실 원인, .harness/STATE.md 참고).
+    if any(s.get("mode") == "LTX_FACEID" for s in scenes):
+        width, height = tools.LTX_FACEID_WIDTH, tools.LTX_FACEID_HEIGHT
+    else:
+        width, height = tools.WIDTH, tools.HEIGHT
     # ffmpeg는 동기 subprocess → 스레드로 오프로드해 이벤트루프(모든 :8700 엔드포인트가
     # 공유)를 막지 않는다. 안 그러면 인코딩 중 /status·/jobs가 응답 못해 OWU가 ReadTimeout.
-    await asyncio.to_thread(tools.ffmpeg_concat, clip_paths, transitions, preview_path)
+    await asyncio.to_thread(tools.ffmpeg_concat, clip_paths, transitions, preview_path, width, height)
 
     return {"edited_preview_path": preview_path}
-
-
-async def node_generate_subtitles(state: GraphState) -> dict:
-    """4-3: 자막 삽입 — LLM이 장면 흐름에 맞춰 스토리텔링 자막을 새로 작성 (M3-11)."""
-    scenes = sorted(state["scenes"], key=lambda x: x["id"])
-    lines = await tools.generate_subtitle_lines(scenes)
-    srt_path = str(tools.job_dir(state["job_id"]) / "subs.srt")
-    with open(srt_path, "w", encoding="utf-8") as f:
-        t = 0.0
-        for i, (s, line) in enumerate(zip(scenes, lines), start=1):
-            start, end = t, t + s["duration"]
-            f.write(f"{i}\n{fmt_ts(start)} --> {fmt_ts(end)}\n{line}\n\n")
-            t = end
-
-    subtitled_path = str(tools.job_dir(state["job_id"]) / "preview_sub.mp4")
-    await asyncio.to_thread(  # 위와 동일: 블로킹 ffmpeg를 이벤트루프에서 떼어낸다
-        tools.burn_subtitles, state["edited_preview_path"], srt_path, subtitled_path)
-    return {"subtitle_path": srt_path, "edited_preview_path": subtitled_path}
-
-
-def fmt_ts(seconds: float) -> str:
-    h, rem = divmod(int(seconds), 3600)
-    m, s = divmod(rem, 60)
-    ms = int((seconds - int(seconds)) * 1000)
-    return f"{h:02}:{m:02}:{s:02},{ms:03}"
 
 
 # ══════════════════════════════════════════════════════════

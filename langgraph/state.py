@@ -57,7 +57,6 @@ class GraphState(TypedDict, total=False):
 
     # Phase 4 결과
     edited_preview_path: Optional[str]
-    subtitle_path: Optional[str]
 
     # Phase 5 결과
     final_video_path: Optional[str]
