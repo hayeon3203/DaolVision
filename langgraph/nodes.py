@@ -41,12 +41,17 @@ _IMG_QUERY_SYSTEM = (
 
 async def node_rewrite_image_query(state: GraphState) -> dict:
     """M2-1: 사용자 자연어 이미지 요청(최대 3장 묘사 가능) → 이미지 생성용 영어 프롬프트들.
-    node_generate_prompts와 동일한 call_llm + clean_llm_prompt 패턴 재사용."""
+    node_generate_prompts와 동일한 call_llm + clean_llm_prompt 패턴 재사용.
+    사용자가 명시적으로 요청한 것이므로, 파싱 실패로 조용히 빈 결과를 주는 대신
+    /status의 error 필드로 재시도 안내를 노출한다(app.py except Exception → ERRORS[job_id])."""
     request = (state.get("image_request") or "").strip()
     if not request:
         return {"image_queries": [], "image_query": ""}
     raw = await tools.call_llm(_IMG_QUERY_SYSTEM, request)
-    items = tools.parse_json_lenient(raw)
+    try:
+        items = tools.parse_json_lenient(raw)
+    except ValueError:
+        items = []
     if isinstance(items, dict):
         items = items.get("queries") or items.get("items") or []
     queries = []
@@ -56,6 +61,8 @@ async def node_rewrite_image_query(state: GraphState) -> dict:
         if q:
             queries.append(q)
     queries = queries[:3]
+    if not queries:
+        raise ValueError("이미지 생성 요청을 이해하지 못했습니다. 표현을 조금 바꿔서 다시 시도해주세요.")
     return {"image_queries": queries, "image_query": queries[0] if queries else ""}
 
 
