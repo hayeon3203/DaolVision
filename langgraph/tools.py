@@ -15,6 +15,7 @@ import os
 import re
 import sqlite3
 import subprocess
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -654,6 +655,35 @@ def _i2v_fallback_request_key(
     }, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
+def _webp_bytes_to_mp4(webp_bytes: bytes, fps: int) -> bytes:
+    """SaveAnimatedWEBP가 ComfyUI 표준 관례로 EXIF에 워크플로 메타데이터를 심는데,
+    ffmpeg의 webp 디먹서가 이 비표준 EXIF를 못 읽고 전체 디코드를 포기한다(PIL은
+    문제없이 읽음). 다운스트림 node_edit_concat/ffmpeg_concat이 ffmpeg로 이 파일을
+    그대로 열기 때문에, PIL로 프레임을 뽑아 ffmpeg image2pipe로 진짜 mp4 재인코딩한다."""
+    with Image.open(BytesIO(webp_bytes)) as im:
+        n_frames = getattr(im, "n_frames", 1)
+        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
+            tmp_path = tmp.name
+        try:
+            proc = subprocess.Popen(
+                ["ffmpeg", "-y", "-f", "image2pipe", "-framerate", str(fps), "-i", "-",
+                 "-pix_fmt", "yuv420p", tmp_path],
+                stdin=subprocess.PIPE, stderr=subprocess.PIPE,
+            )
+            for i in range(n_frames):
+                im.seek(i)
+                buf = BytesIO()
+                im.convert("RGB").save(buf, format="PNG")
+                proc.stdin.write(buf.getvalue())
+            _, stderr = proc.communicate(timeout=60)  # stdin close도 communicate가 처리
+            if proc.returncode != 0:
+                raise RuntimeError(
+                    f"webp→mp4 재인코딩 실패: {stderr.decode(errors='replace')[-500:]}")
+            return Path(tmp_path).read_bytes()
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+
+
 async def _generate_ltx_job_clip(
     job_id: str, scene_id: int, graph: dict, request_key: str, force_new: bool,
 ) -> str:
@@ -741,7 +771,8 @@ async def _generate_ltx_job_clip(
         vid.raise_for_status()
 
     out = job_dir(job_id) / f"clip{scene_id}.mp4"
-    out.write_bytes(vid.content)
+    mp4_bytes = await asyncio.to_thread(_webp_bytes_to_mp4, vid.content, LTX13B_FPS)
+    out.write_bytes(mp4_bytes)
     return str(out)
 
 

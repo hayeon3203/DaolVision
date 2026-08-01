@@ -111,6 +111,36 @@ def test_dispatch_routes_to_new_functions():
     asyncio.run(_async_test_dispatch_routes_to_new_functions())
 
 
+def test_webp_bytes_to_mp4_produces_real_mp4():
+    import io
+    from PIL import Image as PILImage
+    frames = []
+    for i in range(3):
+        img = PILImage.new("RGB", (64, 64), color=(i * 80, 100, 150))
+        frames.append(img)
+    buf = io.BytesIO()
+    frames[0].save(buf, format="WEBP", save_all=True, append_images=frames[1:],
+                    duration=100, loop=0)
+    webp_bytes = buf.getvalue()
+
+    mp4_bytes = tools._webp_bytes_to_mp4(webp_bytes, fps=10)
+    assert mp4_bytes[:4] != b"RIFF", "여전히 WebP 컨테이너 — mp4 재인코딩 안 됨"
+    assert len(mp4_bytes) > 0
+
+    import tempfile, subprocess as sp
+    with tempfile.NamedTemporaryFile(suffix=".mp4") as f:
+        f.write(mp4_bytes)
+        f.flush()
+        probe = sp.run(
+            ["ffprobe", "-v", "error", "-show_entries", "stream=codec_name,nb_frames",
+             "-of", "default=noprint_wrappers=1", f.name],
+            capture_output=True, text=True, check=True,
+        )
+    assert "codec_name=h264" in probe.stdout, probe.stdout
+    assert "nb_frames=3" in probe.stdout, probe.stdout
+    print("ok: webp 바이트가 ffprobe로 검증 가능한 진짜 h264 mp4로 재인코딩됨")
+
+
 def main():
     test_to_ltx_len_snaps_to_8k_plus_1()
     test_t2v_graph_has_no_image_nodes()
@@ -119,6 +149,7 @@ def main():
     test_call_video_and_wan_url_removed()
     test_new_wrapper_signatures()
     test_dispatch_routes_to_new_functions()
+    test_webp_bytes_to_mp4_produces_real_mp4()
 
 
 if __name__ == "__main__":
