@@ -1,8 +1,8 @@
 """
 헤드리스 검증 드라이버.
 
-  python driver.py --dry     # Ollama/Wan 미호출, 가짜 클립으로 그래프+ffmpeg 전 경로 검증
-  python driver.py           # 실서버(Ollama Nemotron-4B + Wan :8500) end-to-end
+  python driver.py --dry     # Ollama/ComfyUI 미호출, 가짜 클립으로 그래프+ffmpeg 전 경로 검증
+  python driver.py           # 실서버(Ollama Nemotron-4B + LTX-13B-distilled :8188 ComfyUI) end-to-end
 
 --dry 는 배선/interrupt/resume/xfade/자막 로직을, 실모드는 진짜 생성을 확인한다.
 사람 승인 자리는 자동 승인 payload로 대체.

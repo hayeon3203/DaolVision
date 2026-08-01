@@ -143,7 +143,7 @@ async def recover_job(job_id: str):
     """Re-launch an orphaned graph run that has pending next nodes but no task.
 
     This is for cases where the API process died or the in-memory RUNNING task was lost
-    after an approval, before node_generate_one_clip posted work to :8500.
+    after an approval, before node_generate_one_clip posted work to :8188 (ComfyUI).
     """
     if (tools.job_dir(job_id) / ".cancelled").exists():
         return {"job_id": job_id, "status": "cancelled"}

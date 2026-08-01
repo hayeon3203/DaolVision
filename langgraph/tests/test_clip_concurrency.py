@@ -33,7 +33,8 @@ async def _run(limit: int, n_scenes: int = 6):
     tools.generate_standin_clip = fake_gen
     tools.generate_subject_ref_clip = fake_gen
 
-    # 모드를 섞어 :8500/:8188 양쪽 경로가 하나의 세마포어로 합산 게이팅되는지 본다.
+    # 모드를 섞어(LTX T2V/I2V 폴백 vs Stand-In/Subject-Ref) 양쪽 다 :8188 하나의
+    # 세마포어로 합산 게이팅되는지 본다.
     modes = ["T2V", "STANDIN", "SUBJECT_REF", "I2V", "STANDIN", "T2V"][:n_scenes]
     scenes = [{"id": i, "mode": m, "prompt": "p", "matched_image": "r.png", "duration": 2.0}
               for i, m in enumerate(modes)]

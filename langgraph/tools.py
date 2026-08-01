@@ -2,7 +2,7 @@
 실제 인프라 호출부 (GB10 실서버 배선).
 
 - LLM: Ollama 네이티브 chat API (`/api/chat`), NVIDIA Nemotron 3 Nano 4B GGUF
-- 비디오: Wan2.2-TI2V-5B FastAPI (:8500) — /generate(T2V), /generate_i2v(I2V, base64 image)
+- 비디오: LTX-Video-0.9.8-13B-distilled via ComfyUI (:8188) — T2V/I2V 폴백, Stand-In(참조-얼굴)
 - ffmpeg: concat + xfade + 자막 번인
 
 nodes.py는 이 파일의 함수 시그니처에만 의존한다. 엔드포인트/모델이 바뀌면 여기만 교체.
@@ -63,7 +63,7 @@ STANDIN_STEPS = int(os.environ.get("AGENT_STANDIN_STEPS", "4"))     # lightx2v d
 # Stand-In 기반 Wan2.1 14B의 네이티브 fps=16. 24fps 생성은 프레임 50% 낭비(스텝시간이
 # 프레임 수에 초선형). 편집 단계에서 DEFAULT_FPS로 정규화하므로 다른 클립과 섞여도 안전.
 STANDIN_FPS = int(os.environ.get("AGENT_STANDIN_FPS", "16"))
-# I2V-14B 체크포인트가 480P 전용(이름 그대로) — :8500 T2V 경로의 WIDTH/HEIGHT(quality
+# I2V-14B 체크포인트가 480P 전용(이름 그대로) — LTX T2V 경로의 WIDTH/HEIGHT(quality
 # 프리셋 기본 1280x704)를 그대로 쓰면 해상도 초과로 100초 목표를 못 맞춤(실측 65s→159s).
 # 이 경로만 별도로 832x480 고정.
 STANDIN_WIDTH = int(os.environ.get("AGENT_STANDIN_WIDTH", "832"))
@@ -97,7 +97,8 @@ STANDIN_EXEC_TIMEOUT = float(os.environ.get("AGENT_STANDIN_EXEC_TIMEOUT",
 STANDIN_QUEUE_TIMEOUT = float(os.environ.get("AGENT_STANDIN_QUEUE_TIMEOUT", "86400"))
 STANDIN_MISSING_TIMEOUT = float(os.environ.get("AGENT_STANDIN_MISSING_TIMEOUT", "30"))
 # 클립 생성 동시 실행 상한. Send fan-out은 씬들을 한 이벤트 루프에서 동시에 돌리므로
-# 상한이 없으면 :8500(Wan)+:8188(ComfyUI) 확산이 같은 순간 피크를 쳐 GB10 통합메모리 OOM.
+# 상한이 없으면 LTX T2V/I2V 폴백 + Stand-In/Subject-Ref(둘 다 :8188 ComfyUI) 확산이
+# 같은 순간 피크를 쳐 GB10 통합메모리 OOM.
 # 1=완전 직렬(기본), 2=백엔드당 하나. ref: gb10-gpu-contention-comfyui-ollama.
 MAX_CONCURRENT_CLIPS = int(os.environ.get("AGENT_MAX_CONCURRENT_CLIPS", "1"))
 _gen_semaphore = asyncio.Semaphore(MAX_CONCURRENT_CLIPS)  # 실행 루프는 await 시점에 바인딩(py3.10+)
@@ -140,7 +141,6 @@ if VIDEO_PRESET not in VIDEO_PRESETS:
     raise ValueError(f"unknown AGENT_VIDEO_PRESET={VIDEO_PRESET!r}; choose quality or fast")
 _PRESET = VIDEO_PRESETS[VIDEO_PRESET]
 DEFAULT_FPS = int(os.environ.get("AGENT_FPS", "24"))
-DEFAULT_STEPS = int(os.environ.get("AGENT_STEPS", str(_PRESET["steps"])))
 WIDTH = int(os.environ.get("AGENT_WIDTH", str(_PRESET["width"])))
 HEIGHT = int(os.environ.get("AGENT_HEIGHT", str(_PRESET["height"])))
 
@@ -433,7 +433,7 @@ def clean_llm_prompt(text: str) -> str:
     return text
 
 
-# ── 비디오 (Wan2.2-TI2V-5B) ──────────────────────────────────
+# ── 프레임 길이 헬퍼 + 정지 이미지 앵커 (FLUX.1-schnell) ──────────
 def to_4k1(frames: float) -> int:
     """Wan VAE temporal factor 4 → num_frames 는 4k+1 이어야 함. 최소 17."""
     n = max(17, int(round(frames)))
@@ -759,7 +759,9 @@ async def _generate_ltx_job_clip(
                 _update_prompt(prompt_id, "error", error=msg)
                 raise RuntimeError(msg)
             for node_out in h[prompt_id].get("outputs", {}).values():
-                media = node_out.get("videos") or node_out.get("gifs") or node_out.get("images")
+                # Both graphs this helper serves (T2V/I2V-fallback) terminate in SaveAnimatedWEBP,
+                # which only ever emits "images" -- no "videos"/"gifs" key to fall back to.
+                media = node_out.get("images")
                 if media:
                     break
             if media:

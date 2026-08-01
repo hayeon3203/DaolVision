@@ -61,7 +61,7 @@ async def node_rewrite_image_query(state: GraphState) -> dict:
 
 async def node_generate_image(state: GraphState) -> dict:
     """M2-2/M2-5: image_queries(최대 3개) → FLUX.1-schnell(:8501)로 정지 이미지 앵커를 한 번에 생성.
-    이전엔 Wan(:8500) 영상 파이프라인을 num_frames=1로 돌려썼는데(1장 뽑는 데 ~120s),
+    이전엔 Wan2.2-TI2V-5B(:8500, 이후 제거됨) 영상 파이프라인을 num_frames=1로 돌려썼는데(1장 뽑는 데 ~120s),
     전용 T2I 모델로 교체해 ~10-15s로 단축. 산출: jobs/<job_id>/gen_img_N.png.
     여러 장을 같은 seed로 생성해 화풍/색감 상관성을 높인다(모델이 이미지 조건 입력을
     지원하지 않아 seed 공유가 화풍 통일을 위해 취할 수 있는 실질적인 방법)."""
