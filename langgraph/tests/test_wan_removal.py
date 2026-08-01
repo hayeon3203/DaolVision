@@ -79,6 +79,38 @@ def test_new_wrapper_signatures():
     print("ok: generate_t2v_clip/generate_i2v_fallback_clip 시그니처 확정")
 
 
+async def _async_test_dispatch_routes_to_new_functions():
+    calls = []
+
+    async def fake_t2v(**kw):
+        calls.append(("t2v", kw))
+        return "clipT.mp4"
+
+    async def fake_i2v_fb(**kw):
+        calls.append(("i2v_fb", kw))
+        return "clipI.mp4"
+
+    tools.generate_t2v_clip = fake_t2v
+    tools.generate_i2v_fallback_clip = fake_i2v_fb
+
+    t2v_scene = {"id": 1, "mode": "T2V", "prompt": "p", "matched_image": None,
+                 "duration": 2.0, "mood": "neutral"}
+    await nodes.node_generate_one_clip({"scene": t2v_scene, "job_id": "j", "seed": 1})
+    assert calls[-1][0] == "t2v", calls
+    assert calls[-1][1]["prompt"] == "p", calls
+
+    i2v_scene = {"id": 2, "mode": "I2V", "prompt": "p", "matched_image": "ref.png",
+                 "duration": 2.0, "mood": "neutral"}
+    await nodes.node_generate_one_clip({"scene": i2v_scene, "job_id": "j", "seed": 1})
+    assert calls[-1][0] == "i2v_fb", calls
+    assert calls[-1][1]["matched_image"] == "ref.png", calls
+    print("ok: mode=T2V/I2V가 각각 generate_t2v_clip/generate_i2v_fallback_clip로 라우팅")
+
+
+def test_dispatch_routes_to_new_functions():
+    asyncio.run(_async_test_dispatch_routes_to_new_functions())
+
+
 def main():
     test_to_ltx_len_snaps_to_8k_plus_1()
     test_t2v_graph_has_no_image_nodes()
@@ -86,6 +118,7 @@ def main():
     test_i2v_fallback_request_key_changes_with_prompt_and_image()
     test_call_video_and_wan_url_removed()
     test_new_wrapper_signatures()
+    test_dispatch_routes_to_new_functions()
 
 
 if __name__ == "__main__":

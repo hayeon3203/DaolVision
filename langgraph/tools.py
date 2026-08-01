@@ -53,7 +53,8 @@ CHATTERBOX_NARRATION_REFERENCE = Path(
 
 # ── ComfyUI Stand-In (참조-이미지 씬의 얼굴 일관성 경로) ──────────
 COMFYUI_URL = os.environ.get("AGENT_COMFYUI_URL", "http://127.0.0.1:8188")
-# 참조 이미지가 있는 씬을 Stand-In(ComfyUI)으로 보낼지 스위치. off면 전부 call_video(:8500)로.
+# 참조 이미지가 있는 씬을 Stand-In(ComfyUI)으로 보낼지 스위치. off면 전부
+# generate_t2v_clip/generate_i2v_fallback_clip(둘 다 ComfyUI :8188)로.
 USE_STANDIN = os.environ.get("AGENT_USE_STANDIN", "1").lower() not in ("0", "false", "no", "")
 # 0이면 참조 이미지 캡션(gemma vision) 생략 → 이미지↔씬은 사람이 지정. gemma 미로드로 GPU 압박↓.
 CAPTION_REFS = os.environ.get("AGENT_CAPTION_REFS", "1").lower() not in ("0", "false", "no", "")
