@@ -34,7 +34,7 @@ def _auto_decision(cp: dict) -> dict:
 
 
 def _install_fakes():
-    """--dry: tools.call_llm / call_video 를 가짜로 교체."""
+    """--dry: tools.call_llm / generate_t2v_clip / generate_i2v_fallback_clip / generate_standin_clip 를 가짜로 교체."""
     import json
 
     async def fake_llm(system_prompt: str, user_prompt: str) -> str:
