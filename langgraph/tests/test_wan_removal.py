@@ -44,9 +44,30 @@ def test_t2v_graph_has_no_image_nodes():
     print("ok: T2V 그래프에 이미지 노드 없음, latent/조건 배선 정확")
 
 
+def test_t2v_request_key_changes_with_prompt_and_scene():
+    k1 = tools._t2v_request_key(scene_id=3, prompt="a cat", duration=2.0, seed=None)
+    k2 = tools._t2v_request_key(scene_id=3, prompt="a dog", duration=2.0, seed=None)
+    k3 = tools._t2v_request_key(scene_id=4, prompt="a cat", duration=2.0, seed=None)
+    assert len({k1, k2, k3}) == 3, "prompt 또는 scene_id 변화가 request_key에 반영 안 됨"
+    print("ok: T2V request_key가 prompt/scene_id 변화를 반영(stale 캐시 방지)")
+
+
+def test_i2v_fallback_request_key_changes_with_prompt_and_image():
+    k1 = tools._i2v_fallback_request_key(
+        scene_id=1, prompt="p1", matched_image="a.png", duration=2.0, seed=None)
+    k2 = tools._i2v_fallback_request_key(
+        scene_id=1, prompt="p2", matched_image="a.png", duration=2.0, seed=None)
+    k3 = tools._i2v_fallback_request_key(
+        scene_id=1, prompt="p1", matched_image="b.png", duration=2.0, seed=None)
+    assert len({k1, k2, k3}) == 3, "prompt 또는 matched_image 변화가 request_key에 반영 안 됨"
+    print("ok: I2V 폴백 request_key가 prompt/matched_image 변화를 반영")
+
+
 def main():
     test_to_ltx_len_snaps_to_8k_plus_1()
     test_t2v_graph_has_no_image_nodes()
+    test_t2v_request_key_changes_with_prompt_and_scene()
+    test_i2v_fallback_request_key_changes_with_prompt_and_image()
 
 
 if __name__ == "__main__":

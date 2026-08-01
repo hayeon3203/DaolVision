@@ -687,6 +687,24 @@ def _build_ltx13b_t2v_graph(
     }
 
 
+def _t2v_request_key(scene_id: int, prompt: str, duration: float, seed: int | None) -> str:
+    return hashlib.sha256(json.dumps({
+        "scene_id": scene_id, "prompt": prompt, "duration": duration, "seed": seed,
+        "steps": LTX13B_STEPS, "fps": LTX13B_FPS, "width": WIDTH, "height": HEIGHT,
+        "workflow": "ltx13b_t2v_v1",  # 그래프 구조 바뀌면 캐시 무효화용 버전 문자열
+    }, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
+
+def _i2v_fallback_request_key(
+    scene_id: int, prompt: str, matched_image: str, duration: float, seed: int | None,
+) -> str:
+    return hashlib.sha256(json.dumps({
+        "scene_id": scene_id, "prompt": prompt, "matched_image": matched_image,
+        "duration": duration, "seed": seed, "steps": LTX13B_STEPS, "fps": LTX13B_FPS,
+        "width": WIDTH, "height": HEIGHT, "workflow": "ltx13b_i2v_fallback_v1",
+    }, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
+
 async def generate_i2v_oneshot(image_bytes: bytes, prompt: str, seed: int | None = None) -> dict:
     """:8700 /i2v 단발샷 (LTX-Video-13B-distilled, ComfyUI :8188 프록시).
     job과 무관한 단발 호출 — base64 webp로 바로 반환."""
