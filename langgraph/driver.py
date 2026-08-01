@@ -67,8 +67,11 @@ def _install_fakes():
         )
         return str(out)
 
-    async def fake_video(job_id, scene_id, prompt, mode, matched_image,
-                         duration=2.0, seed=None, num_frames=None):
+    async def fake_t2v(job_id, scene_id, prompt, duration=2.0, seed=None, force_new=False):
+        return _fake_clip(job_id, scene_id)
+
+    async def fake_i2v_fallback(job_id, scene_id, prompt, matched_image,
+                                duration=2.0, seed=None, force_new=False):
         return _fake_clip(job_id, scene_id)
 
     async def fake_standin(job_id, scene_id, prompt, ref_image, duration=2.0, seed=None, force_new=False):
@@ -89,7 +92,8 @@ def _install_fakes():
         return {scene["id"]: _fake_clip(job_id, scene["id"]) for scene in scenes}
 
     tools.call_llm = fake_llm
-    tools.call_video = fake_video
+    tools.generate_t2v_clip = fake_t2v
+    tools.generate_i2v_fallback_clip = fake_i2v_fallback
     tools.generate_standin_clip = fake_standin
     tools.generate_t2i_image = fake_t2i_image
     tools.generate_ltx_faceid_batch = fake_ltx_faceid_batch
