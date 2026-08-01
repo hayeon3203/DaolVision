@@ -67,10 +67,16 @@ def test_injection_and_style_invariant():
 
 
 def test_regen_skips_lighting_llm():
-    """모든 씬이 이미 lighting을 가지면(재생성) 조명 LLM 재호출 생략."""
+    """모든 씬이 이미 lighting/setting을 가지면(재생성) 조명 LLM 재호출 생략.
+
+    node_generate_prompts의 have_ctx 체크(nodes.py)는 lighting과 setting을
+    모두 요구한다 — 재조명 LLM 호출 한 번이 둘 다 채우므로, 재생성 스킵
+    조건도 둘 다 이미 있을 때만 성립해야 부분 상태로 재호출을 건너뛰지 않는다.
+    """
     state = _base_state()
     for s in state["scenes"]:
         s["lighting"] = "preset cue"
+        s["setting"] = "preset setting"
 
     calls = {"lighting": 0}
 
