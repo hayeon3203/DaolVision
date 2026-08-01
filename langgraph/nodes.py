@@ -12,7 +12,7 @@ import shutil
 import time
 import uuid
 
-from langgraph.types import interrupt, Command, Send
+from langgraph.types import interrupt, Command, Send, Overwrite
 from langgraph.graph import END
 
 from state import GraphState, Scene
@@ -761,33 +761,51 @@ def _order_scenes_for_generation(scenes: list[Scene]) -> list[tuple[int, Scene]]
     return sorted(enumerate(scenes), key=lambda item: (_generation_cache_key(item[1]), item[0]))
 
 
-def node_dispatch_generation(state: GraphState) -> list[Send]:
+def node_dispatch_generation(state: GraphState) -> list[Send] | str:
     """
-    3-1: Send API로 씬별 생성을 병렬 fan-out.
-    regen_target_ids가 있으면 해당 씬만, 없으면 전체 씬 대상.
+    3-1: Send API로 비-LTX_FACEID 씬만 병렬 fan-out (LTX_FACEID는 node_generate_ltx_batch가
+    이미 배치로 생성·병합했으므로 제외 — 다시 보내면 중복 생성됨).
+    regen_target_ids가 있으면 해당 씬만, 없으면 전체 비-LTX_FACEID 씬 대상.
     실제 생성 순서는 같은 mode/ref끼리 묶어 ComfyUI 캐시 재사용률을 높인다.
+    폴백 씬이 하나도 없으면(전부 LTX_FACEID) node_merge_clip_results를 거치지 않고
+    곧장 checkpoint로 라우팅한다 — 빈 Send 리스트는 어떤 후속 노드도 스케줄하지 않아
+    fan-in이 트리거되지 않는 정도가 아니라 그래프 실행이 아예 멈춘다(잡이 조용히
+    idle로 정지) — 반드시 별도 처리해야 한다.
     """
-    targets = state.get("regen_target_ids")
+    target_ids = state.get("regen_target_ids")
     scenes_to_run = (
-        [s for s in state["scenes"] if s["id"] in targets]
-        if targets else state["scenes"]
+        [s for s in state["scenes"] if s["id"] in target_ids]
+        if target_ids else state["scenes"]
     )
+    scenes_to_run = [s for s in scenes_to_run if s.get("mode") != "LTX_FACEID"]
+    if not scenes_to_run:
+        return "node_checkpoint_clip_approval"
     scenes_to_run = [s for _, s in _order_scenes_for_generation(scenes_to_run)]
     job_id = state["job_id"]
-    return [Send("node_generate_one_clip",
-                 {"scene": s, "job_id": job_id, "seed": scene_seed(job_id, s["id"])})
+    return [Send("node_generate_one_clip", {
+                "scene": s,
+                "job_id": job_id,
+                "seed": None if target_ids else scene_seed(job_id, s["id"]),
+                "force_new": bool(target_ids),
+            })
             for s in scenes_to_run]
 
 
 async def node_generate_ltx_batch(state: GraphState) -> dict:
-    """3-1: Face-ID 씬을 한 큐 배치로 제출해 LTX 모델 로드는 작업당 한 번만 수행한다."""
+    """3-1: Face-ID 씬만 한 큐 배치로 제출해 LTX 모델 로드는 작업당 한 번만 수행한다.
+    비-LTX_FACEID 폴백 씬은 이 노드가 직접 처리하지 않고, 뒤따르는 conditional edge
+    (node_dispatch_generation → Send fan-out)로 넘긴다 — 씬별로 독립된 그래프 태스크로
+    유지해야 /status가 배치 전체가 끝나기 전에 완료된 클립을 부분적으로 노출할 수 있다
+    (SC1, langgraph/tests/test_status_clips.py). regen_target_ids는 여기서 지우지
+    않는다 — node_dispatch_generation이 같은 값을 읽어서 regen 대상만 필터링해야 하기
+    때문(node_merge_clip_results가 최종적으로 지운다 — 단, 전부 LTX_FACEID면 이 경로를
+    건너뛰어 stale하게 남는다. 다음 regen이 Command(update=...)로 덮어쓰므로 무해하다)."""
     target_ids = set(state.get("regen_target_ids") or [])
     targets = [
         scene for scene in state["scenes"]
         if not target_ids or scene["id"] in target_ids
     ]
     face_scenes = [scene for scene in targets if scene.get("mode") == "LTX_FACEID"]
-    fallback_scenes = [scene for scene in targets if scene.get("mode") != "LTX_FACEID"]
 
     batch_payload = [
         {
@@ -810,29 +828,13 @@ async def node_generate_ltx_batch(state: GraphState) -> dict:
             "quality_flag": "pending",
         })
 
-    # 비인간/무참조 씬은 기존 생성 경로를 유지한다.
-    # 같은 mode/ref끼리 묶어 ComfyUI 캐시 재사용률을 높인다 (node_dispatch_generation과 동일 원칙).
-    if fallback_scenes:
-        fallback_scenes = [s for _, s in _order_scenes_for_generation(fallback_scenes)]
-        fallback_results = await asyncio.gather(*[
-            node_generate_one_clip({
-                "scene": scene,
-                "job_id": state["job_id"],
-                "seed": None if target_ids else scene_seed(state["job_id"], scene["id"]),
-                "force_new": bool(target_ids),
-            })
-            for scene in fallback_scenes
-        ])
-        generated.extend(
-            result["clip_results"][0] for result in fallback_results
-        )
-
     by_id = {scene["id"]: scene for scene in generated}
     merged = [by_id.get(scene["id"], scene) for scene in state["scenes"]]
+    # clip_results는 Annotated[list, operator.add]라 그냥 []를 쓰면 existing + [] (no-op)이
+    # 되어 리셋되지 않는다 — Overwrite로 감싸야 실제로 비워진다.
     return {
         "scenes": merged,
-        "clip_results": [],
-        "regen_target_ids": [],
+        "clip_results": Overwrite([]),
         "phase": "generating",
     }
 
@@ -893,10 +895,14 @@ async def node_generate_one_clip(payload: dict) -> dict:
 
 
 def node_merge_clip_results(state: GraphState) -> dict:
-    """fan-in 이후 scenes를 최신 clip_results로 갱신 (재생성된 씬만 덮어쓰기)"""
+    """fan-in 이후 scenes를 최신 clip_results로 갱신 (재생성된 씬만 덮어쓰기)
+    clip_results는 Annotated[list, operator.add]라 []를 그대로 반환하면 existing + []
+    (no-op)이라 실제로 비워지지 않는다 — 다음 생성 사이클(regen)에서 이전 사이클 항목이
+    남아 /status의 clips_done/clips가 부풀거나 중복 URL을 노출한다. Overwrite로 감싸
+    실제 리셋을 강제한다."""
     result_by_id = {s["id"]: s for s in state["clip_results"]}
     merged = [result_by_id.get(s["id"], s) for s in state["scenes"]]
-    return {"scenes": merged, "clip_results": [], "regen_target_ids": [], "phase": "generating"}
+    return {"scenes": merged, "clip_results": Overwrite([]), "regen_target_ids": [], "phase": "generating"}
 
 
 def node_checkpoint_clip_approval(state: GraphState) -> Command:

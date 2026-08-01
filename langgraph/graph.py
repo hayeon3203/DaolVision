@@ -73,11 +73,14 @@ def build_graph():
     # 사람 참조 씬을 LTX_FACEID로 분류한 뒤 배치 생성으로 넘긴다(앵커 없음, 3.2와 동일 배선).
     g.add_edge("node_generate_prompts", "node_classify_faceid_scenes")
     g.add_edge("node_classify_faceid_scenes", "node_generate_ltx_batch")
-    g.add_edge("node_generate_ltx_batch", "node_checkpoint_clip_approval")
-    # node_generate_one_clip/node_merge_clip_results는 그래프 엣지로는 도달 불가(dead edge).
-    # 비-LTX_FACEID 폴백 씬은 node_generate_ltx_batch가 node_generate_one_clip을
-    # asyncio.gather로 직접 인프로세스 호출해 처리하고 스스로 병합한다 — 이 엣지를 타지 않음.
-    # 두 노드/엣지는 등록 구조 완결성 유지 목적으로만 남겨둔다.
+    # LTX_FACEID 배치 완료 후, 남은 비-LTX_FACEID 폴백 씬만 Send로 개별 fan-out한다.
+    # 씬별 독립 그래프 태스크로 유지해야 /status가 부분완성 클립을 노출할 수 있다(SC1).
+    # 폴백 씬이 없으면 node_dispatch_generation이 곧장 checkpoint로 라우팅한다.
+    g.add_conditional_edges(
+        "node_generate_ltx_batch",
+        nodes.node_dispatch_generation,
+        ["node_generate_one_clip", "node_checkpoint_clip_approval"],
+    )
     g.add_edge("node_generate_one_clip", "node_merge_clip_results")
     g.add_edge("node_merge_clip_results", "node_checkpoint_clip_approval")
     # node_checkpoint_clip_approval도 Command(goto=...)로 자체 분기
