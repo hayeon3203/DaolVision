@@ -103,7 +103,7 @@
 | Task | 내용 | DoD | Acceptance | Depends | Status | GH |
 |------|------|-----|------------|---------|--------|----|
 | 6.1 | S2 Flux Kontext 6스타일 (4.5 style_presets.py 재사용: cinematic/anime/cyberpunk/lowpoly/claymation/watercolor, 신규 정의 안 함) | 얼굴사진→6스타일 이미지 출력, :8700 /i2i 엔드포인트가 style_prefix() 그대로 호출 | curl -sf -X POST http://localhost:8700/i2i -F style=cinematic -F image=@test.jpg | grep -qi image | 4.1, 4.5 | cc:완료 [a6e5e3b] | - |
-| 6.2 | S2→S1 캐릭터 연결 (우주비행사 결과가 S1 Face-ID ref로 진입) | S2 출력이 S1 job ref_images로 전달, driver --dry PASS | cd langgraph && ./.venv/bin/python driver.py --dry | 6.1, 5.2 | cc:완료 [pending] | - |
+| 6.2 | S2→S1 캐릭터 연결 (우주비행사 결과가 S1 Face-ID ref로 진입) | S2 출력이 S1 job ref_images로 전달, driver --dry PASS | cd langgraph && ./.venv/bin/python driver.py --dry | 6.1, 5.2 | cc:완료 [920befb] | - |
 | 6.3 | LocalAI 프론트 4카테고리(Agent/I2V 단발샷/I2I/TTS) → :8700 배선 (API 콜 리라이트, 2026-07-31 카테고리 개편 반영 — 독립 T2I 폐지) [tdd:skip:frontend-wiring] | Agent의 영상 나레이션은 /tts/narration, 독립 TTS 카테고리는 /tts/clone, I2V 단발샷 카테고리는 /i2v에 도달하고 LocalAI 추론백엔드 미사용 | - | 2.1, 4.1, 4.2, 4.2.1, 4.6 | cc:TODO | - |
 | 6.4 | Agent 노드 스텝퍼 컴포넌트 (phase→스텝 하이라이트) [tdd:skip:ui-component] | phase 값으로 5스텝 하이라이트 렌더, 챗 위 표시 | - | 6.3, 5.5 | cc:TODO | - |
 | 6.5 | Wan2.2(:8500, 중국원산) 백엔드 완전 제거 → T2V/I2V 폴백을 LTX-13B-distilled(:8188)로 통합 (docs/model-selection.md 비중국 원산 원칙 위반 해소, [[Duplicate, don't migrate]]) | call_video/WAN_URL 삭제, 신규 모델 다운로드 없음, driver --dry PASS, 유닛테스트 PASS, 라이브 job 1회 실측(이미지 없는 씬 포함) | cd langgraph && ./.venv/bin/python tests/test_wan_removal.py && ./.venv/bin/python driver.py --dry | 4.6 | cc:완료 [f6ac142] | - |
