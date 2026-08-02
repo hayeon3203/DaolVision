@@ -62,7 +62,8 @@
     "gwI2v": "I2V One-shot",
     "gwI2i": "I2I",
     "gwTts": "TTS (Clone)",
-    "gwT2i": "T2I"
+    "gwT2i": "T2I",
+    "gwDashboard": "Dashboard"
   },
   "footer": {
     "github": "GitHub",

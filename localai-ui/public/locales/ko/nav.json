@@ -61,7 +61,8 @@
     "gwI2v": "I2V 단발샷",
     "gwI2i": "I2I",
     "gwTts": "TTS (클론)",
-    "gwT2i": "T2I"
+    "gwT2i": "T2I",
+    "gwDashboard": "대시보드"
   },
   "footer": {
     "github": "GitHub",

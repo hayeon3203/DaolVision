@@ -126,7 +126,7 @@
 
 | Task | 내용 | DoD | Acceptance | Depends | Status | GH |
 |------|------|-----|------------|---------|--------|----|
-| 7.1 | 자립 대시보드 UI (배지 3종 + 실행트레이스 + 메모리게이지) [tdd:skip:ui-component] | 3위젯 렌더, /dashboard/status 폴링 표시 | - | 4.3, 6.3 | cc:TODO | - |
+| 7.1 | 자립 대시보드 UI (배지 3종 + 실행트레이스 + 메모리게이지) [tdd:skip:ui-component] | 3위젯 렌더, /dashboard/status 폴링 표시 | - | 4.3, 6.3 | cc:완료 | - |
 | 7.2 | External calls:0 실측 (ss 아웃바운드 폴링) [tdd:required] | 아웃바운드 카운터 함수, 유닛테스트(로컬only=0) | cd langgraph && ./.venv/bin/python tests/test_external_calls.py | 4.3 | cc:완료 [e5d1206] | - |
 | 7.3 | Cosmos-Predict2-2B I2V 벤치 [tdd:skip:benchmark] | (2026-07-31 판정: 공식 모델카드 확인 결과 identity 보존 기능 없어 I2V 용도 최종 제외, docs/spikes/3.8 참고 — 이 태스크는 채택 불가로 종료) | - | 3.2 | cc:완료 [8eb3ceb] | - |
 | 7.6 | T2V 단발샷 카테고리 스파이크 (Cosmos-Predict2-2B/Cosmos 3 Nano, 추후·낮은 우선순위) [tdd:skip:benchmark] | Cosmos-Predict2-2B(2B)와 Cosmos 3 Nano(16B, 2026-06-01 출시, 8B dense 트랜스포머 기반. bf16 weight만 ~32GB로 GB10 119GB엔 수치상 들어가나 ARM64+Blackwell 커널 호환 미검증. Qwen3-VL 8B 아키텍처 기반이라 R10 국적 배점 계보상 애매하지만 identity 불필요한 순수 T2V 용도라 무방) 둘 다 단발샷 생성 실측·비교, model-selection-t2v.md 신설·기록 | - | 3.8 | cc:TODO | - |

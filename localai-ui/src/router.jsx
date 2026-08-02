@@ -88,6 +88,7 @@ const GatewayI2V = page('gw-i2v', () => import('./pages/GatewayI2V'))
 const GatewayI2I = page('gw-i2i', () => import('./pages/GatewayI2I'))
 const GatewayTTS = page('gw-tts', () => import('./pages/GatewayTTS'))
 const GatewayT2I = page('gw-t2i', () => import('./pages/GatewayT2I'))
+const GatewayDashboard = page('gw-dashboard', () => import('./pages/GatewayDashboard'))
 
 import ConsoleLayout from './components/console/ConsoleLayout'
 import { buildConsole, operateConsole } from './components/console/consoleConfig'
@@ -131,6 +132,7 @@ const appChildren = [
   { path: 'gw-i2i', element: <GatewayI2I /> },
   { path: 'gw-tts', element: <GatewayTTS /> },
   { path: 'gw-t2i', element: <GatewayT2I /> },
+  { path: 'gw-dashboard', element: <GatewayDashboard /> },
 
   // Build console — Automation, Training, and Recognition groups share one rail.
   // Only the section landing pages live under the rail; deep create/edit/chat

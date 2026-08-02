@@ -41,6 +41,7 @@ const sections = [
       { path: '/app/gw-i2i', icon: 'fas fa-palette', labelKey: 'items.gwI2i' },
       { path: '/app/gw-tts', icon: 'fas fa-headphones', labelKey: 'items.gwTts' },
       { path: '/app/gw-t2i', icon: 'fas fa-image', labelKey: 'items.gwT2i' },
+      { path: '/app/gw-dashboard', icon: 'fas fa-gauge-high', labelKey: 'items.gwDashboard' },
     ],
   },
 ]

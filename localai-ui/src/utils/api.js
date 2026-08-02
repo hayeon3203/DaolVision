@@ -712,4 +712,6 @@ export const gatewayApi = {
     body: JSON.stringify({ payload }),
   }),
   cancelJob: (jobId) => gatewayFetchJSON(`/jobs/${encodeURIComponent(jobId)}/cancel`, { method: 'POST' }),
+  // 자립 대시보드(Task 7.1) — offline/trace/gpu/external_calls (langgraph/dashboard.py)
+  dashboardStatus: () => gatewayFetchJSON('/dashboard/status'),
 }
