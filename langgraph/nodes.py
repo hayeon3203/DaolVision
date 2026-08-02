@@ -595,6 +595,20 @@ async def _make_style_bible(state: GraphState) -> str:
               if has_face_ref else ""
           )
 
+          # 앵커 이미지도 Face-ID도 없는 순수 T2V job(예: job 4265fba0)은 이 스타일을
+          # 고정할 게 아무것도 없어 "flat vector linework... characterless" 같은 2D
+          # 화풍으로 표류한다 — 이 플랫폼의 기본 정체성(photoreal cinematic)을 명시적
+          # 기본값으로 못박는다.
+          + (
+              "No reference image constrains this style. Default to photorealistic, "
+              "cinematic live-action rendering — real-world materials, natural lighting, "
+              "photographic texture and detail density — matching this platform's "
+              "established visual identity. Only depart from photoreal if the story text "
+              "itself explicitly names an illustrated, animated, or stylized medium (e.g. "
+              "anime, cartoon, watercolor, comic, flat vector). "
+              if not image_query and not has_face_ref else ""
+          )
+
           + "Define ONLY the invariant visual rules that stay IDENTICAL across every "
           "scene (the art style / 화풍): rendering technique, line and edge treatment, "
           "shape language, surface materials, texture density, environmental detail "
@@ -717,8 +731,9 @@ async def node_generate_prompts(state: GraphState) -> dict:
                or scene.get("lighting")
                or _mood_to_lighting(scene.get("mood", "neutral")))
 
+        has_human_subject = bool(standin or subject_ref or scene.get("subject_type") == "human")
         raw_prompt = _strip_echoed_bible(tools.clean_llm_prompt(
-            await tools.call_llm(_scene_prompt_system(standin or subject_ref, bool(wardrobe)),
+            await tools.call_llm(_scene_prompt_system(standin or subject_ref, bool(wardrobe), has_human_subject),
                                  _scene_prompt_user(scene, bible, wardrobe, cue))), bible)
 
         if subject_ref:
@@ -796,22 +811,38 @@ def node_classify_faceid_scenes(state: GraphState) -> dict:
     return {"scenes": classified, "phase": "anchoring"}
 
 
-def _scene_prompt_system(standin: bool, has_wardrobe: bool = False) -> str:
+def _scene_prompt_system(standin: bool, has_wardrobe: bool = False, has_human_subject: bool = True) -> str:
     """씬 프롬프트 생성용 system 프롬프트. 구도/자세/표정/카메라를 '맥락에 맞게' 요구.
 
     핵심: 표정(facial expression)과 감정, 그리고 '정적이지 않은' 동적 동작을 명시적으로
     요구한다 — 이게 없으면 diffusion(특히 Stand-In)이 무표정·부동자세로 수렴한다.
+
+    has_human_subject=False(씬 subject_type != "human")면 인물 묘사 지시를 아예 빼고
+    "사람을 지어내지 마라"로 뒤집는다 — 안 그러면 "인물 하나 없이" 같은 무인물 씬에서도
+    LLM이 항상 (2)(3) 지시를 채우려고 "a lone figure", "a figure hunched over" 같은
+    임의의 사람을 만들어낸다(job 4265fba0 실측 — subject_type 전부 nonhuman인데
+    4씬 전부 사람이 등장).
     """
+    subject_clause = (
+        "(2) the character's specific body pose, gesture and action; (3) the character's FACIAL "
+        "EXPRESSION and emotional state matching the mood; "
+        if has_human_subject else
+        "(2)-(3) this scene has NO human character — do NOT invent a person, figure, silhouette, "
+        "bystander, or any human presence anywhere in the shot; describe only the environment, "
+        "objects, machinery, weather, and any named non-human subject (animal, mascot, robot, "
+        "vehicle) performing its own action; "
+    )
     base = (
         "You are a prompt engineer for a video diffusion model. "
         "Rewrite the scene into ONE vivid English prompt that specifies, all fitting the "
         "scene's context and mood: (1) shot size and camera angle (e.g. close-up, wide, low "
-        "angle) — vary it per scene, do not default to a frontal medium shot; (2) the "
-        "character's specific body pose, gesture and action; (3) the character's FACIAL "
-        "EXPRESSION and emotional state matching the mood; (4) camera movement. "
-        "Favor natural, dynamic motion and a lively expression — avoid static, stiff or "
-        "frozen poses and blank faces. "
-        "CRITICAL: keep every specific named subject, object, or place mentioned in the "
+        "angle) — vary it per scene, do not default to a frontal medium shot; "
+        + subject_clause +
+        "(4) camera movement. "
+        + ("Favor natural, dynamic motion and a lively expression — avoid static, stiff or "
+           "frozen poses and blank faces. " if has_human_subject else
+           "Favor natural, dynamic motion in the environment/subject — avoid static, frozen shots. ")
+        + "CRITICAL: keep every specific named subject, object, or place mentioned in the "
         "scene text explicit in your English prompt — if the scene names something concrete "
         "(e.g. Earth, a spaceship, a specific landmark), your prompt must name that exact "
         "thing too, not a vague substitute or generic background detail. Never drop it. "

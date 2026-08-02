@@ -164,7 +164,8 @@ async def recover_job(job_id: str):
     snapshot = await graph.aget_state(config)
     interrupts = [i.value for t in snapshot.tasks for i in (getattr(t, "interrupts", ()) or ())]
     if interrupts:
-        return {"job_id": job_id, "status": "waiting_for_approval", "checkpoint": interrupts[0]}
+        return {"job_id": job_id, "status": "waiting_for_approval",
+                "checkpoint": _checkpoint_for_client(interrupts[0])}
     if not snapshot.next:
         vals = snapshot.values or {}
         return {"job_id": job_id, "status": "done" if vals.get("phase") == "done" else "idle",
@@ -208,7 +209,8 @@ async def job_status(job_id: str):
     # resume 직후엔 그래프가 인터럽트를 지나기 전까지 체크포인터에 구 인터럽트가
     # 잠깐 남는다 — 실행 중 태스크가 있으면 그 인터럽트는 stale이므로 running으로 취급.
     if interrupts and not resuming:  # 사람 승인 대기 (interrupt 발생)
-        return {"job_id": job_id, "status": "waiting_for_approval", "checkpoint": interrupts[0]}
+        return {"job_id": job_id, "status": "waiting_for_approval",
+                "checkpoint": _checkpoint_for_client(interrupts[0])}
     if resuming:
         scenes = vals.get("scenes") or []
         results = vals.get("clip_results") or []
@@ -412,6 +414,23 @@ def _to_url(path: str | None) -> str | None:
     except ValueError:
         return None
     return f"/files/{rel}"
+
+
+def _checkpoint_for_client(checkpoint: dict) -> dict:
+    """interrupt() payload를 클라이언트로 보내기 전에 clip_path(서버 로컬 절대경로)를
+    브라우저가 바로 재생 가능한 clip_url(/files/...)로 보강한다. 3-5_clip_approval에서
+    사람이 각 씬 클립을 실제로 보고 승인/재생성 판단을 해야 하는데, clip_path 그대로는
+    호스트 파일시스템 경로라 <video src>로 못 쓴다."""
+    scenes = checkpoint.get("scenes")
+    if not scenes:
+        return checkpoint
+    return {
+        **checkpoint,
+        "scenes": [
+            {**s, "clip_url": _to_url(s.get("clip_path"))} if s.get("clip_path") else s
+            for s in scenes
+        ],
+    }
 
 
 if __name__ == "__main__":
