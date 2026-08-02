@@ -58,7 +58,7 @@
     "settings": "설정",
     "api": "API",
     "gwAgent": "에이전트",
-    "gwI2v": "I2V 단발샷",
+    "gwT2v": "T2V 단발샷",
     "gwI2i": "I2I",
     "gwTts": "TTS (클론)",
     "gwT2i": "T2I",

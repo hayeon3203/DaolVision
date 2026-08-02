@@ -42,6 +42,7 @@ VISION_MODEL = os.environ.get("AGENT_VISION_MODEL", "gemma4:latest")  # 참조 �
 T2I_URL = os.environ.get("AGENT_T2I_URL", "http://127.0.0.1:8501")
 KOKORO_URL = os.environ.get("AGENT_KOKORO_URL", "http://127.0.0.1:8503")
 CHATTERBOX_URL = os.environ.get("AGENT_CHATTERBOX_URL", "http://127.0.0.1:8504")
+COSMOS3NANO_URL = os.environ.get("AGENT_COSMOS3NANO_URL", "http://127.0.0.1:8505")
 CHATTERBOX_NARRATION_REFERENCE = Path(
     os.environ.get(
         "AGENT_CHATTERBOX_NARRATION_REFERENCE",
@@ -860,64 +861,37 @@ async def generate_i2v_fallback_clip(
     return await _generate_ltx_job_clip(job_id, scene_id, graph, request_key, force_new)
 
 
-async def generate_i2v_oneshot(image_bytes: bytes, prompt: str, seed: int | None = None) -> dict:
-    """:8700 /i2v 단발샷 (LTX-Video-13B-distilled, ComfyUI :8188 프록시).
-    job과 무관한 단발 호출 — base64 webp로 바로 반환."""
-    normalized, img_width, img_height = _normalize_i2v_input(image_bytes)
-    width, height = _ltx13b_dims(img_width, img_height)
+async def generate_t2v_cosmos3nano(
+    prompt: str,
+    seed: int | None = None,
+    width: int = 640,
+    height: int = 480,
+    num_frames: int = 49,
+) -> dict:
+    """:8700 /t2v 단발샷 (Cosmos3-Nano, t2v/cosmos3nano 독립 서버 프록시, Task 7.6).
+    job과 무관한 단발 호출 — 이미지 입력 없이 프롬프트만으로 영상 1개, base64 mp4로
+    바로 반환. 별도 상주 프로세스(:8505)라 ComfyUI(:8188)와 GPU 메모리를 나눠 쓰므로
+    llm/t2i/i2v/tts와 같은 batch 직렬화에 태운다(oom_orchestrator 참고)."""
     if seed is None:
         seed = int(time.time())
 
-    timeout = httpx.Timeout(connect=10.0, read=180.0, write=60.0, pool=None)
-    async with oom.phase("i2v"), httpx.AsyncClient(timeout=timeout) as client:
-        up = await client.post(
-            f"{COMFYUI_URL}/upload/image",
-            files={"image": ("i2v_oneshot_input.png", normalized, "image/png")},
-            data={"overwrite": "true"},
+    timeout = httpx.Timeout(connect=10.0, read=600.0, write=60.0, pool=None)
+    async with oom.phase("t2v"), httpx.AsyncClient(timeout=timeout) as client:
+        resp = await client.post(
+            f"{COSMOS3NANO_URL}/generate",
+            json={
+                "prompt": prompt,
+                "seed": seed,
+                "width": width,
+                "height": height,
+                "num_frames": num_frames,
+            },
         )
-        up.raise_for_status()
-        uj = up.json()
-        image_name = f"{uj['subfolder']}/{uj['name']}" if uj.get("subfolder") else uj["name"]
-
-        graph = _build_ltx13b_graph(
-            prompt=prompt, image_name=image_name, width=width, height=height, seed=seed)
-        resp = await client.post(f"{COMFYUI_URL}/prompt", json={"prompt": graph})
         resp.raise_for_status()
-        prompt_id = resp.json()["prompt_id"]
-
-        started_at = time.time()
-        history_item = None
-        while history_item is None:
-            if time.time() - started_at > STANDIN_QUEUE_TIMEOUT:
-                raise TimeoutError("I2V 단발샷이 제한 시간 내 완료되지 않음")
-            history = (await client.get(f"{COMFYUI_URL}/history/{prompt_id}")).json()
-            if prompt_id in history:
-                history_item = history[prompt_id]
-            else:
-                await asyncio.sleep(2.0)
-
-        if history_item.get("status", {}).get("status_str") == "error":
-            raise RuntimeError(
-                f"I2V 단발샷 실행 오류 {history_item.get('status', {}).get('messages')}"
-            )
-
-        media = None
-        for node_out in history_item.get("outputs", {}).values():
-            media = node_out.get("videos") or node_out.get("gifs") or node_out.get("images")
-            if media:
-                break
-        if not media:
-            raise RuntimeError("I2V 단발샷 출력 영상 없음")
-        output = media[0]
-        video = await client.get(f"{COMFYUI_URL}/view", params={
-            "filename": output["filename"],
-            "subfolder": output.get("subfolder", ""),
-            "type": output.get("type", "output"),
-        })
-        video.raise_for_status()
+        video_bytes = resp.content
 
     return {
-        "video_base64": base64.b64encode(video.content).decode(),
+        "video_base64": base64.b64encode(video_bytes).decode(),
         "width": width,
         "height": height,
     }

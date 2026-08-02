@@ -99,6 +99,14 @@ class T2IRequest(BaseModel):
     seed: int | None = None
 
 
+class T2VRequest(BaseModel):
+    prompt: str
+    width: int = 640
+    height: int = 480
+    num_frames: int = 49
+    seed: int | None = None
+
+
 class TTSNarrationRequest(BaseModel):
     text: str
     speed: float = Field(default=1.0, ge=0.5, le=2.0)
@@ -263,24 +271,20 @@ async def t2i(req: T2IRequest):
         raise HTTPException(status_code=502, detail=f"T2I backend unreachable: {e}")
 
 
-@app.post("/i2v")
-async def i2v_oneshot(
-    prompt: str = Form(...),
-    image: UploadFile = File(...),
-    seed: int | None = Form(None),
-):
-    """단발샷 I2V (LTX-Video-13B-distilled, ComfyUI :8188 프록시). job과 무관 —
-    이미지+프롬프트 한 번 받아 base64 영상(webp) 반환."""
-    prompt = prompt.strip()
+@app.post("/t2v")
+async def t2v_oneshot(req: T2VRequest):
+    """단발샷 T2V (Cosmos3-Nano, t2v/cosmos3nano 독립 서버 :8505 프록시, Task 7.6).
+    job과 무관 — 프롬프트만으로 영상 1개, base64 mp4 반환. 이미지 입력 없음(이전
+    I2V 단발샷 카테고리를 대체 — Cosmos-Predict2-2B는 7.3에서 I2V identity 보존
+    기능 없음 확인돼 채택 불가 종료, T2V 용도는 identity 무관이라 무방)."""
+    prompt = req.prompt.strip()
     if not prompt:
         raise HTTPException(status_code=400, detail="prompt is required")
-    image_bytes = await image.read()
-    if not image_bytes:
-        raise HTTPException(status_code=422, detail="image is required")
     try:
-        return await tools.generate_i2v_oneshot(image_bytes, prompt, seed)
+        return await tools.generate_t2v_cosmos3nano(
+            prompt, req.seed, req.width, req.height, req.num_frames)
     except httpx.HTTPError as e:
-        raise HTTPException(status_code=502, detail=f"I2V backend unreachable: {e}")
+        raise HTTPException(status_code=502, detail=f"T2V backend unreachable: {e}")
     except (ValueError, RuntimeError, TimeoutError) as e:
         raise HTTPException(status_code=502, detail=str(e))
 

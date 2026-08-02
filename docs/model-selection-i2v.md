@@ -62,8 +62,8 @@ twin/드리프트 없음).
 **Cosmos-Predict2-2B는 I2V identity 용도로 최종 제외** — 공식 모델 카드에
 identity 보존 관련 언급 없고 "입력을 정확히 안 따라갈 수 있음" 명시.
 Cosmos3-Super-Image2Video(64B)는 8×H200급 멀티GPU 전제라 GB10 1노드로는
-애초에 불가. Cosmos는 identity 불필요한 순수 T2V 용도로 재검토 예정(별도
-카테고리, `model-selection-t2v.md` 신설 시 정리 — 아직 미착수).
+애초에 불가. Cosmos는 identity 불필요한 순수 T2V 용도로 재검토 — Task 7.6에서
+Cosmos3-Nano로 채택 완료, 상세는 [T2V 선택](model-selection-t2v.md) 참고.
 
 **남은 검증**: 종횡비 버그(테스트 스크립트가 세로 사진에 가로 해상도
 하드코딩해 얼굴 상단 크롭됨, 모델 결함 아님) 수정 후 재검증, 정면 외

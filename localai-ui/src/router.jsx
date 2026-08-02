@@ -84,7 +84,7 @@ const Account = page('account', () => import('./pages/Account'))
 // LocalAI 자체 추론 백엔드(모델 레지스트리)와 완전히 분리된 별도 페이지.
 // 'gw-' 접두사: 기존 image/video/tts 세그먼트(모델 레지스트리용)와 경로 충돌 방지.
 const GatewayAgent = page('gw-agent', () => import('./pages/GatewayAgent'))
-const GatewayI2V = page('gw-i2v', () => import('./pages/GatewayI2V'))
+const GatewayT2V = page('gw-t2v', () => import('./pages/GatewayT2V'))
 const GatewayI2I = page('gw-i2i', () => import('./pages/GatewayI2I'))
 const GatewayTTS = page('gw-tts', () => import('./pages/GatewayTTS'))
 const GatewayT2I = page('gw-t2i', () => import('./pages/GatewayT2I'))
@@ -128,7 +128,7 @@ const appChildren = [
   // Task 6.3: anim-agent 게이트웨이(:8700) 카테고리 — LocalAI 콘솔 레일과 무관한
   // 독립 최상위 경로.
   { path: 'gw-agent', element: <GatewayAgent /> },
-  { path: 'gw-i2v', element: <GatewayI2V /> },
+  { path: 'gw-t2v', element: <GatewayT2V /> },
   { path: 'gw-i2i', element: <GatewayI2I /> },
   { path: 'gw-tts', element: <GatewayTTS /> },
   { path: 'gw-t2i', element: <GatewayT2I /> },

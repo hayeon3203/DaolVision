@@ -1,0 +1,8 @@
+# Cosmos3OmniPipeline is not in the diffusers PyPI release yet (as of the
+# 2026-06-01 Cosmos 3 launch) — needs the git main branch.
+diffusers @ git+https://github.com/huggingface/diffusers.git
+transformers>=5.11.0
+accelerate
+fastapi==0.139.0
+uvicorn==0.49.0
+imageio[ffmpeg]

@@ -59,7 +59,7 @@
     "settings": "Settings",
     "api": "API",
     "gwAgent": "Agent",
-    "gwI2v": "I2V One-shot",
+    "gwT2v": "T2V One-shot",
     "gwI2i": "I2I",
     "gwTts": "TTS (Clone)",
     "gwT2i": "T2I",

@@ -676,13 +676,15 @@ export const gatewayApi = {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   }),
-  // I2V 단발샷 카테고리 — POST /i2v (multipart), base64 영상 반환
-  i2v: (prompt, imageFile, seed) => {
-    const form = new FormData()
-    form.append('prompt', prompt)
-    form.append('image', imageFile)
-    if (seed !== '' && seed !== undefined && seed !== null) form.append('seed', seed)
-    return gatewayFetchJSON('/i2v', { method: 'POST', body: form })
+  // T2V 단발샷 카테고리 — POST /t2v (JSON), base64 영상 반환
+  t2v: (prompt, seed) => {
+    const body = { prompt }
+    if (seed !== '' && seed !== undefined && seed !== null) body.seed = Number(seed)
+    return gatewayFetchJSON('/t2v', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
   },
   // I2I 카테고리(얼굴사진→스타일 변환) — POST /i2i (multipart), base64 PNG 반환
   i2i: (style, imageFile, seed) => {

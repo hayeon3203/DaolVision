@@ -5,9 +5,13 @@ import ThemeToggle from './ThemeToggle'
 import LanguageSwitcher from './LanguageSwitcher'
 import { useAuth } from '../context/AuthContext'
 import { useBranding } from '../contexts/BrandingContext'
+import { useTheme } from '../contexts/ThemeContext'
 import { apiUrl } from '../utils/basePath'
 import { preloadRoute } from '../router'
 import { consoles, firstVisiblePath, consolePaths } from './console/consoleConfig'
+import daolvisionIcon from '../assets/daolvision-icon.png'
+import daolvisionLogoBlack from '../assets/daolvision-logo-black.png'
+import daolvisionLogoWhite from '../assets/daolvision-logo-white.png'
 
 const COLLAPSED_KEY = 'localai_sidebar_collapsed'
 const SECTIONS_KEY = 'localai_sidebar_sections'
@@ -37,7 +41,7 @@ const sections = [
     titleKey: 'sections.gateway',
     items: [
       { path: '/app/gw-agent', icon: 'fas fa-robot', labelKey: 'items.gwAgent' },
-      { path: '/app/gw-i2v', icon: 'fas fa-video', labelKey: 'items.gwI2v' },
+      { path: '/app/gw-t2v', icon: 'fas fa-video', labelKey: 'items.gwT2v' },
       { path: '/app/gw-i2i', icon: 'fas fa-palette', labelKey: 'items.gwI2i' },
       { path: '/app/gw-tts', icon: 'fas fa-headphones', labelKey: 'items.gwTts' },
       { path: '/app/gw-t2i', icon: 'fas fa-image', labelKey: 'items.gwT2i' },
@@ -98,6 +102,7 @@ export default function Sidebar({ isOpen, onClose }) {
   const [openSections, setOpenSections] = useState(loadSectionState)
   const { isAdmin, authEnabled, user, logout, hasFeature } = useAuth()
   const branding = useBranding()
+  const { theme } = useTheme()
   const navigate = useNavigate()
   const location = useLocation()
   const closeBtnRef = useRef(null)
@@ -189,10 +194,10 @@ export default function Sidebar({ isOpen, onClose }) {
         {/* Logo */}
         <div className="sidebar-header">
           <a href="./" className="sidebar-logo-link">
-            <img src={apiUrl(branding.logoHorizontalUrl)} alt={branding.instanceName} className="sidebar-logo-img" />
+            <img src={theme === 'light' ? daolvisionLogoBlack : daolvisionLogoWhite} alt={branding.instanceName} className="sidebar-logo-img" />
           </a>
           <a href="./" className="sidebar-logo-icon" title={branding.instanceName}>
-            <img src={apiUrl(branding.logoUrl)} alt={branding.instanceName} className="sidebar-logo-icon-img" />
+            <img src={daolvisionIcon} alt={branding.instanceName} className="sidebar-logo-icon-img" />
           </a>
           <button
             ref={closeBtnRef}
