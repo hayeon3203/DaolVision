@@ -421,20 +421,30 @@ def _to_url(path: str | None) -> str | None:
 
 
 def _checkpoint_for_client(checkpoint: dict) -> dict:
-    """interrupt() payload를 클라이언트로 보내기 전에 clip_path(서버 로컬 절대경로)를
-    브라우저가 바로 재생 가능한 clip_url(/files/...)로 보강한다. 3-5_clip_approval에서
-    사람이 각 씬 클립을 실제로 보고 승인/재생성 판단을 해야 하는데, clip_path 그대로는
-    호스트 파일시스템 경로라 <video src>로 못 쓴다."""
+    """interrupt() payload를 클라이언트로 보내기 전에 clip_path/gen_image_paths(서버 로컬
+    절대경로)를 브라우저가 바로 쓸 수 있는 /files/... URL로 보강한다. 3-5_clip_approval은
+    사람이 각 씬 클립을 실제로 보고 승인/재생성 판단을 해야 하고, 2-3_image_approval도
+    생성 이미지를 봐야 승인/재생성 판단이 가능한데 로컬 경로 그대로는 <img src>/<video src>로
+    못 쓴다."""
+    result = checkpoint
     scenes = checkpoint.get("scenes")
-    if not scenes:
-        return checkpoint
-    return {
-        **checkpoint,
-        "scenes": [
-            {**s, "clip_url": _to_url(s.get("clip_path"))} if s.get("clip_path") else s
-            for s in scenes
-        ],
-    }
+    if scenes:
+        result = {
+            **result,
+            "scenes": [
+                {**s, "clip_url": _to_url(s.get("clip_path"))} if s.get("clip_path") else s
+                for s in scenes
+            ],
+        }
+    gen_image_paths = checkpoint.get("gen_image_paths")
+    if gen_image_paths:
+        gen_image_urls = [_to_url(p) for p in gen_image_paths]
+        result = {
+            **result,
+            "gen_image_urls": gen_image_urls,
+            "gen_image_url": gen_image_urls[0] if gen_image_urls else None,
+        }
+    return result
 
 
 if __name__ == "__main__":

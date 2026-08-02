@@ -701,11 +701,13 @@ export const gatewayApi = {
     form.append('reference', referenceWavFile)
     return gatewayFetchBlob('/tts/clone', { method: 'POST', body: form })
   },
-  // Agent(S1) 카테고리 — 씬분할/승인/클립생성/나레이션(/tts/narration, 서버 내부 호출) 전 과정
-  startJob: (scriptText, refImageDataUris) => gatewayFetchJSON('/jobs', {
+  // Agent(S1) 카테고리 — 씬분할/승인/클립생성/나레이션(/tts/narration, 서버 내부 호출) 전 과정.
+  // imageRequest가 있으면 참조 이미지 없이 M2(T2I, FLUX.1-schnell) 분기로 진입한다(entry router,
+  // graph.py _entry_router: image_request 있고 ref_images 없으면 M2).
+  startJob: (scriptText, refImageDataUris, imageRequest) => gatewayFetchJSON('/jobs', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ script_text: scriptText, ref_images: refImageDataUris }),
+    body: JSON.stringify({ script_text: scriptText, ref_images: refImageDataUris, image_request: imageRequest || '' }),
   }),
   jobStatus: (jobId) => gatewayFetchJSON(`/jobs/${encodeURIComponent(jobId)}/status`),
   resumeJob: (jobId, payload) => gatewayFetchJSON(`/jobs/${encodeURIComponent(jobId)}/resume`, {

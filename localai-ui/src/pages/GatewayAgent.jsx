@@ -4,6 +4,7 @@ import LoadingSpinner from '../components/LoadingSpinner'
 import AgentPhaseStepper from '../components/AgentPhaseStepper'
 import AgentScenePreview from '../components/AgentScenePreview'
 import AgentClipPreview from '../components/AgentClipPreview'
+import AgentImagePreview from '../components/AgentImagePreview'
 import { gatewayApi, GATEWAY_BASE, fileToBase64 } from '../utils/api'
 
 // Task 6.3: Agent 카테고리(S1 — 텍스트 스토리 → 캐릭터 일관 영상 + 나레이션).
@@ -14,17 +15,11 @@ import { gatewayApi, GATEWAY_BASE, fileToBase64 } from '../utils/api'
 const POLL_MS = 3000
 const JOB_STORAGE_KEY = 'gwAgentJobId'
 
-// driver.py _auto_decision과 같은 매핑 — 흔한 게이트는 원클릭 승인.
-// 1-4(씬분할)는 AgentScenePreview, 3-5(클립승인)는 AgentClipPreview로 사람이 직접
-// 검토하므로 여기서 제외.
-function autoDecisionFor(checkpointName) {
-  if (checkpointName?.startsWith('2-3')) return { approved: true }
-  return null
-}
-
 export default function GatewayAgent() {
+  const [inputMode, setInputMode] = useState('upload') // 'upload' | 'describe'
   const [scriptText, setScriptText] = useState('')
   const [refFiles, setRefFiles] = useState([])
+  const [imageRequest, setImageRequest] = useState('')
   const [jobId, setJobId] = useState(null)
   const [status, setStatus] = useState(null)
   const [manualPayload, setManualPayload] = useState('{}')
@@ -61,12 +56,18 @@ export default function GatewayAgent() {
 
   const handleStart = async (e) => {
     e.preventDefault()
-    if (!scriptText.trim()) return
+    if (inputMode === 'describe' ? !imageRequest.trim() : !scriptText.trim()) return
     setStarting(true)
     setError(null)
     try {
-      const refImages = await Promise.all(refFiles.map(async (f) => `data:${f.type};base64,${await fileToBase64(f)}`))
-      const { job_id } = await gatewayApi.startJob(scriptText.trim(), refImages)
+      const refImages = inputMode === 'upload'
+        ? await Promise.all(refFiles.map(async (f) => `data:${f.type};base64,${await fileToBase64(f)}`))
+        : []
+      const { job_id } = await gatewayApi.startJob(
+        inputMode === 'upload' ? scriptText.trim() : '',
+        refImages,
+        inputMode === 'describe' ? imageRequest.trim() : '',
+      )
       setJobId(job_id)
       localStorage.setItem(JOB_STORAGE_KEY, job_id)
       await poll(job_id)
@@ -100,10 +101,10 @@ export default function GatewayAgent() {
     setError(null)
     setScriptText('')
     setRefFiles([])
+    setImageRequest('')
   }
 
   const checkpoint = status?.status === 'waiting_for_approval' ? status.checkpoint : null
-  const auto = checkpoint ? autoDecisionFor(checkpoint.checkpoint) : null
 
   return (
     <div className="media-layout">
@@ -111,16 +112,38 @@ export default function GatewayAgent() {
         <PageHeader title={<><i className="fas fa-robot" /> Agent</>} supporting="스토리 → 씬분할 → 캐릭터 일관 영상 + 나레이션 (S1, :8700 게이트웨이)" />
         {!jobId ? (
           <form onSubmit={handleStart}>
-            <div className="form-group">
-              <label className="form-label">스토리</label>
-              <textarea className="textarea" value={scriptText} onChange={(e) => setScriptText(e.target.value)} rows={5} placeholder="한 우주비행사가 노을 지는 발사대에서 로켓을 타고 이륙한다..." />
+            <div className="segmented">
+              <button type="button" className={`segmented__item${inputMode === 'upload' ? ' is-active' : ''}`} onClick={() => setInputMode('upload')}>
+                <i className="fas fa-paperclip" /> 사진 첨부
+              </button>
+              <button type="button" className={`segmented__item${inputMode === 'describe' ? ' is-active' : ''}`} onClick={() => setInputMode('describe')}>
+                <i className="fas fa-wand-magic-sparkles" /> 이미지 설명으로 생성
+              </button>
             </div>
-            <div className="form-group">
-              <label className="form-label">캐릭터 참조 이미지 (선택 — I2I 카테고리에서 만든 우주비행사 등)</label>
-              <input className="input" type="file" accept="image/*" multiple onChange={(e) => setRefFiles(Array.from(e.target.files || []))} />
-              {refFiles.length > 0 && <span className="form-field__hint">{refFiles.length}장 첨부됨</span>}
-            </div>
-            <button type="submit" className="btn btn-primary btn-full" disabled={starting || !scriptText.trim()}>
+            {inputMode === 'upload' ? (
+              <>
+                <div className="form-group">
+                  <label className="form-label">스토리</label>
+                  <textarea className="textarea" value={scriptText} onChange={(e) => setScriptText(e.target.value)} rows={5} placeholder="한 우주비행사가 노을 지는 발사대에서 로켓을 타고 이륙한다..." />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">캐릭터 참조 이미지 (선택 — I2I 카테고리에서 만든 우주비행사 등)</label>
+                  <input className="input" type="file" accept="image/*" multiple onChange={(e) => setRefFiles(Array.from(e.target.files || []))} />
+                  {refFiles.length > 0 && <span className="form-field__hint">{refFiles.length}장 첨부됨</span>}
+                </div>
+              </>
+            ) : (
+              <div className="form-group">
+                <label className="form-label">이미지 설명</label>
+                <textarea className="textarea" value={imageRequest} onChange={(e) => setImageRequest(e.target.value)} rows={5} placeholder="우주복을 입은 우주비행사가 노을 지는 발사대 앞에 서있는 모습, 시네마틱..." />
+                <span className="form-field__hint">참조 사진 없이 설명만으로 캐릭터 이미지를 생성합니다(T2I, FLUX.1-schnell). 승인하면 그 이미지로 시나리오를 이어서 입력합니다.</span>
+              </div>
+            )}
+            <button
+              type="submit"
+              className="btn btn-primary btn-full"
+              disabled={starting || (inputMode === 'describe' ? !imageRequest.trim() : !scriptText.trim())}
+            >
               {starting ? <><LoadingSpinner size="sm" /> 시작 중...</> : <><i className="fas fa-play" /> 시작</>}
             </button>
           </form>
@@ -141,7 +164,14 @@ export default function GatewayAgent() {
                 </button>
               </div>
             )}
-            {checkpoint && checkpoint.checkpoint?.startsWith('1-4') ? (
+            {checkpoint && checkpoint.checkpoint?.startsWith('2-3') ? (
+              <AgentImagePreview
+                imageUrls={checkpoint.gen_image_urls || []}
+                imageQueries={checkpoint.image_queries || []}
+                onApprove={handleApprove}
+                onRegenerate={(feedback) => handleApprove({ feedback })}
+              />
+            ) : checkpoint && checkpoint.checkpoint?.startsWith('1-4') ? (
               <AgentScenePreview
                 scenes={checkpoint.scenes || []}
                 jobId={jobId}
@@ -158,22 +188,14 @@ export default function GatewayAgent() {
               <div className="form-group">
                 <p><strong>승인 대기: {checkpoint.checkpoint}</strong></p>
                 {checkpoint.message && <p>{checkpoint.message}</p>}
-                {auto ? (
-                  <button type="button" className="btn btn-primary btn-full" onClick={() => handleApprove(auto)}>
-                    <i className="fas fa-check" /> 승인
-                  </button>
-                ) : (
-                  <>
-                    <textarea className="textarea" value={manualPayload} onChange={(e) => setManualPayload(e.target.value)} rows={4} />
-                    <button
-                      type="button"
-                      className="btn btn-primary btn-full"
-                      onClick={() => { try { handleApprove(JSON.parse(manualPayload)) } catch { setError('payload가 유효한 JSON이 아닙니다') } }}
-                    >
-                      제출
-                    </button>
-                  </>
-                )}
+                <textarea className="textarea" value={manualPayload} onChange={(e) => setManualPayload(e.target.value)} rows={4} />
+                <button
+                  type="button"
+                  className="btn btn-primary btn-full"
+                  onClick={() => { try { handleApprove(JSON.parse(manualPayload)) } catch { setError('payload가 유효한 JSON이 아닙니다') } }}
+                >
+                  제출
+                </button>
               </div>
             )}
           </div>
