@@ -15,6 +15,11 @@ inference_server/.cache/
 inference_server/bench_out/
 inference_server/outputs/
 
+# --- LocalAI 프론트 껍데기 (localai-ui/, Task 6.3, docs/external-dependencies.md) ---
+localai-ui/node_modules/
+localai-ui/dist/
+localai-ui/coverage/
+
 # git worktrees (superpowers:using-git-worktrees)
 .worktrees/
 

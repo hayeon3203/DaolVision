@@ -46,3 +46,37 @@ disable 후 삭제(원래도 inactive/disabled). video_generator 쪽 `hunyuan_se
 `comfyui.service`는 `Restart=always`로 상시 가동 중인 유일한 systemd-managed
 서비스라 이번 태스크에서 건드리지 않았다(`WorkingDirectory`도 그대로
 `video_generator/ComfyUI`).
+
+## LocalAI 프론트 껍데기 (Task 6.3)
+
+`localai-ui/`(이 repo)는 `mudler/LocalAI` 포크의 `core/http/react-ui/` 소스만
+복제한 것 — LocalAI 저장소 전체(72M, 우리가 안 건드리는 Go 백엔드 포함)는
+git으로 vendoring하지 않는다. LocalAI는 UI 껍데기 용도로만 쓰고(PRD
+Non-goals: "LocalAI 추론 백엔드 사용 안 함"), 실제 추론은 전부 `:8700`
+게이트웨이(`langgraph/api.py`)가 담당한다.
+
+**런타임 껍데기는 git이 아니라 Docker Hub에서 온다** — LocalAI의 프론트는
+Go 바이너리에 `//go:embed react-ui/dist/*`로 빌드 시점에 고정 임베드돼
+있어서(런타임 파일시스템 읽기 아님), 우리가 고친 `localai-ui/` 소스를
+반영하려면 Go로 재빌드하거나(이 환경엔 `go` 툴체인 없음), vite dev 서버로
+프론트만 따로 띄워 백엔드(인증·`/api/features` 등)만 컨테이너에서 프록시로
+빌려써야 한다.
+
+| 구성요소 | 출처 | 용도 | 재현 방법 |
+|---|---|---|---|
+| LocalAI Docker 이미지 | Docker Hub `localai/localai:master-nvidia-l4t-arm64` | 백엔드 API(인증·`/api/features` 등) 제공용, 껍데기 원본(우리가 수정 안 한 부분) | `docker run -d --name localai-spike -p 8094:8080 localai/localai:master-nvidia-l4t-arm64` |
+| LocalAI 소스(react-ui 외 전체) | `mudler/LocalAI` upstream git | 참고용, 이 repo엔 없음 | 필요시 `git clone --depth1 https://github.com/mudler/LocalAI` |
+
+**개발 흐름** (새 컴퓨터에서 DaolVision만 clone해도 재현 가능):
+
+```bash
+docker start localai-spike || docker run -d --name localai-spike -p 8094:8080 localai/localai:master-nvidia-l4t-arm64
+cd localai-ui && npm install && LOCALAI_URL=http://localhost:8094 npm run dev   # :3000, 우리가 고친 소스 실시간 서빙
+# :8700 게이트웨이(langgraph/api.py)도 별도로 떠 있어야 gw-* 페이지가 동작한다
+```
+
+로컬 작업 디렉터리 `/home/admin/LocalAI`(mudler 업스트림 git 연결)와
+`DaolVision/localai-ui/`(git SSOT)는 독립된 두 사본이다 — `inference_server/`↔
+`video_generator/hunyuan_server` 관계와 동일 패턴([[Duplicate, don't
+migrate]]). `/home/admin/LocalAI`에서 계속 편집하고, 의미 있는 변경 쌓이면
+`localai-ui/`로 다시 복제해 커밋한다(자동 동기화 없음).

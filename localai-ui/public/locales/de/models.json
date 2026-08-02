@@ -1,0 +1,125 @@
+{
+  "title": "Modelle installieren",
+  "subtitle": "Durchsuchen und installieren Sie KI-Modelle aus der Galerie",
+  "recommended": {
+    "title": "Empfohlen für Ihre Hardware",
+    "cpuNote": "Keine GPU erkannt - kleine Modelle, die auf der CPU reaktionsschnell bleiben.",
+    "gpuNote": "Passend zum verfügbaren VRAM, mit Spielraum für den Kontext.",
+    "install": "Installieren",
+    "installing": "Installation läuft",
+    "installStarted": "{{model}} wird installiert…",
+    "installFailed": "Installation fehlgeschlagen: {{message}}",
+    "dismiss": "Empfehlungen ausblenden",
+    "summary": "{{n}} Modelle vorgeschlagen"
+  },
+  "stats": {
+    "available": "Verfügbar",
+    "installed": "Installiert"
+  },
+  "actions": {
+    "addModel": "Modell hinzufügen",
+    "importModel": "Modell importieren",
+    "install": "Installieren",
+    "reinstall": "Neu installieren",
+    "delete": "Löschen"
+  },
+  "filters": {
+    "all": "Alle",
+    "llm": "LLM",
+    "image": "Bild",
+    "multimodal": "Multimodal",
+    "vision": "Vision",
+    "tts": "TTS",
+    "stt": "STT",
+    "diarization": "Diarisierung",
+    "embedding": "Embedding",
+    "rerank": "Rerank",
+    "fitsGpu": "Passt in die GPU",
+    "collapseVariants": "Eine Zeile pro Modell",
+    "allBackends": "Alle Backends",
+    "searchBackends": "Backends suchen...",
+    "contextSize": "Kontext:",
+    "useCaseLabel": "Nach Anwendungsfall filtern",
+    "unavailableForBackend": "Für das gewählte Backend nicht verfügbar"
+  },
+  "search": {
+    "placeholder": "Modelle suchen...",
+    "clearFilters": "Filter zurücksetzen"
+  },
+  "table": {
+    "modelName": "Modellname",
+    "description": "Beschreibung",
+    "backend": "Backend",
+    "sizeVram": "Größe / VRAM",
+    "status": "Status",
+    "actions": "Aktionen",
+    "size": "Größe: {{size}}",
+    "vram": "VRAM: {{vram}}",
+    "fits": "Passt",
+    "mayNotFit": "Passt möglicherweise nicht",
+    "trustRemoteCode": "Trust Remote Code",
+    "installing": "Installation",
+    "installingPct": "Installation · {{percent}}%",
+    "installed": "Installiert",
+    "notInstalled": "Nicht installiert"
+  },
+  "detail": {
+    "description": "Beschreibung",
+    "gallery": "Galerie",
+    "backend": "Backend",
+    "size": "Größe",
+    "vram": "VRAM",
+    "license": "Lizenz",
+    "tags": "Tags",
+    "links": "Links",
+    "warning": "Warnung",
+    "files": "Dateien",
+    "fitsGpu": "Passt in die GPU",
+    "mayNotFitGpu": "Passt möglicherweise nicht in die GPU",
+    "requiresTrustRemoteCode": "Erfordert Trust Remote Code",
+    "fileCount_one": "{{count}} Datei",
+    "fileCount_other": "{{count}} Dateien",
+    "filename": "Dateiname",
+    "uri": "URI",
+    "sha256": "SHA256"
+  },
+  "empty": {
+    "title": "Keine Modelle gefunden",
+    "withFilters": "Keine Modelle entsprechen den aktuellen Such- oder Filterkriterien.",
+    "collapsedVariantsHint": "Alternative Builds, die ein anderer Eintrag bereits anbietet, sind ausgeblendet. Schalte \"Eine Zeile pro Modell\" aus, um sie einzubeziehen.",
+    "noFilters": "Die Modellgalerie ist leer."
+  },
+  "deleteDialog": {
+    "title": "Modell löschen",
+    "message": "Modell {{model}} löschen?",
+    "confirm": "{{model}} löschen",
+    "deletingToast": "{{model}} wird gelöscht..."
+  },
+  "errors": {
+    "loadFailed": "Laden der Modelle fehlgeschlagen: {{message}}",
+    "installFailed": "Installation fehlgeschlagen: {{message}}",
+    "deleteFailed": "Löschen fehlgeschlagen: {{message}}"
+  },
+  "variants": {
+    "title": "Variants",
+    "chooseVariant": "Choose a variant",
+    "auto": "Auto",
+    "autoSelected": "Auto-selected",
+    "base": "Base build",
+    "fits": "Fits",
+    "doesNotFit": "Does not fit",
+    "unknownSize": "Unknown size",
+    "unknownBackend": "Unknown backend",
+    "loading": "Loading variants...",
+    "quantizationTitle": "Gewichtsformat",
+    "unknownQuantization": "Format unbekannt",
+    "showDetails": "Alle Details zu {{variant}} anzeigen",
+    "hideDetails": "Alle Details zu {{variant}} ausblenden",
+    "detailsLoading": "Details werden geladen...",
+    "detailsUnavailable": "Details zu {{variant}} konnten nicht geladen werden.",
+    "features": {
+      "dflash": "Schneller: DFlash",
+      "mtp": "Schneller: MTP"
+    }
+  }
+}
