@@ -148,6 +148,12 @@ _PRESET = VIDEO_PRESETS[VIDEO_PRESET]
 DEFAULT_FPS = int(os.environ.get("AGENT_FPS", "24"))
 WIDTH = int(os.environ.get("AGENT_WIDTH", str(_PRESET["width"])))
 HEIGHT = int(os.environ.get("AGENT_HEIGHT", str(_PRESET["height"])))
+# M2 T2I 앵커(generate_t2i_image) 전용 해상도. WIDTH/HEIGHT(1280x704)는 LTX/Wan의
+# 32배수 제약에 맞춘 영상 프리셋이라 16:9가 아니다(704*16/9=1251.5) — 이 값을 그대로
+# 재사용하면 승인 후 ref_images로 첨부되는 기본 생성 이미지가 정확한 16:9가 아니게 된다.
+# FLUX는 16배수만 맞으면 되므로 정확한 16:9로 별도 지정.
+T2I_WIDTH = int(os.environ.get("AGENT_T2I_WIDTH", "1280"))
+T2I_HEIGHT = int(os.environ.get("AGENT_T2I_HEIGHT", "720"))
 
 
 def _prompt_db() -> sqlite3.Connection:
@@ -475,8 +481,10 @@ def to_4k1(frames: float) -> int:
 async def generate_t2i_image(job_id: str, prompt: str, seed: int | None = None, index: int = 0) -> str:
     """정지 이미지 앵커 생성 (FLUX.1-schnell, :8501). 이전엔 :8500 Wan 영상 파이프라인을
     num_frames=1로 돌려썼는데(~120s), 전용 T2I 모델로 교체(~10-15s). return: 로컬 png 경로.
-    index: 한 배치에서 여러 장 생성 시 파일명 구분용(gen_img_0.png, gen_img_1.png, ...)."""
-    body = {"prompt": prompt, "width": WIDTH, "height": HEIGHT}
+    index: 한 배치에서 여러 장 생성 시 파일명 구분용(gen_img_0.png, gen_img_1.png, ...).
+    T2I_WIDTH/HEIGHT(16:9)는 영상 WIDTH/HEIGHT 프리셋과 별개 — 승인 후 이 이미지가
+    그대로 ref_images로 첨부되는 기본 캐릭터 이미지가 된다(node_checkpoint_image_approval)."""
+    body = {"prompt": prompt, "width": T2I_WIDTH, "height": T2I_HEIGHT}
     if seed is not None:
         body["seed"] = seed
     timeout = httpx.Timeout(connect=10.0, read=120.0, write=60.0, pool=None)
