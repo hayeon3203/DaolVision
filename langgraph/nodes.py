@@ -615,17 +615,29 @@ async def _make_style_bible(state: GraphState) -> str:
           + "Define ONLY the invariant visual rules that stay IDENTICAL across every "
           "scene (the art style / 화풍): rendering technique, line and edge treatment, "
           "shape language, surface materials, texture density, environmental detail "
-          "level, prop design language, and camera character. "
+          "level, prop design language, camera character, COLOR GRADING (palette bias, "
+          "saturation, contrast character — e.g. desaturated teal-orange, warm film "
+          "stock, bleach-bypass), and LENS STYLE (focal length feel, depth-of-field "
+          "character, any distortion — e.g. wide-angle deep focus, anamorphic shallow "
+          "DOF, telephoto compression). Think of all four clips as connected shots from "
+          "the same short film shot on the same camera/lens package and graded in the "
+          "same pass. "
 
           # M3-7: per-scene mood/lighting는 여기서 정의하지 않는다(_make_scene_lighting가
           # 씬별로 담당). bible은 씬 간 불변 화풍만 담아 모든 씬에 동일하게 주입된다.
-          "Do NOT bake in any single scene's brightness, mood, time of day, or lighting "
-          "state — those change per scene and are specified separately. Mood is expressed "
-          "through lighting and color, never by changing this underlying art style. "
+          "Do NOT bake in any single scene's brightness, exposure, time of day, or "
+          "lighting state — those change per scene and are specified separately. "
+
+          "Also define ONE overarching emotional tone/atmosphere for the whole piece "
+          "(e.g. quiet awe, tense urgency, warm nostalgia) that stays constant as the "
+          "story's emotional register throughout — this is the film's constant "
+          "undertone, NOT the same thing as each scene's specific mood, which still "
+          "swings with the narrative beat (tense, calm, joyful) and is specified "
+          "separately per scene. "
 
           "Do not standardize character identity, anatomy, clothing, or appearance. "
           "Output only a compact comma-separated English style specification "
-          "under 100 words. No preamble, quotes, or markdown."
+          "under 130 words. No preamble, quotes, or markdown."
     )
     user_prompt = json.dumps({
         "script": state["script_text"],
@@ -649,7 +661,10 @@ _LIGHTING_SYSTEM = (
     "brightness. No character appearance/clothing/pose — lighting only. "
     "(2) setting — the scene's physical LOCATION/background in the script's own language. If this "
     "scene continues in the SAME place as the previous scene, output an empty string \"\" for setting "
-    "(it inherits the previous location). Only fill setting when the location changes. "
+    "(it inherits the previous location). Only fill setting when the location changes. When in doubt, "
+    "fill it in rather than leaving it empty — scenes that name a different physical environment "
+    "(e.g. a launch pad vs. open space vs. an alien planet's surface vs. re-entry through the "
+    "atmosphere) are almost always DIFFERENT settings, even if no location word is repeated. "
     'Output ONLY a JSON object mapping each scene id (string) to {"lighting": "...", "setting": "..."}, '
     'e.g. {"1": {"lighting": "low-key dim, deep shadows, cool cast", "setting": "어두운 사무실"}, '
     '"2": {"lighting": "sudden bright key light", "setting": ""}}. No preamble, no markdown.'
@@ -669,8 +684,11 @@ async def _make_scene_context(state: GraphState) -> tuple[dict[int, str], dict[i
     }, ensure_ascii=False)
     lighting: dict[int, str] = {}
     setting: dict[int, str] = {}
-    # 9b는 setting 필드를 run마다 통째로 누락하기도 한다(3런 중 1런). setting이 하나도
-    # 안 나오면 1회 재시도 — 대부분 첫 시도 성공(추가시간 0), 누락 run만 +1콜.
+    # 9b는 setting 필드를 run마다 통째로 누락하기도 한다(3런 중 1런). 또한 값을 일부만
+    # 채우고 나머지를 전부 ""(=이어짐)로 반환하는 경우도 실측됨(job fbd7c4a5, 4씬 스토리에서
+    # 씬1만 채우고 2~4가 전부 이전 장소를 계속 상속 — 명백히 다른 장소인데도). "하나라도 얻으면
+    # 종료"는 이 절반-누락 케이스를 못 걸러내므로, 최소 절반 이상 채워야 통과로 인정한다.
+    min_filled = max(1, len(scenes) // 2)
     for _attempt in range(2):
         try:
             raw = tools.parse_json_lenient(await tools.call_llm(_LIGHTING_SYSTEM, user_prompt))
@@ -690,7 +708,7 @@ async def _make_scene_context(state: GraphState) -> tuple[dict[int, str], dict[i
                 set_map[int(k)] = setg
         lighting = lighting or lit_map   # 첫 시도의 조명은 보존
         setting = set_map
-        if setting:                       # 장소를 하나라도 얻으면 종료
+        if len(setting) >= min_filled:    # 최소 절반 이상 장소를 얻으면 종료
             break
     # 장소 forward-fill: 빈(=이어지는) 씬은 직전 씬 장소 상속. 씬 순서대로.
     prev = ""
@@ -845,6 +863,11 @@ def _scene_prompt_system(standin: bool, has_wardrobe: bool = False, has_human_su
         + ("Favor natural, dynamic motion and a lively expression — avoid static, stiff or "
            "frozen poses and blank faces. " if has_human_subject else
            "Favor natural, dynamic motion in the environment/subject — avoid static, frozen shots. ")
+        + "This is ONE continuous, uncut shot — no jump cuts, no scene changes, no camera "
+        "cuts inside the clip; describe a single unfolding moment, one dominant action, "
+        "not several competing events. This scene is part of one continuous short film — "
+        "write it as the next moment following on from the previous scene, not an "
+        "isolated standalone image. "
         + "CRITICAL: keep every specific named subject, object, or place mentioned in the "
         "scene text explicit in your English prompt — if the scene names something concrete "
         "(e.g. Earth, a spaceship, a specific landmark), your prompt must name that exact "
