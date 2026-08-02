@@ -19,8 +19,13 @@ export AGENT_STANDIN_FPS="${AGENT_STANDIN_FPS:-16}"    # Wan2.1 네이티브 16f
 export AGENT_STANDIN_EXEC_TIMEOUT="${AGENT_STANDIN_EXEC_TIMEOUT:-1800}"
 export AGENT_STANDIN_QUEUE_TIMEOUT="${AGENT_STANDIN_QUEUE_TIMEOUT:-86400}"
 export AGENT_MAX_CONCURRENT_CLIPS="${AGENT_MAX_CONCURRENT_CLIPS:-1}"  # 씬 클립 동시 생성 상한. 1=순차(OOM안전), 2=백엔드당 하나
-# fast=832x480/10 steps, quality=1280x704/20 steps. 개별 AGENT_* 값으로 덮어쓸 수 있다.
+# fast=832x480, quality=1280x704 (해상도만 바뀜 — VIDEO_PRESETS의 steps 필드는 죽은 코드,
+# tools.py 어디서도 안 읽힘). AGENT_WIDTH/AGENT_HEIGHT로 개별 덮어쓰기 가능.
 export AGENT_VIDEO_PRESET="${AGENT_VIDEO_PRESET:-fast}"
 export AGENT_FPS="${AGENT_FPS:-24}"          # Wan2.2-TI2V-5B 네이티브 24fps
+# T2V/I2V-폴백/I2V-단발샷(전부 LTX-13B-distilled)의 실제 diffusion step 수 — 프리셋과
+# 무관한 별도 변수. distilled 체크포인트라 4~8이 원 학습 레짐, job 78cb492c/4265fba0
+# 퀄리티 저하 디버깅 중 12로 상향 테스트(2026-08-02).
+export AGENT_LTX13B_STEPS="${AGENT_LTX13B_STEPS:-12}"
 
 exec ./.venv/bin/python api.py
