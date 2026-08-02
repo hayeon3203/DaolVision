@@ -59,8 +59,8 @@ if __name__ == "__main__":
         seed=123,
         prefix="job_ltx_1",
     )
-    assert graph["100"]["inputs"]["width"] == 1024
-    assert graph["100"]["inputs"]["height"] == 576
+    assert graph["100"]["inputs"]["width"] == tools.LTX_FACEID_WIDTH
+    assert graph["100"]["inputs"]["height"] == tools.LTX_FACEID_HEIGHT
     assert graph["104"]["inputs"]["image"] == "astronaut.png"
     assert "130" not in graph, "Flux 앵커 LoadImage 노드는 더 이상 존재하면 안 됨"
     assert "131" not in graph, "LTXVImgToVideo 앵커 lock 노드는 더 이상 존재하면 안 됨"
