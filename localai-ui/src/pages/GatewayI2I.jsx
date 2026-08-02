@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import PageHeader from '../components/PageHeader'
 import LoadingSpinner from '../components/LoadingSpinner'
+import MediaInput from '../components/biometrics/MediaInput'
 import { gatewayApi } from '../utils/api'
 
 // Task 6.1/6.3: I2I 카테고리(얼굴사진→스타일 변환). anim-agent 게이트웨이(:8700)
@@ -16,8 +17,16 @@ const STYLES = [
   { key: 'watercolor', label: '수채화' },
 ]
 
+// 업로드 vs 웹캠 촬영 선택 + 촬영본 미리보기/재촬영은 MediaInput(biometrics에서
+// 이미 검증된 컴포넌트)이 탭 UI로 제공한다 — 별도 팝업 없이 같은 UX.
+async function toBlob(photo) {
+  if (photo.blob) return photo.blob
+  const res = await fetch(photo.dataUrl)
+  return res.blob()
+}
+
 export default function GatewayI2I() {
-  const [imageFile, setImageFile] = useState(null)
+  const [sourcePhoto, setSourcePhoto] = useState(null)
   const [style, setStyle] = useState('cinematic')
   const [seed, setSeed] = useState('')
   const [loading, setLoading] = useState(false)
@@ -26,12 +35,13 @@ export default function GatewayI2I() {
 
   const handleGenerate = async (e) => {
     e.preventDefault()
-    if (!imageFile) return
+    if (!sourcePhoto) return
     setLoading(true)
     setError(null)
     setImage(null)
     try {
-      const data = await gatewayApi.i2i(style, imageFile, seed)
+      const imageBlob = await toBlob(sourcePhoto)
+      const data = await gatewayApi.i2i(style, imageBlob, seed)
       setImage(data.image_base64 || data.b64_json)
     } catch (err) {
       setError(err.message)
@@ -45,10 +55,14 @@ export default function GatewayI2I() {
       <div className="media-controls">
         <PageHeader title={<><i className="fas fa-palette" /> I2I 스타일 변환</>} supporting="얼굴사진 → 스타일 변환 (Flux.1 Kontext, :8700 게이트웨이)" />
         <form onSubmit={handleGenerate}>
-          <div className="form-group">
-            <label className="form-label">얼굴 사진</label>
-            <input className="input" type="file" accept="image/*" onChange={(e) => setImageFile(e.target.files[0] || null)} />
-          </div>
+          <MediaInput
+            mode="image"
+            label="얼굴 사진"
+            value={sourcePhoto}
+            onChange={setSourcePhoto}
+            onError={(err) => setError(err.message)}
+            idPrefix="gw-i2i"
+          />
           <div className="form-group">
             <label className="form-label">스타일</label>
             <select className="input btn-full" value={style} onChange={(e) => setStyle(e.target.value)}>
@@ -59,7 +73,7 @@ export default function GatewayI2I() {
             <label className="form-label">시드 (선택)</label>
             <input className="input" type="number" value={seed} onChange={(e) => setSeed(e.target.value)} placeholder="랜덤" />
           </div>
-          <button type="submit" className="btn btn-primary btn-full" disabled={loading || !imageFile}>
+          <button type="submit" className="btn btn-primary btn-full" disabled={loading || !sourcePhoto}>
             {loading ? <><LoadingSpinner size="sm" /> 변환 중...</> : <><i className="fas fa-wand-magic-sparkles" /> 변환</>}
           </button>
         </form>

@@ -59,10 +59,10 @@
     "settings": "Settings",
     "api": "API",
     "gwAgent": "Agent",
-    "gwT2v": "T2V One-shot",
-    "gwI2i": "I2I",
+    "gwT2v": "Text to Video",
+    "gwI2i": "Image to Image",
     "gwTts": "TTS (Clone)",
-    "gwT2i": "T2I",
+    "gwT2i": "Text to Image",
     "gwDashboard": "Dashboard"
   },
   "footer": {

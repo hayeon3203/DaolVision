@@ -8,7 +8,6 @@ import { useBranding } from '../contexts/BrandingContext'
 import { useTheme } from '../contexts/ThemeContext'
 import { apiUrl } from '../utils/basePath'
 import { preloadRoute } from '../router'
-import { consoles, firstVisiblePath, consolePaths } from './console/consoleConfig'
 import daolvisionIcon from '../assets/daolvision-icon.png'
 import daolvisionLogoBlack from '../assets/daolvision-logo-black.png'
 import daolvisionLogoWhite from '../assets/daolvision-logo-white.png'
@@ -18,22 +17,11 @@ const SECTIONS_KEY = 'localai_sidebar_sections'
 
 const topItems = [
   { path: '/app', icon: 'fas fa-home', labelKey: 'items.home' },
-  { path: '/app/models', icon: 'fas fa-download', labelKey: 'items.installModels', adminOnly: true },
 ]
 
-// Create stays inline (frequent, one-click creative destinations). The Build
-// and Operate tiers are single entries that open a secondary console rail —
-// their items live in console/consoleConfig.js (shared with ConsoleLayout).
+// Create(만들기)와 Build/Operate 콘솔 tier(console/consoleConfig.js)는 이 nav에서
+// 제거됨 — 라우트 자체는 남아있고 사이드바 노출만 없앤 상태.
 const sections = [
-  {
-    id: 'create',
-    titleKey: 'sections.create',
-    items: [
-      { path: '/app/chat', icon: 'fas fa-comments', labelKey: 'items.chat' },
-      { path: '/app/studio', icon: 'fas fa-palette', labelKey: 'items.studio' },
-      { path: '/app/talk', icon: 'fas fa-phone', labelKey: 'items.talk' },
-    ],
-  },
   // Task 6.3: anim-agent 게이트웨이(:8700) 카테고리 — LocalAI 자체 추론 백엔드와
   // 분리된 별도 섹션(Agent/I2V 단발샷/I2I/독립 TTS/T2I).
   {
@@ -176,8 +164,6 @@ export default function Sidebar({ isOpen, onClose }) {
   }
 
   const visibleTopItems = topItems.filter(filterItem)
-  // Shared shape for the console gating helpers (consoleConfig.js).
-  const auth = { isAdmin, authEnabled, hasFeature, features }
 
   // Inline sections (Create) carry no gating; a plain filterItem pass suffices.
   const getVisibleSectionItems = (section) => section.items.filter(filterItem)
@@ -248,30 +234,6 @@ export default function Sidebar({ isOpen, onClose }) {
             )
           })}
 
-          {/* Console tiers (Build, Operate): a single entry that opens a
-              secondary rail. Hidden when the viewer can see none of its items. */}
-          {consoles.map(config => {
-            const target = firstVisiblePath(config, auth)
-            if (!target) return null
-            const active = consolePaths(config).some(p => location.pathname.startsWith(p))
-            const label = t(config.titleKey)
-            return (
-              <div key={config.id} className="sidebar-section">
-                <NavLink
-                  to={target}
-                  className={() => `nav-item ${active ? 'active' : ''}`}
-                  onClick={onClose}
-                  onMouseEnter={() => preloadRoute(target)}
-                  onFocus={() => preloadRoute(target)}
-                  onTouchStart={() => preloadRoute(target)}
-                  title={collapsed ? label : undefined}
-                >
-                  <i className={`${config.icon} nav-icon`} />
-                  <span className="nav-label">{label}</span>
-                </NavLink>
-              </div>
-            )
-          })}
         </nav>
 
         {/* Footer */}
