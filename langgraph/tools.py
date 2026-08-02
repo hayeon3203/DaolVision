@@ -503,10 +503,8 @@ async def generate_t2i_anchor(
 # 5.2/5.3(LTX Face-ID 22B GGUF)도 같은 ComfyUI(:8188, --highvram)를 공유한다.
 # --highvram은 체크포인트를 적극적으로 CPU로 내리지 않으므로, 이 경로와 5.x LTX
 # Face-ID 배치가 겹치면 두 체크포인트가 동시에 VRAM에 상주해 OOM 위험이 있다.
-# generate_ltx_faceid_batch는 별도 게이팅이 없어(5.2/5.3 재설계 계획에서 그 함수를
-# 직접 건드리는 중이라 여기서 손대지 않음) oom.phase만으로 완전한 상호배제는 아니다
-# — Wan/Stand-In i2v 경로와는 겹침을 막지만, 운영 시 이 엔드포인트와 5.x 파이프라인
-# job을 동시에 돌리지 않는 편이 안전하다.
+# generate_ltx_faceid_batch도 이제 oom.phase("i2v")로 게이팅된다(Task 6.15 대비,
+# 이전엔 이 함수만 빠져 있어 llm/t2i 전환과 겹칠 수 있었음).
 LTX13B_CHECKPOINT = os.environ.get(
     "AGENT_LTX13B_CHECKPOINT", "ltxv-13b-0.9.8-distilled-fp8.safetensors")
 LTX13B_CLIP = os.environ.get("AGENT_LTX13B_CLIP", "t5xxl_fp8_e4m3fn_scaled.safetensors")
@@ -1226,7 +1224,7 @@ async def generate_ltx_faceid_batch(job_id: str, scenes: list[dict]) -> dict[int
     if not scenes:
         return {}
     timeout = httpx.Timeout(connect=10.0, read=60.0, write=60.0, pool=None)
-    async with httpx.AsyncClient(timeout=timeout) as client:
+    async with oom.phase("i2v"), httpx.AsyncClient(timeout=timeout) as client:
         uploaded: dict[str, str] = {}
         # 동일 캐릭터 참조는 배치 전체에서 한 번만 업로드한다.
         for scene in scenes:
