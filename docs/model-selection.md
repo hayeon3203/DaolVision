@@ -11,8 +11,8 @@ DaolVision은 NVIDIA GB10(119GiB 통합 메모리) 한 대에서 LangGraph 파�
 
 | 역할 | 현재 선택 | 상태 |
 |---|---|---|
-| 씬 분할 LLM | NVIDIA Nemotron 3 Nano 4B GGUF Q4_K_M | 잠정 유지 |
-| 참조 이미지 캡션 VLM | 미확정 | 재선정 중 |
+| 씬 분할 LLM | gemma4:latest | 채택(Nemotron 3 Nano 4B는 matched_image/subject_type 비결정적 오판으로 폐기) |
+| 참조 이미지 캡션 VLM | gemma4:latest | 채택(씬 분할과 동일 모델 공유) |
 | TTS | Chatterbox Multilingual V3 | 채택 |
 | T2I 앵커 | FLUX.1-schnell | 채택 |
 | I2I 얼굴 변환 | FLUX.1 Kontext [dev] | 배선·1차 실측 완료(Task 6.1), 상업 라이선스 미확정 |

@@ -117,6 +117,7 @@
 | 6.13 | Ollama LLM 콜 num_ctx 미지정으로 콜당 수십초 오버헤드 (call_llm/caption_image가 options 없이 호출 → 모델 기본 컨텍스트(Nemotron 1,048,576 / qwen3.5:9b 262,144 토큰) 기준 KV캐시 할당. job 003cb843 anchoring 단계 7콜 순차 실행에 5분31초, 콜당 평균 47초 실측) [tdd:skip:config-tuning] | 두 호출 모두 `options: {num_ctx: 8192}` 추가 | - | 6.11 | cc:완료 | - |
 | 6.14 | VISION_MODEL qwen3.5:9b(중국·Alibaba 원산) → gemma4:latest 교체 (model-selection.md "비중국 원산" 원칙 위반 발견, [[Wan2.2 removed from DaolVision]]과 동일 사유) [tdd:skip:model-swap] | 같은 참조사진 caption_image A/B 실측(qwen3.5:9b/gemma4:latest/gemma3:4b/exaone3.5:7.8b — exaone은 vision capability 없어 탈락) 근거로 gemma4:latest 채택(qwen 대비 품질 대등·속도 우위), run_agent.sh 기본값 교체 | - | 6.13 | cc:완료 | - |
 | 6.15 | Agent UI에 M2(이미지 설명으로 생성) 입력 분기 없음 + 2-3 체크포인트 자동승인이라 생성 이미지 리뷰 불가 (GatewayAgent.jsx — script_text/ref_images 파일첨부만 있고 image_request 미배선, `autoDecisionFor`가 `2-3` 체크포인트 무조건 자동승인) [tdd:skip:ui-component] | "사진 첨부" vs "이미지 설명으로 생성" 입력 분기 UI + 2-3용 AgentScenePreview류 프리뷰 컴포넌트(생성 이미지 확인 후 승인/재생성) | - | 6.6, 6.8 | cc:TODO | - |
+| 6.16 | 씬분할 LLM(Nemotron 3 Nano 4B)이 matched_image/subject_type을 비결정적으로 오판 (job 67c45bcb-44e2-47d1-b8a9-0aa436289918 — 동일 입력 3회 재현 시 matched_image 대부분 null, 동일 씬 텍스트인데 subject_type이 human/nonhuman/none으로 매 콜 달라짐, text 필드 한글 오타 환각까지 확인) [tdd:skip:model-swap] | LLM_MODEL을 VISION_MODEL과 동일한 gemma4:latest로 통일(text+vision 겸용, 추가 로드 0), Nemotron 4B는 씬분할 용도로 폐기, model-selection-llm.md에 재현 증거 기록 | - | 6.14 | cc:완료 | - |
 
 ---
 

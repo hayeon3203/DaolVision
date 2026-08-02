@@ -5,9 +5,14 @@ cd "$(dirname "$0")"
 export AGENT_API_HOST="${AGENT_API_HOST:-0.0.0.0}"
 export AGENT_API_PORT="${AGENT_API_PORT:-8700}"
 export AGENT_OLLAMA_URL="${AGENT_OLLAMA_URL:-http://127.0.0.1:11434/api/chat}"
-export AGENT_LLM_MODEL="${AGENT_LLM_MODEL:-hf.co/nvidia/NVIDIA-Nemotron-3-Nano-4B-GGUF:Q4_K_M}"
-export AGENT_VISION_MODEL="${AGENT_VISION_MODEL:-gemma4:latest}"  # 2026-08-02: qwen3.5:9b(중국/Alibaba)를 model-selection.md "비중국 원산" 원칙 위반으로 교체.
-                                                                    # 같은 참조사진 A/B 캡션 실측(qwen3.5:9b/gemma4:latest/gemma3:4b) — gemma4가 qwen과 품질 대등(목걸이 디테일만 누락)하고 속도도 더 빠름(17.5s vs 31.2s), gemma3:4b는 의상 묘사 누락으로 품질 미달.
+export AGENT_LLM_MODEL="${AGENT_LLM_MODEL:-gemma4:latest}"  # 2026-08-02: Nemotron 3 Nano 4B가
+  # 씬분할(matched_image/subject_type 동시판단)에서 비결정적으로 오판(job 67c45bcb —
+  # 동일 입력 3회 재현, matched_image 대부분 null, 같은 씬 텍스트인데 subject_type이
+  # human/nonhuman/none으로 매번 바뀜, text 필드 한글 오타 환각까지 확인) → gemma4:latest로 교체.
+export AGENT_VISION_MODEL="${AGENT_VISION_MODEL:-gemma4:latest}"  # 씬분할 LLM과 동일 모델 =
+  # text+vision 겸용, 추가 로드 0. (2026-08-02: qwen3.5:9b(중국/Alibaba)를
+  # model-selection.md "비중국 원산" 원칙 위반으로 교체 — 같은 참조사진 A/B 캡션 실측
+  # (qwen3.5:9b/gemma4:latest/gemma3:4b) 근거, gemma4가 qwen과 품질 대등하고 속도 우위.)
 export AGENT_CAPTION_REFS="${AGENT_CAPTION_REFS:-1}"          # 1=참조 캡션 ON. shows 기반 씬↔이미지 매칭 정확도↑
 export AGENT_T2I_URL="${AGENT_T2I_URL:-http://127.0.0.1:8501}"  # 정지 이미지 앵커(M2) 전용, FLUX.1-schnell
 export AGENT_KOKORO_URL="${AGENT_KOKORO_URL:-http://127.0.0.1:8503}"  # S1 나레이션 전용 Kokoro
