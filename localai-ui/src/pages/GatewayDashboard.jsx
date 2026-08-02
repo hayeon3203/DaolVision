@@ -1,19 +1,19 @@
 import { useEffect, useRef, useState } from 'react'
 import PageHeader from '../components/PageHeader'
 import LoadingSpinner from '../components/LoadingSpinner'
-import StatusPill from '../components/StatusPill'
 import { gatewayApi } from '../utils/api'
+import { apiUrl } from '../utils/basePath'
 
-// Task 7.1: 자립 대시보드 — 오프라인 배지 + 실행트레이스 + GB10 메모리 게이지
-// (docs/PRD.md R9). :8700 게이트웨이의 /dashboard/status(Task 4.3, langgraph/dashboard.py)만
-// 폴링한다. 백엔드 계산이 아닌 프론트 표시 전용 페이지.
+// Task 7.1: 모니터링 대시보드 — 실행트레이스 + GB10 메모리 게이지 (docs/PRD.md R9).
+// /dashboard/status(Task 4.3, langgraph/dashboard.py)만 폴링한다. 백엔드 계산이 아닌
+// 프론트 표시 전용 페이지.
 const POLL_MS = 5000
 const HISTORY_MAX = 60 // 5000ms 폴링 * 60 = 5분 창
 
-// R10: 전 모델 비중국/NVIDIA. dashboard.py의 MODEL_VENDORS가 분류하는 값 중 유일한
-// 중국계는 alibaba(Qwen) — 다른 값은 nvidia/google/meta/black-forest-labs/lightricks/
-// resemble-ai거나 미분류(unknown)다.
-const CHINA_VENDORS = ['alibaba']
+// hf.co/nvidia/NVIDIA-Nemotron-3-Nano-4B-GGUF:Q4_K_M → NVIDIA-Nemotron-3-Nano-4B-GGUF
+function shortModelName(model) {
+  return model.replace(/^hf\.co\/[^/]+\//, '').split(':')[0]
+}
 
 // ponytail: GB10은 power_limit_w/온도 스로틀 지점이 드라이버(580.142)에 미노출돼
 // 절대 정격값을 못 읽는다 — 아래 warn/error 문턱은 관찰 기반 근사치. 실측 스로틀링
@@ -36,6 +36,41 @@ function ScoreCard({ label, value, unit, tone }) {
     <div className={`score-card score-card--${tone}`}>
       <div className="score-card__label">{label}</div>
       <div className="score-card__value">{value}<span className="score-card__unit">{unit}</span></div>
+    </div>
+  )
+}
+
+// HF 모델카드 칩(아이콘+텍스트, 옅은 배경+테두리 pill). tone은 아이콘 색만 바꾼다 —
+// 텍스트는 항상 중립(데이터 색을 텍스트에 입히지 않는다).
+function HfChip({ icon, label, tone = 'muted' }) {
+  return (
+    <span className={`hf-chip hf-chip--${tone}`}>
+      <i className={icon} />
+      {label}
+    </span>
+  )
+}
+
+// HF 모델카드 헤더(nvidia 로고 + org/모델명)와 같은 형식. trace에서 vendor가 nvidia인
+// 첫 스텝을 뽑아 보여준다 — 하드코딩 모델명 금지(모델 스왑 잦음, model-selection.md 참고).
+function ModelIdentity({ trace }) {
+  const step = trace.find((t) => t.vendor === 'nvidia')
+  if (!step) return null
+  const quant = step.model.includes(':') ? step.model.split(':')[1] : null
+  return (
+    <div style={{ marginBottom: 'var(--spacing-md)' }}>
+      <div className="model-identity">
+        <img src={apiUrl('/nvidia_logo_icon.svg')} alt="nvidia" className="model-identity__logo" />
+        <span className="model-identity__org">nvidia</span>
+        <span className="model-identity__sep">/</span>
+        <strong className="model-identity__name">{shortModelName(step.model)}</strong>
+      </div>
+      <div className="hf-chip-row">
+        <HfChip icon="fas fa-comments" label={step.step} />
+        <HfChip icon="fas fa-building" label={step.vendor} />
+        <HfChip icon="fas fa-file-lines" label={`License: ${step.license}`} />
+        {quant && <HfChip icon="fas fa-layer-group" label={quant} />}
+      </div>
     </div>
   )
 }
@@ -122,11 +157,6 @@ export default function GatewayDashboard() {
   }, [])
 
   const trace = status?.trace || []
-  const hasChinaVendor = trace.some((t) => CHINA_VENDORS.includes(t.vendor))
-  const hasUnknownVendor = trace.some((t) => t.vendor === 'unknown')
-  const vendorTone = hasChinaVendor ? 'error' : hasUnknownVendor ? 'warning' : 'success'
-  const vendorLabel = hasChinaVendor ? '중국계 모델 감지' : hasUnknownVendor ? '국적 미분류 모델 있음' : '전 모델 비중국'
-
   const memPercent = status ? (status.gpu.used_gb / status.gpu.total_gb) * 100 : 0
 
   return (
@@ -179,11 +209,31 @@ export default function GatewayDashboard() {
         }
         .line-chart__tooltip strong { color: var(--color-text-primary); font-size: 1rem; }
         .line-chart__tooltip span { color: var(--color-text-muted); font-size: 0.75rem; }
+        .model-identity { display: flex; align-items: center; gap: 8px; margin-bottom: var(--spacing-xs); }
+        .model-identity__logo { width: 22px; height: 22px; }
+        .model-identity__org { color: var(--color-text-muted); font-size: 0.875rem; }
+        .model-identity__sep { color: var(--color-text-muted); }
+        .model-identity__name { color: var(--color-text-primary); font-weight: 700; font-size: 1.0625rem; }
+        .hf-chip-row { display: flex; flex-wrap: wrap; gap: var(--spacing-xs); }
+        .hf-chip {
+          display: inline-flex; align-items: center; gap: 6px;
+          padding: 3px 10px;
+          border-radius: var(--radius-full);
+          border: 1px solid var(--color-border-subtle);
+          background: var(--color-bg-secondary);
+          font-size: 0.75rem;
+          color: var(--color-text-secondary);
+          white-space: nowrap;
+        }
+        .hf-chip i { font-size: 0.7rem; color: var(--color-text-muted); }
+        .hf-chip--success i { color: var(--color-success); }
+        .hf-chip--warning i { color: var(--color-warning); }
+        .hf-chip--error i { color: var(--color-error); }
       `}</style>
 
       <PageHeader
-        title={<><i className="fas fa-gauge-high" /> 자립 대시보드</>}
-        supporting="External calls / 국적 컴플라이언스 / GB10 메모리·전력·온도 실시간 표시 (:8700 게이트웨이)"
+        title={<><i className="fas fa-gauge-high" /> 모니터링 대시보드</>}
+        supporting="External calls / GB10 메모리·전력·온도 실시간 표시"
       />
 
       {loading ? (
@@ -194,6 +244,8 @@ export default function GatewayDashboard() {
         <p style={{ color: 'var(--color-error)' }}>Error: {error}</p>
       ) : (
         <>
+          <ModelIdentity trace={trace} />
+
           {/* 최상단 스코어카드: 메모리 / 전력 / 온도 (grafana stat 패널 형식) */}
           <div className="score-card-row">
             <ScoreCard
@@ -223,11 +275,18 @@ export default function GatewayDashboard() {
             <LineChart title="온도" unit="°C" data={history} valueKey="temp" />
           </div>
 
-          {/* 배지 3종: 오프라인 / External calls 실측 / 국적(R10) */}
-          <div style={{ display: 'flex', gap: 'var(--spacing-sm)', flexWrap: 'wrap', marginBottom: 'var(--spacing-lg)' }}>
-            <StatusPill status={status.offline ? 'online' : 'warning'} label={status.offline ? '오프라인' : '온라인'} />
-            <StatusPill status={status.offline ? 'online' : 'warning'} label={`External calls: ${status.external_calls}`} />
-            <StatusPill status={vendorTone} label={vendorLabel} />
+          {/* 배지: 오프라인 / External calls 실측 (HF 칩 디자인 통일) */}
+          <div className="hf-chip-row" style={{ marginBottom: 'var(--spacing-lg)' }}>
+            <HfChip
+              icon={status.offline ? 'fas fa-circle-check' : 'fas fa-triangle-exclamation'}
+              tone={status.offline ? 'success' : 'warning'}
+              label={status.offline ? '오프라인' : '온라인'}
+            />
+            <HfChip
+              icon="fas fa-arrow-right-arrow-left"
+              tone={status.offline ? 'success' : 'warning'}
+              label={`External calls: ${status.external_calls}`}
+            />
           </div>
 
           {/* 실행트레이스 */}
