@@ -5279,6 +5279,19 @@ button.collapsible-header:focus-visible {
   flex-direction: column;
   gap: var(--spacing-xs);
 }
+.scene-preview__clip-select { flex: none; display: flex; align-items: center; }
+.scene-preview__clip-video {
+  flex: none;
+  width: 96px;
+  height: 64px;
+  border-radius: var(--radius-sm);
+  background: #000;
+  object-fit: cover;
+}
+.scene-preview__badge--low_quality {
+  color: var(--color-error);
+  border-color: var(--color-error);
+}
 
 /* Task 6.4: Agent phase stepper — phase→step highlight above the approval panel. */
 .phase-stepper {
