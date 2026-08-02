@@ -234,6 +234,22 @@ async def _unload_llm_backend() -> None:
 oom.register_unload("llm", _unload_llm_backend)
 
 
+async def _unload_i2v_backend() -> None:
+    """ComfyUI(--highvram)는 체크포인트를 알아서 안 내리므로 명시적으로 unload+free
+    호출(Task 4.4와 동일 문제 — 13B↔22B GGUF 전환 시 이중 상주 OOM 방지)."""
+    async with httpx.AsyncClient(timeout=30) as client:
+        try:
+            await client.post(
+                f"{COMFYUI_URL}/free", json={"unload_models": True, "free_memory": True})
+        except httpx.HTTPError:
+            pass  # 다음 /prompt 제출이 알아서 재적재
+
+
+oom.register_unload("i2v", _unload_i2v_backend)
+# t2i(Flux)는 unload hook 불필요 — flux_server.py의 _unload()가 /generate 응답 전에
+# 매 요청마다 자체 언로드한다(KEEP_RESIDENT=0 기본), oom.phase 진입 시점엔 이미 비어있음.
+
+
 # ── LLM ─────────────────────────────────────────────────────
 async def call_llm(system_prompt: str, user_prompt: str) -> str:
     async with oom.phase("llm"), httpx.AsyncClient(timeout=180) as client:
