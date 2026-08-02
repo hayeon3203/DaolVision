@@ -717,9 +717,9 @@ async def node_generate_prompts(state: GraphState) -> dict:
                or scene.get("lighting")
                or _mood_to_lighting(scene.get("mood", "neutral")))
 
-        raw_prompt = tools.clean_llm_prompt(
+        raw_prompt = _strip_echoed_bible(tools.clean_llm_prompt(
             await tools.call_llm(_scene_prompt_system(standin or subject_ref, bool(wardrobe)),
-                                 _scene_prompt_user(scene, bible, wardrobe, cue)))
+                                 _scene_prompt_user(scene, bible, wardrobe, cue))), bible)
 
         if subject_ref:
             mode = "SUBJECT_REF"
@@ -815,6 +815,10 @@ def _scene_prompt_system(standin: bool, has_wardrobe: bool = False) -> str:
         "scene text explicit in your English prompt — if the scene names something concrete "
         "(e.g. Earth, a spaceship, a specific landmark), your prompt must name that exact "
         "thing too, not a vague substitute or generic background detail. Never drop it. "
+        "The 'Global style' line you are given below is appended to your output automatically "
+        "after you write it — do NOT copy, restate, or paraphrase any part of it (rendering "
+        "technique, texture/material wording, lens, edge treatment, prop design language). "
+        "Write ONLY this scene's shot, pose, expression, action and camera movement. "
     )
     if standin:
         base += (
@@ -830,6 +834,20 @@ def _scene_prompt_system(standin: bool, has_wardrobe: bool = False) -> str:
             "slow-panning, not pushing in. "
         )
     return base + "Output ONLY the prompt text — no preamble, no quotes, no explanation, no markdown."
+
+
+def _strip_echoed_bible(raw_prompt: str, bible: str) -> str:
+    """씬 프롬프트 LLM이 system 프롬프트의 '베끼지 마라' 지시를 무시하고 user 프롬프트에
+    준 'Global style: {bible}' 컨텍스트를 그대로 따라 쓰는 사례 실측(로컬 소형모델,
+    job 78cb492c) — code가 bible을 뒤에 다시 붙이므로 중복+토큰낭비. 마커 이후 텍스트와
+    bible 원문 그대로 등장한 부분을 제거해 최종 프롬프트에서 스타일 문구가 한 번만
+    남게 한다."""
+    marker_idx = raw_prompt.find("Global style:")
+    if marker_idx != -1:
+        raw_prompt = raw_prompt[:marker_idx].rstrip()
+    if bible and bible in raw_prompt:
+        raw_prompt = raw_prompt.replace(bible, "").strip(" ,.")
+    return raw_prompt
 
 
 def _scene_prompt_user(scene: Scene, bible: str, wardrobe: str = "", lighting: str = "") -> str:
