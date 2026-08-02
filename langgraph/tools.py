@@ -1076,6 +1076,51 @@ async def generate_i2i_style(image_bytes: bytes, style: str, seed: int | None = 
     }
 
 
+## ── TTS 온디맨드 기동 ─────────────────────────────────────────
+# Kokoro/Chatterbox는 systemd user 유닛으로만 존재하고 기본 비활성 상태다(상시 상주하면
+# LocalAI의 다른 카테고리와 GPU 메모리를 다툼). 요청이 올 때만 `systemctl --user start`로
+# 띄우고, 일정 시간 아무도 안 쓰면 자동으로 내린다. ponytail: 유휴 감시는 단일 asyncio
+# 태스크 + dict 하나로 — 프로세스 매니저나 systemd timer 신규 도입 안 함.
+TTS_IDLE_TIMEOUT = float(os.environ.get("AGENT_TTS_IDLE_TIMEOUT", "180"))
+_tts_last_used: dict[str, float] = {}
+_tts_watchdog_task: asyncio.Task | None = None
+
+
+async def _tts_idle_watchdog() -> None:
+    while True:
+        await asyncio.sleep(30.0)
+        now = time.time()
+        for unit, last in list(_tts_last_used.items()):
+            if now - last > TTS_IDLE_TIMEOUT:
+                subprocess.run(["systemctl", "--user", "stop", unit], check=False)
+                _tts_last_used.pop(unit, None)
+
+
+async def _ensure_tts_service(unit: str, base_url: str) -> None:
+    """unit이 안 떠있으면 systemctl --user start로 기동하고 /health가 응답할 때까지 기다린다."""
+    global _tts_watchdog_task
+    _tts_last_used[unit] = time.time()
+    if _tts_watchdog_task is None:
+        _tts_watchdog_task = asyncio.create_task(_tts_idle_watchdog())
+    async with httpx.AsyncClient(timeout=3.0) as client:
+        try:
+            if (await client.get(f"{base_url}/health")).status_code < 500:
+                return
+        except httpx.HTTPError:
+            pass
+    subprocess.run(["systemctl", "--user", "start", unit], check=True)
+    deadline = time.time() + 110.0  # TimeoutStartSec=120 여유
+    async with httpx.AsyncClient(timeout=3.0) as client:
+        while time.time() < deadline:
+            try:
+                if (await client.get(f"{base_url}/health")).status_code < 500:
+                    return
+            except httpx.HTTPError:
+                pass
+            await asyncio.sleep(2.0)
+    raise TimeoutError(f"{unit}가 기동 후 {deadline:.0f}s 내 healthy 상태가 되지 않음")
+
+
 async def generate_kokoro_narration(text: str, speed: float = 1.0) -> bytes:
     """Generate Korean narration through the dedicated Kokoro backend.
 
@@ -1083,7 +1128,8 @@ async def generate_kokoro_narration(text: str, speed: float = 1.0) -> bytes:
     Supporting both keeps this gateway independent from a particular Kokoro
     server wrapper without weakening the model boundary.
     """
-    # 첫 요청에는 Kokoro 모델의 메모리 적재 시간이 포함될 수 있다.
+    # 첫 요청에는 Kokoro 프로세스 자체를 기동하는 시간이 포함될 수 있다(온디맨드).
+    await _ensure_tts_service("kokoro.service", KOKORO_URL)
     timeout = httpx.Timeout(connect=10.0, read=300.0, write=30.0, pool=None)
     async with oom.phase("tts"), httpx.AsyncClient(timeout=timeout) as client:
         response = await client.post(
@@ -1113,6 +1159,7 @@ async def generate_chatterbox_clone(
     filename: str = "reference.wav",
 ) -> bytes:
     """Generate cloned Korean speech using only the Chatterbox V3 backend."""
+    await _ensure_tts_service("chatterbox.service", CHATTERBOX_URL)
     timeout = httpx.Timeout(connect=10.0, read=600.0, write=60.0, pool=None)
     async with oom.phase("tts"), httpx.AsyncClient(timeout=timeout) as client:
         response = await client.post(
