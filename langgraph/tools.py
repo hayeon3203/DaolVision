@@ -861,6 +861,45 @@ async def generate_i2v_fallback_clip(
     return await _generate_ltx_job_clip(job_id, scene_id, graph, request_key, force_new)
 
 
+# Cosmos3-Nano는 31GB GPU 상주라 ComfyUI 등과 상시 동거가 안 됨(VRAM 부족) —
+# systemd 상시 서비스 대신 첫 /t2v 요청이 직접 프로세스를 띄우고, 유휴 시
+# server.py 자체 워치독(COSMOS3NANO_IDLE_TIMEOUT)이 스스로 종료해 VRAM을 반납한다.
+COSMOS3NANO_BOOT_TIMEOUT = float(os.environ.get("AGENT_COSMOS3NANO_BOOT_TIMEOUT", "60"))
+_cosmos3nano_launch_lock = asyncio.Lock()
+
+
+async def _ensure_cosmos3nano_running(client: httpx.AsyncClient) -> None:
+    async def _healthy() -> bool:
+        try:
+            r = await client.get(f"{COSMOS3NANO_URL}/health", timeout=2.0)
+            return r.status_code == 200
+        except httpx.HTTPError:
+            return False
+
+    if await _healthy():
+        return
+
+    async with _cosmos3nano_launch_lock:
+        if await _healthy():  # 락 대기 중 다른 요청이 이미 띄웠을 수 있음
+            return
+        repo_root = Path(__file__).resolve().parents[1]
+        python = repo_root / ".venv-cosmos3nano" / "bin" / "python"
+        script = repo_root / "t2v" / "cosmos3nano" / "server.py"
+        log_path = repo_root / "t2v" / "cosmos3nano" / "server.log"
+        with open(log_path, "ab") as log:
+            subprocess.Popen(
+                [str(python), str(script)],
+                stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                cwd=str(repo_root), start_new_session=True,  # langgraph 재시작에 안 딸려 죽게
+            )
+        deadline = time.monotonic() + COSMOS3NANO_BOOT_TIMEOUT
+        while time.monotonic() < deadline:
+            if await _healthy():
+                return
+            await asyncio.sleep(1.0)
+        raise TimeoutError("Cosmos3-Nano 서버가 제한 시간 내 기동하지 않음")
+
+
 async def generate_t2v_cosmos3nano(
     prompt: str,
     seed: int | None = None,
@@ -870,13 +909,15 @@ async def generate_t2v_cosmos3nano(
 ) -> dict:
     """:8700 /t2v 단발샷 (Cosmos3-Nano, t2v/cosmos3nano 독립 서버 프록시, Task 7.6).
     job과 무관한 단발 호출 — 이미지 입력 없이 프롬프트만으로 영상 1개, base64 mp4로
-    바로 반환. 별도 상주 프로세스(:8505)라 ComfyUI(:8188)와 GPU 메모리를 나눠 쓰므로
-    llm/t2i/i2v/tts와 같은 batch 직렬화에 태운다(oom_orchestrator 참고)."""
+    바로 반환. 서버가 안 떠 있으면 여기서 직접 기동(온디맨드, VRAM 부족으로 상시
+    서비스 불가 — server.py 쪽 유휴 워치독과 짝). ComfyUI와 GPU 메모리를 나눠 쓰므로
+    llm/t2i/i2v/tts와 같은 batch 직렬화에도 태운다(oom_orchestrator 참고)."""
     if seed is None:
         seed = int(time.time())
 
     timeout = httpx.Timeout(connect=10.0, read=600.0, write=60.0, pool=None)
     async with oom.phase("t2v"), httpx.AsyncClient(timeout=timeout) as client:
+        await _ensure_cosmos3nano_running(client)
         resp = await client.post(
             f"{COSMOS3NANO_URL}/generate",
             json={
