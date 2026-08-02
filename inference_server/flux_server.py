@@ -63,14 +63,19 @@ _lock = threading.Lock()
 
 def _load():
     global _pipe
-    if _pipe is not None:
-        return
-    log.info("Loading FluxPipeline from %s", MODEL_PATH)
-    t0 = time.time()
-    pipe = FluxPipeline.from_pretrained(MODEL_PATH, torch_dtype=torch.bfloat16)
-    pipe.to("cuda")
-    _pipe = pipe
-    log.info("FLUX.1-schnell ready in %.1fs", time.time() - t0)
+    # check-and-set must be inside _lock -- otherwise two overlapping requests
+    # (e.g. a client retry after its own timeout, while the first call is still
+    # loading) both see _pipe is None and each start a full ~34GB load, doubling
+    # GPU memory mid-load and getting OOM-killed (observed: status=9/KILL).
+    with _lock:
+        if _pipe is not None:
+            return
+        log.info("Loading FluxPipeline from %s", MODEL_PATH)
+        t0 = time.time()
+        pipe = FluxPipeline.from_pretrained(MODEL_PATH, torch_dtype=torch.bfloat16)
+        pipe.to("cuda")
+        _pipe = pipe
+        log.info("FLUX.1-schnell ready in %.1fs", time.time() - t0)
 
 
 def _unload():
