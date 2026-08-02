@@ -1,14 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import PageHeader from '../components/PageHeader'
 import LoadingSpinner from '../components/LoadingSpinner'
+import AgentPhaseStepper from '../components/AgentPhaseStepper'
 import { gatewayApi, GATEWAY_BASE, fileToBase64 } from '../utils/api'
 
 // Task 6.3: Agent 카테고리(S1 — 텍스트 스토리 → 캐릭터 일관 영상 + 나레이션).
 // anim-agent 게이트웨이(:8700)의 /jobs·/jobs/{id}/status·/jobs/{id}/resume만
 // 호출한다. 영상 나레이션은 그래프 내부에서 /tts/narration(고정 CC0 화자)으로
 // 이미 배선돼 있다 — 이 페이지가 별도로 TTS를 호출하지 않는다. LocalAI 자체
-// 추론 백엔드는 쓰지 않는다. phase→스텝 하이라이트 UI는 Task 6.4에서 얹는다;
-// 여기선 폴링 + 승인 게이트만 동작하면 된다.
+// 추론 백엔드는 쓰지 않는다. phase→스텝 하이라이트는 AgentPhaseStepper(Task 6.4).
 const POLL_MS = 3000
 
 // driver.py _auto_decision과 같은 매핑 — 흔한 게이트는 원클릭 승인.
@@ -99,6 +99,7 @@ export default function GatewayAgent() {
           </form>
         ) : (
           <div>
+            <AgentPhaseStepper phase={status?.phase} />
             <p className="form-field__hint">job_id: {jobId}</p>
             {checkpoint && (
               <div className="form-group">

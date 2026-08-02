@@ -5218,6 +5218,65 @@ button.collapsible-header:focus-visible {
 }
 .gen-progress__time { color: var(--color-text-muted); }
 
+/* Task 6.4: Agent phase stepper — phase→step highlight above the approval panel. */
+.phase-stepper {
+  display: flex;
+  align-items: flex-start;
+  list-style: none;
+  margin: 0 0 var(--spacing-lg);
+  padding: 0;
+  width: 100%;
+}
+.phase-stepper__step {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spacing-xs);
+  text-align: center;
+  position: relative;
+}
+.phase-stepper__step:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  width: 100%;
+  height: 2px;
+  background: var(--color-border);
+  z-index: 0;
+}
+.phase-stepper__step--done:not(:last-child)::after { background: var(--color-primary); }
+.phase-stepper__dot {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--color-bg-secondary);
+  border: 2px solid var(--color-border);
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+}
+.phase-stepper__step--active .phase-stepper__dot {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+.phase-stepper__step--done .phase-stepper__dot {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: var(--color-bg-primary);
+}
+.phase-stepper__label {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
+.phase-stepper__step--active .phase-stepper__label { color: var(--color-text-primary); font-weight: 600; }
+.phase-stepper__step--done .phase-stepper__label { color: var(--color-text-secondary); }
+
 /* Talk voice visualizer: status-tinted frequency bars. */
 .voice-viz {
   display: block;
