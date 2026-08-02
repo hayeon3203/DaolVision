@@ -112,6 +112,7 @@
 | 6.8 | Agent 클립승인 게이트(3-5) clip_url 노출 + 리뷰 UI (job 4265fba0 확인 중 발견 — checkpoint.scenes가 호스트 절대경로 clip_path만 줘서 프론트가 클립을 아예 못 보여주고 원클릭 approve_all만 있었음) [tdd:skip:ui-component] | api.py `_checkpoint_for_client()`가 clip_url(/files/...) 보강, AgentClipPreview가 클립 재생+quality_flag 표시+씬별 재생성(action:regenerate) 지원 | cd langgraph && ./.venv/bin/python tests/test_checkpoint_clip_url.py | 6.6 | cc:완료 [c160795, 44b816c] | - |
 | 6.9 | 씬 프롬프트의 인물 환각 + 화풍 표류 버그 수정 (job 4265fba0 — subject_type=nonhuman(인물 없는 씬)인데도 "a lone figure" 등 임의 인물 생성, 앵커·Face-ID 둘 다 없는 순수 T2V job은 style_bible이 flat vector/2D로 표류) [tdd:skip:post-hoc-diagnostic-fix — 실 LLM 호출로 재현·수정 확인, red-first 아님] | has_human_subject=False면 인물 묘사 지시를 금지 지시로 반전, 앵커/Face-ID 둘 다 없으면 style_bible이 photoreal cinematic 기본값 채택. 유닛테스트 3종 PASS, 실 LLM 호출로 두 버그 각각 재현·수정 확인 | cd langgraph && ./.venv/bin/python tests/test_scene_prompt_subject.py | 6.7 | cc:완료 [c160795] | - |
 | 6.10 | Agent 완료/재시작 버튼 (완료 후 dead-end, 진행 중 job 포기 수단 없음 발견) [tdd:skip:ui-component] | job_id 옆 상시 "새로 시작"(진행중이면 cancelJob) 버튼, status==done시 "새 영상 만들기" CTA | - | 6.8 | cc:완료 [39f99ba] | - |
+| 6.11 | VIDEO_PRESETS steps 죽은코드 발견 + AGENT_LTX13B_STEPS 노출 (quality/fast 프리셋이 steps:10/20을 정의하지만 tools.py 어디서도 안 읽음 — 실제 step 수는 별도 AGENT_LTX13B_STEPS, 기본 8, run_agent.sh에 노출 안 돼 있었음) [tdd:skip:config-tuning] | run_agent.sh에 AGENT_LTX13B_STEPS export 추가(8→12 테스트), 오해 소지 있던 프리셋 주석 정정 | - | 6.9 | cc:완료 [4bd7048] | - |
 
 ---
 
