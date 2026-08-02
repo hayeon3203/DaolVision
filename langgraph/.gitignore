@@ -4,3 +4,4 @@ __pycache__/
 *.log
 *.pyc
 checkpoints*.db*
+tests/output_compare/

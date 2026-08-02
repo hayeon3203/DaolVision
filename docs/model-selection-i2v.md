@@ -98,3 +98,24 @@ Wan2.2 T2V/I2V-폴백 제거 후 `:8700` job 파이프라인의 순수 T2V(참�
   문제였음. `_generate_ltx_job_clip`에 실제 mp4로 재인코딩하는 단계를
   추가해 해결(커밋 `35d6019`/`fade045`), 이 문서 작성 시점엔 이미 해결된
   과거형 이슈.
+
+## 2026-08-02 육안 비교 — 22B Face-ID vs 13B(비Face-ID)
+
+같은 참조 사진(`건호군.jpg`), 같은 프롬프트, 같은 seed(1234567890)로 두
+경로를 동일 조건 비교(`langgraph/tests/compare_22b_vs_13b.py`).
+
+| | 13B(비Face-ID) | 22B Face-ID |
+|---|---|---|
+| 해상도 | 576x768(입력 종횡비 유지, `_ltx13b_dims`) | 768x768(고정) |
+| steps | 8 | 8 |
+| 길이 | 97프레임(24fps, ~4.0s) | 4.0s(24fps) |
+| identity 조건 | 없음(원본 사진을 첫 프레임으로 조건부 입력만) | Face-ID LoRA + Identity Transfer(node 129) |
+
+**결과(육안 확인): 22B가 얼굴 일관성 확실히 나음.** 13B는 Face-ID
+conditioning이 없어 프레임이 진행될수록 identity가 흔들리는 반면, 22B는
+동일 조건에서 원본 얼굴을 뚜렷하게 유지함 — [I2V 선택](model-selection-i2v.md)
+상단의 "얼굴 일관 영상은 LTX-2.3 22B" 채택 근거를 재확인.
+
+재현: `.venv/bin/python langgraph/tests/compare_22b_vs_13b.py` (ComfyUI
+`:8188` 필요, 결과물은 `langgraph/tests/output_compare/`에 저장되며 git에는
+커밋하지 않음).
