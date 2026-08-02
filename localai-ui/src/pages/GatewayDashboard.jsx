@@ -10,11 +10,6 @@ import { apiUrl } from '../utils/basePath'
 const POLL_MS = 5000
 const HISTORY_MAX = 60 // 5000ms 폴링 * 60 = 5분 창
 
-// hf.co/nvidia/NVIDIA-Nemotron-3-Nano-4B-GGUF:Q4_K_M → NVIDIA-Nemotron-3-Nano-4B-GGUF
-function shortModelName(model) {
-  return model.replace(/^hf\.co\/[^/]+\//, '').split(':')[0]
-}
-
 // ponytail: GB10은 power_limit_w/온도 스로틀 지점이 드라이버(580.142)에 미노출돼
 // 절대 정격값을 못 읽는다 — 아래 warn/error 문턱은 관찰 기반 근사치. 실측 스로틀링
 // 지점이 확인되면 이 상수만 교체.
@@ -41,37 +36,14 @@ function ScoreCard({ label, value, unit, tone }) {
 }
 
 // HF 모델카드 칩(아이콘+텍스트, 옅은 배경+테두리 pill). tone은 아이콘 색만 바꾼다 —
-// 텍스트는 항상 중립(데이터 색을 텍스트에 입히지 않는다).
-function HfChip({ icon, label, tone = 'muted' }) {
+// 텍스트는 항상 중립(데이터 색을 텍스트에 입히지 않는다). img가 있으면 폰트아이콘 대신
+// 로고 이미지를 쓴다(nvidia 칩).
+function HfChip({ icon, img, label, tone = 'muted' }) {
   return (
     <span className={`hf-chip hf-chip--${tone}`}>
-      <i className={icon} />
+      {img ? <img src={img} alt="" className="hf-chip__logo" /> : <i className={icon} />}
       {label}
     </span>
-  )
-}
-
-// HF 모델카드 헤더(nvidia 로고 + org/모델명)와 같은 형식. trace에서 vendor가 nvidia인
-// 첫 스텝을 뽑아 보여준다 — 하드코딩 모델명 금지(모델 스왑 잦음, model-selection.md 참고).
-function ModelIdentity({ trace }) {
-  const step = trace.find((t) => t.vendor === 'nvidia')
-  if (!step) return null
-  const quant = step.model.includes(':') ? step.model.split(':')[1] : null
-  return (
-    <div style={{ marginBottom: 'var(--spacing-md)' }}>
-      <div className="model-identity">
-        <img src={apiUrl('/nvidia_logo_icon.svg')} alt="nvidia" className="model-identity__logo" />
-        <span className="model-identity__org">nvidia</span>
-        <span className="model-identity__sep">/</span>
-        <strong className="model-identity__name">{shortModelName(step.model)}</strong>
-      </div>
-      <div className="hf-chip-row">
-        <HfChip icon="fas fa-comments" label={step.step} />
-        <HfChip icon="fas fa-building" label={step.vendor} />
-        <HfChip icon="fas fa-file-lines" label={`License: ${step.license}`} />
-        {quant && <HfChip icon="fas fa-layer-group" label={quant} />}
-      </div>
-    </div>
   )
 }
 
@@ -209,11 +181,6 @@ export default function GatewayDashboard() {
         }
         .line-chart__tooltip strong { color: var(--color-text-primary); font-size: 1rem; }
         .line-chart__tooltip span { color: var(--color-text-muted); font-size: 0.75rem; }
-        .model-identity { display: flex; align-items: center; gap: 8px; margin-bottom: var(--spacing-xs); }
-        .model-identity__logo { width: 22px; height: 22px; }
-        .model-identity__org { color: var(--color-text-muted); font-size: 0.875rem; }
-        .model-identity__sep { color: var(--color-text-muted); }
-        .model-identity__name { color: var(--color-text-primary); font-weight: 700; font-size: 1.0625rem; }
         .hf-chip-row { display: flex; flex-wrap: wrap; gap: var(--spacing-xs); }
         .hf-chip {
           display: inline-flex; align-items: center; gap: 6px;
@@ -226,6 +193,7 @@ export default function GatewayDashboard() {
           white-space: nowrap;
         }
         .hf-chip i { font-size: 0.7rem; color: var(--color-text-muted); }
+        .hf-chip__logo { width: 12px; height: 12px; }
         .hf-chip--success i { color: var(--color-success); }
         .hf-chip--warning i { color: var(--color-warning); }
         .hf-chip--error i { color: var(--color-error); }
@@ -244,7 +212,22 @@ export default function GatewayDashboard() {
         <p style={{ color: 'var(--color-error)' }}>Error: {error}</p>
       ) : (
         <>
-          <ModelIdentity trace={trace} />
+          {/* 배지: nvidia / 오프라인 / External calls 실측 (HF 칩 디자인) */}
+          <div className="hf-chip-row" style={{ marginBottom: 'var(--spacing-lg)' }}>
+            {trace.some((t) => t.vendor === 'nvidia') && (
+              <HfChip img={apiUrl('/nvidia_logo_icon.svg')} label="nvidia" />
+            )}
+            <HfChip
+              icon={status.offline ? 'fas fa-circle-check' : 'fas fa-triangle-exclamation'}
+              tone={status.offline ? 'success' : 'warning'}
+              label={status.offline ? '오프라인' : '온라인'}
+            />
+            <HfChip
+              icon="fas fa-arrow-right-arrow-left"
+              tone={status.offline ? 'success' : 'warning'}
+              label={`External calls: ${status.external_calls}`}
+            />
+          </div>
 
           {/* 최상단 스코어카드: 메모리 / 전력 / 온도 (grafana stat 패널 형식) */}
           <div className="score-card-row">
@@ -273,20 +256,6 @@ export default function GatewayDashboard() {
             <LineChart title="GPU 사용률" unit="%" data={history} valueKey="util" />
             <LineChart title="전력" unit="W" data={history} valueKey="power" />
             <LineChart title="온도" unit="°C" data={history} valueKey="temp" />
-          </div>
-
-          {/* 배지: 오프라인 / External calls 실측 (HF 칩 디자인 통일) */}
-          <div className="hf-chip-row" style={{ marginBottom: 'var(--spacing-lg)' }}>
-            <HfChip
-              icon={status.offline ? 'fas fa-circle-check' : 'fas fa-triangle-exclamation'}
-              tone={status.offline ? 'success' : 'warning'}
-              label={status.offline ? '오프라인' : '온라인'}
-            />
-            <HfChip
-              icon="fas fa-arrow-right-arrow-left"
-              tone={status.offline ? 'success' : 'warning'}
-              label={`External calls: ${status.external_calls}`}
-            />
           </div>
 
           {/* 실행트레이스 */}
