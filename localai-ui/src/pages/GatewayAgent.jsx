@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import PageHeader from '../components/PageHeader'
 import LoadingSpinner from '../components/LoadingSpinner'
 import AgentPhaseStepper from '../components/AgentPhaseStepper'
+import AgentScenePreview from '../components/AgentScenePreview'
 import { gatewayApi, GATEWAY_BASE, fileToBase64 } from '../utils/api'
 
 // Task 6.3: Agent 카테고리(S1 — 텍스트 스토리 → 캐릭터 일관 영상 + 나레이션).
@@ -10,10 +11,11 @@ import { gatewayApi, GATEWAY_BASE, fileToBase64 } from '../utils/api'
 // 이미 배선돼 있다 — 이 페이지가 별도로 TTS를 호출하지 않는다. LocalAI 자체
 // 추론 백엔드는 쓰지 않는다. phase→스텝 하이라이트는 AgentPhaseStepper(Task 6.4).
 const POLL_MS = 3000
+const JOB_STORAGE_KEY = 'gwAgentJobId'
 
 // driver.py _auto_decision과 같은 매핑 — 흔한 게이트는 원클릭 승인.
+// 1-4(씬분할)는 AgentScenePreview로 사람이 직접 검토하므로 여기서 제외.
 function autoDecisionFor(checkpointName) {
-  if (checkpointName?.startsWith('1-4')) return { approved: true }
   if (checkpointName?.startsWith('3-5')) return { action: 'approve_all' }
   if (checkpointName?.startsWith('2-3')) return { approved: true }
   return null
@@ -33,7 +35,17 @@ export default function GatewayAgent() {
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null }
   }
 
-  useEffect(() => stopPolling, [])
+  useEffect(() => {
+    const saved = localStorage.getItem(JOB_STORAGE_KEY)
+    if (!saved) return
+    setJobId(saved)
+    ;(async () => {
+      await poll(saved)
+      if (!timerRef.current) timerRef.current = setInterval(() => poll(saved), POLL_MS)
+    })()
+    return stopPolling
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const poll = async (id) => {
     try {
@@ -55,6 +67,7 @@ export default function GatewayAgent() {
       const refImages = await Promise.all(refFiles.map(async (f) => `data:${f.type};base64,${await fileToBase64(f)}`))
       const { job_id } = await gatewayApi.startJob(scriptText.trim(), refImages)
       setJobId(job_id)
+      localStorage.setItem(JOB_STORAGE_KEY, job_id)
       await poll(job_id)
       timerRef.current = setInterval(() => poll(job_id), POLL_MS)
     } catch (err) {
@@ -101,7 +114,14 @@ export default function GatewayAgent() {
           <div>
             <AgentPhaseStepper phase={status?.phase} />
             <p className="form-field__hint">job_id: {jobId}</p>
-            {checkpoint && (
+            {checkpoint && checkpoint.checkpoint?.startsWith('1-4') ? (
+              <AgentScenePreview
+                scenes={checkpoint.scenes || []}
+                jobId={jobId}
+                onApprove={handleApprove}
+                onReject={(revisedText) => handleApprove({ approved: false, revised_script_text: revisedText })}
+              />
+            ) : checkpoint && (
               <div className="form-group">
                 <p><strong>승인 대기: {checkpoint.checkpoint}</strong></p>
                 {checkpoint.message && <p>{checkpoint.message}</p>}
