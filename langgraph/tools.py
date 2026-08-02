@@ -32,12 +32,13 @@ OLLAMA_URL = os.environ.get("AGENT_OLLAMA_URL", "http://127.0.0.1:11434/api/chat
 OLLAMA_GEN_URL = OLLAMA_URL.replace("/api/chat", "/api/generate")  # 비전 캡션용(images 지원)
 LLM_MODEL = os.environ.get(
     "AGENT_LLM_MODEL",
-    "gemma4:latest",
-)  # 2026-08-02: Nemotron 3 Nano 4B가 씬분할(matched_image/subject_type 동시판단)에서
-   # 비결정적으로 오판(job 67c45bcb — 동일 입력 3회 재현, matched_image 대부분 null,
-   # 같은 씬 텍스트인데 subject_type이 human/nonhuman/none으로 매번 바뀜) — gemma4:latest로 교체.
-VISION_MODEL = os.environ.get("AGENT_VISION_MODEL", "gemma4:latest")  # 씬분할 LLM과 동일 모델 =
-# text+vision 겸용, 추가 로드 0(run_agent.sh와 동일 기본값)
+    "hf.co/nvidia/NVIDIA-Nemotron-3-Nano-4B-GGUF:Q4_K_M",
+)  # 2026-08-02: gemma4:latest로 잠깐 바꿨다가 롤백 — matched_image/subject_type을 LLM
+  # 판단에 맡기지 않고 단일 참조 시 node_split_scenes가 결정론적으로 강제하도록 고쳐서
+  # (nodes.py의 "단일 참조 결정론적 매칭" 분기) 씬분할 LLM 자체의 이 약점은 더는
+  # 문제가 안 됨 — 원래 채택 근거(S1 JSON 파싱 검증)로 복귀.
+VISION_MODEL = os.environ.get("AGENT_VISION_MODEL", "gemma4:latest")  # 참조 캡션 전용
+# (단일 참조의 human/nonhuman 판정에 여전히 필요). qwen3.5:9b(중국원산) 교체 유지.
 T2I_URL = os.environ.get("AGENT_T2I_URL", "http://127.0.0.1:8501")
 KOKORO_URL = os.environ.get("AGENT_KOKORO_URL", "http://127.0.0.1:8503")
 CHATTERBOX_URL = os.environ.get("AGENT_CHATTERBOX_URL", "http://127.0.0.1:8504")

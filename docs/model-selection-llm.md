@@ -2,14 +2,17 @@
 
 ## 현재 결정
 
-- **씬 분할·참조 이미지 캡션:** gemma4:latest 단일 모델로 통일한다(2026-08-02).
-  text+vision 겸용이라 두 역할이 같은 Ollama 상주 모델을 공유 — 추가 로드 0.
-  **주의**: 같은 job으로 gemma4:latest 재현 시 `text` 필드 한글 오타 환각은
-  사라졌지만, `matched_image`/`subject_type` 비결정성은 완화됐을 뿐 완전히
-  해소되진 않음(3회 재현 중 matched_image 1~2회만 성공, subject_type 여전히
-  human/nonhuman/none 왔다갔다) — 남은 문제로 별도 추적 필요, 참조 이미지가
-  정확히 1장뿐이고 subject_type이 애매할 때는 LLM 판단에 맡기지 말고 코드에서
-  결정론적으로 전 씬에 매칭시키는 방향을 다음 후보로 검토.
+- **씬 분할 LLM:** NVIDIA Nemotron 3 Nano 4B GGUF Q4_K_M으로 롤백한다(2026-08-02,
+  같은 날 두 번째 결정). gemma4:latest로 잠깐 바꿔봤지만 `matched_image`/
+  `subject_type` 비결정성이 완화될 뿐 안 없어짐(아래 근거 참고) — 근본 원인이
+  "LLM이 씬↔참조이미지 매칭을 판단"하는 구조 자체였으므로, 모델 교체 대신
+  `node_split_scenes`가 **참조 이미지가 정확히 1장이면 LLM 판단을 무시하고
+  전 씬에 결정론적으로 강제 매칭**하도록 코드를 고쳤다(nodes.py "단일 참조
+  결정론적 매칭" 분기). 이걸로 씬분할 LLM 자체의 이 약점은 더는 문제가 안 돼
+  원래 채택 근거(S1 JSON 파싱 3/3 통과)로 복귀.
+- **참조 이미지 캡션:** gemma4:latest 유지. 단일 참조의 human/nonhuman 판정에만
+  쓰인다(matched_image 판단에는 더 이상 안 쓰임) — qwen3.5:9b(중국원산) 대체
+  근거는 그대로 유효.
 - **LTX의 Gemma 3 12B:** 일반 LLM이 아니라 LTX conditioning 구성요소다.
   LTX projection 및 Face-ID와 묶여 있으므로 별도 LLM 서버로 교체하지 않는다.
 

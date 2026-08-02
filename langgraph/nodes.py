@@ -482,32 +482,34 @@ async def node_split_scenes(state: GraphState) -> dict:
             "approved": False,
         })
 
-    # 매칭 누락 결정론적 보정: 9b가 씬↔이미지 matched_image를 랜덤 누락(여자 씬이 None으로
-    # 새 사람 생성 → 얼굴 일관성 붕괴)하던 문제를 캡션 기반 per-ref 종류로 메운다. 씬의
-    # subject_type과 같은 종류의 참조가 정확히 하나면 그 참조로 매칭한다(모호하면 건드리지 않음).
-    ref_types = {fn: _subject_type_from_caption(captions.get(fn, "")) for fn in ref_set}
-    for sc in scenes:
-        if sc.get("matched_image"):
-            continue
-        st = sc.get("subject_type")
-        if st in ("human", "nonhuman"):
-            cands = [fn for fn, t in ref_types.items() if t == st]
-            if len(cands) == 1:
-                sc["matched_image"] = cands[0]
-                sc["image_role"] = _normalise_image_role(cands[0], sc.get("image_role"), st)
-
-    # A안 fallback: 캡션 OFF(내용 매칭 불가) + 단일 참조(=생성 이미지 앵커) + LLM이 아무 씬에도
-    # 안 붙였으면 → 그 이미지를 전 씬 앵커로 강제 부착. 안 하면 순수 T2V로 새어 승인 이미지가
-    # 영상 분위기에 전혀 반영되지 않는다(M2 자동생성 플로우 맹점). 캡션 ON이거나 사람이 게이트에서
-    # 지정한 경우엔 이미 matched가 있어 이 분기를 타지 않는다.
-    if (len(ref_set) == 1 and not (state.get("ref_captions") or {})
-            and not any(sc["matched_image"] for sc in scenes)):
+    if len(ref_set) == 1:
+        # 단일 참조 결정론적 매칭: 참조가 1장뿐이면 "어느 씬에 매칭할지" 판단 자체가
+        # 불필요하다(항상 그 하나). LLM의 씬별 matched_image/subject_type 판단을
+        # 신뢰하지 않고 전 씬에 강제 부착한다 — Nemotron/gemma4 둘 다 이 판단에서
+        # 비결정적으로 실패함을 실측 확인(job 67c45bcb-44e2, [[docs/model-selection-llm.md]]:
+        # 동일 입력 재실행마다 matched_image가 null/부분매칭을 오갔다). subject_type은
+        # 캡션이 있으면 캡션 기반, 없으면 human 기본값(단일 참조 대부분이 인물 사진).
         only_ref = next(iter(ref_set))
+        st = _subject_type_from_caption(captions.get(only_ref, "")) or "human"
+        role = "character_ref" if st == "nonhuman" else "ref"
         for sc in scenes:
             sc["matched_image"] = only_ref
-            # character_ref → SUBJECT_REF: 참조 실루엣·색상 보존이 목표. 캡션 없어 사람/비인간
-            # 구분 불가라 피사체 보존이 가장 강한 모드로 통일. ponytail: 사람 얼굴 앵커면 "start"(STANDIN)가 더 적합.
-            sc["image_role"] = "character_ref"
+            sc["subject_type"] = st
+            sc["image_role"] = role
+    elif len(ref_set) > 1:
+        # 매칭 누락 결정론적 보정: 9b가 씬↔이미지 matched_image를 랜덤 누락(여자 씬이 None으로
+        # 새 사람 생성 → 얼굴 일관성 붕괴)하던 문제를 캡션 기반 per-ref 종류로 메운다. 씬의
+        # subject_type과 같은 종류의 참조가 정확히 하나면 그 참조로 매칭한다(모호하면 건드리지 않음).
+        ref_types = {fn: _subject_type_from_caption(captions.get(fn, "")) for fn in ref_set}
+        for sc in scenes:
+            if sc.get("matched_image"):
+                continue
+            st = sc.get("subject_type")
+            if st in ("human", "nonhuman"):
+                cands = [fn for fn, t in ref_types.items() if t == st]
+                if len(cands) == 1:
+                    sc["matched_image"] = cands[0]
+                    sc["image_role"] = _normalise_image_role(cands[0], sc.get("image_role"), st)
 
     return {"scenes": scenes, "phase": "planning"}
 
