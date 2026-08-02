@@ -107,6 +107,8 @@
 | 6.3 | LocalAI 프론트 5카테고리(Agent/I2V 단발샷/I2I/TTS/T2I) → :8700 배선 (API 콜 리라이트. 2026-08-01 사용자 지시로 독립 T2I 카테고리 재추가 — 2026-07-31 폐지 결정을 뒤집음) [tdd:skip:frontend-wiring] | Agent의 영상 나레이션은 /tts/narration, 독립 TTS 카테고리는 /tts/clone, I2V 단발샷 카테고리는 /i2v, I2I는 /i2i, T2I는 /t2i에 도달하고 LocalAI 추론백엔드 미사용 | - | 2.1, 4.1, 4.2, 4.2.1, 4.6 | cc:완료 [818cb9d] | - |
 | 6.4 | Agent 노드 스텝퍼 컴포넌트 (phase→스텝 하이라이트) [tdd:skip:ui-component] | phase 값으로 5스텝 하이라이트 렌더, 챗 위 표시 | - | 6.3, 5.5 | cc:완료 [5766929] | - |
 | 6.5 | Wan2.2(:8500, 중국원산) 백엔드 완전 제거 → T2V/I2V 폴백을 LTX-13B-distilled(:8188)로 통합 (docs/model-selection.md 비중국 원산 원칙 위반 해소, [[Duplicate, don't migrate]]) | call_video/WAN_URL 삭제, 신규 모델 다운로드 없음, driver --dry PASS, 유닛테스트 PASS, 라이브 job 1회 실측(이미지 없는 씬 포함) | cd langgraph && ./.venv/bin/python tests/test_wan_removal.py && ./.venv/bin/python driver.py --dry | 4.6 | cc:완료 [f6ac142] | - |
+| 6.6 | Agent 씬분할 승인 게이트(1-4) 리뷰 UI (job 78cb492c 확인 중 원클릭 블라인드 승인만 있고 씬 내용 미표시 발견) [tdd:skip:ui-component] | checkpoint.scenes 렌더(텍스트/mood/duration/피사체타입/매칭이미지), 승인 또는 스토리 수정 후 재분할(revised_script_text) 지원 | - | 6.3 | cc:완료 [286f603] | - |
+| 6.7 | 씬 프롬프트 LLM의 style_bible 중복 에코 버그 수정 (job 78cb492c 영상 퀄리티 저하 원인 — 최종 프롬프트 절반이 스타일 문구 중복) [tdd:skip:post-hoc-diagnostic-fix — 실 LLM 호출로 버그 재현·수정 확인 후 회귀테스트 작성, red-first 아님] | _scene_prompt_system에 반복금지 지시 추가 + _strip_echoed_bible()로 중복 제거, 유닛테스트 3종 PASS | cd langgraph && ./.venv/bin/python tests/test_strip_echoed_bible.py | 5.1 | cc:완료 [b3ae916] | - |
 
 ---
 
