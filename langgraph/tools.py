@@ -108,8 +108,8 @@ I2V_WORKFLOW = _WORKFLOW_DIR / "i2v_14b.json"
 # face(사람): 얼굴 identity만 주입(Stand-In), 배경은 프롬프트 100%(빈 embeds). M3-9.
 FACE_WORKFLOW = _WORKFLOW_DIR / "standin_t2v.json"
 LTX_FACEID_WORKFLOW = _WORKFLOW_DIR / "ltx_faceid_api.json"
-LTX_FACEID_WIDTH = int(os.environ.get("AGENT_LTX_FACEID_WIDTH", "1024"))
-LTX_FACEID_HEIGHT = int(os.environ.get("AGENT_LTX_FACEID_HEIGHT", "576"))
+LTX_FACEID_WIDTH = int(os.environ.get("AGENT_LTX_FACEID_WIDTH", "768"))
+LTX_FACEID_HEIGHT = int(os.environ.get("AGENT_LTX_FACEID_HEIGHT", "768"))
 LTX_FACEID_FPS = int(os.environ.get("AGENT_LTX_FACEID_FPS", "24"))
 LTX_FACEID_STEPS = int(os.environ.get("AGENT_LTX_FACEID_STEPS", "8"))
 # node 129(LTXIdentityOverlapConditioning)의 identity 강도 노브. 기본값 1.0은 워크플로
@@ -249,6 +249,10 @@ async def call_llm(system_prompt: str, user_prompt: str) -> str:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
+                # num_ctx 미지정 시 모델 기본 컨텍스트(Nemotron 1,048,576 / qwen3.5:9b
+                # 262,144 토큰)로 KV캐시를 잡아 콜당 수십 초 오버헤드가 남 — 씬 프롬프트는
+                # 몇백 토큰이면 충분(2026-08-02, job 003cb843 anchoring 5분31초 실측 디버깅).
+                "options": {"num_ctx": 8192},
             },
         )
         resp.raise_for_status()
@@ -326,6 +330,7 @@ async def caption_image(image_path: str) -> str:
             ),
             "images": [b64],
             "stream": False,
+            "options": {"num_ctx": 8192},
         })
         resp.raise_for_status()
         return resp.json().get("response", "").strip()
@@ -1483,7 +1488,7 @@ def ffmpeg_concat(clip_paths: list[str], transitions: list[str], out_path: str,
                    width: int = WIDTH, height: int = HEIGHT) -> str:
     """트랜지션 포함 이어붙이기. transitions[i] = clip i→i+1 사이 ('crossfade'|'cut').
     width/height 기본값은 T2V fast/quality 프리셋(832x480 등) — LTX_FACEID 씬이 섞인
-    잡은 호출부(node_edit_concat)가 LTX_FACEID_WIDTH/HEIGHT(1024x576)를 넘겨써야
+    잡은 호출부(node_edit_concat)가 LTX_FACEID_WIDTH/HEIGHT(768x768)를 넘겨써야
     LTX 클립이 이 프리셋으로 다운스케일되지 않는다(Face-ID 화질 손실 방지)."""
     if len(clip_paths) == 1:
         subprocess.run(["ffmpeg", "-y", "-i", clip_paths[0], "-c", "copy", out_path],
