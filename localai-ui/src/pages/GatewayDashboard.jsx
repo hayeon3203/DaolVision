@@ -132,8 +132,9 @@ export default function GatewayDashboard() {
   const memPercent = status ? (status.gpu.used_gb / status.gpu.total_gb) * 100 : 0
 
   return (
-    <div className="page page--wide">
+    <div className="page page--wide gw-dashboard-page">
       <style>{`
+        .gw-dashboard-page .page-header--editorial { margin-bottom: var(--spacing-sm); }
         .score-card-row {
           display: grid;
           grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
