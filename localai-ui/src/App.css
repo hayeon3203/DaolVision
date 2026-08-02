@@ -5218,6 +5218,21 @@ button.collapsible-header:focus-visible {
 }
 .gen-progress__time { color: var(--color-text-muted); }
 
+/* Agent job bar: job_id + always-available reset button. */
+.agent-jobbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+  margin-bottom: var(--spacing-sm);
+}
+.agent-jobbar .form-field__hint { margin: 0; }
+.agent-jobbar .btn-secondary {
+  padding: 2px 10px;
+  font-size: var(--text-xs);
+  width: auto;
+}
+
 /* Scene-split review UI (checkpoint 1-4_scene_split) before approval. */
 .scene-preview__list {
   list-style: none;

@@ -89,6 +89,19 @@ export default function GatewayAgent() {
     }
   }
 
+  const handleReset = async () => {
+    stopPolling()
+    if (jobId && status?.status !== 'done' && status?.status !== 'error') {
+      try { await gatewayApi.cancelJob(jobId) } catch { /* best-effort — job may already be finished */ }
+    }
+    localStorage.removeItem(JOB_STORAGE_KEY)
+    setJobId(null)
+    setStatus(null)
+    setError(null)
+    setScriptText('')
+    setRefFiles([])
+  }
+
   const checkpoint = status?.status === 'waiting_for_approval' ? status.checkpoint : null
   const auto = checkpoint ? autoDecisionFor(checkpoint.checkpoint) : null
 
@@ -114,7 +127,20 @@ export default function GatewayAgent() {
         ) : (
           <div>
             <AgentPhaseStepper phase={status?.phase} />
-            <p className="form-field__hint">job_id: {jobId}</p>
+            <div className="agent-jobbar">
+              <p className="form-field__hint">job_id: {jobId}</p>
+              <button type="button" className="btn btn-secondary" onClick={handleReset}>
+                <i className="fas fa-rotate-left" /> 새로 시작
+              </button>
+            </div>
+            {status?.status === 'done' && (
+              <div className="form-group">
+                <p className="form-field__hint"><i className="fas fa-circle-check" /> 완료됐습니다.</p>
+                <button type="button" className="btn btn-primary btn-full" onClick={handleReset}>
+                  <i className="fas fa-plus" /> 새 영상 만들기
+                </button>
+              </div>
+            )}
             {checkpoint && checkpoint.checkpoint?.startsWith('1-4') ? (
               <AgentScenePreview
                 scenes={checkpoint.scenes || []}

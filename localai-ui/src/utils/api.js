@@ -711,4 +711,5 @@ export const gatewayApi = {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ payload }),
   }),
+  cancelJob: (jobId) => gatewayFetchJSON(`/jobs/${encodeURIComponent(jobId)}/cancel`, { method: 'POST' }),
 }
