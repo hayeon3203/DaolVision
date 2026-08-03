@@ -113,8 +113,15 @@ I2V_WORKFLOW = _WORKFLOW_DIR / "i2v_14b.json"
 # face(사람): 얼굴 identity만 주입(Stand-In), 배경은 프롬프트 100%(빈 embeds). M3-9.
 FACE_WORKFLOW = _WORKFLOW_DIR / "standin_t2v.json"
 LTX_FACEID_WORKFLOW = _WORKFLOW_DIR / "ltx_faceid_api.json"
-LTX_FACEID_WIDTH = int(os.environ.get("AGENT_LTX_FACEID_WIDTH", "768"))
-LTX_FACEID_HEIGHT = int(os.environ.get("AGENT_LTX_FACEID_HEIGHT", "768"))
+LTX_FACEID_WIDTH = int(os.environ.get("AGENT_LTX_FACEID_WIDTH", "1280"))
+LTX_FACEID_HEIGHT = int(os.environ.get("AGENT_LTX_FACEID_HEIGHT", "704"))
+# node 129(LTXIdentityOverlapConditioning)의 기본값 "match_target"은 참조 이미지를
+# 출력 비율로 센터크롭 후 리사이즈한다 — 정사각 얼굴 참조를 와이드 타겟에 두면 위/
+# 아래(이마·턱)가 잘려 identity 손실(0e76413의 원인). "match_target_letterbox"는
+# 크롭 없이 레터박스로 맞춰 잘리는 픽셀이 없다 — 이 모드라야 16:9(1280x704)에서도
+# identity가 유지된다(2026-08-03 A/B 프레임 비교로 실측 확인).
+LTX_FACEID_REF_RESIZE_MODE = os.environ.get(
+    "AGENT_LTX_FACEID_REF_RESIZE_MODE", "match_target_letterbox")
 LTX_FACEID_FPS = int(os.environ.get("AGENT_LTX_FACEID_FPS", "24"))
 LTX_FACEID_STEPS = int(os.environ.get("AGENT_LTX_FACEID_STEPS", "8"))
 # node 129(LTXIdentityOverlapConditioning)의 identity 강도 노브. 기본값 1.0은 워크플로
@@ -1266,6 +1273,7 @@ def _build_ltx_faceid_graph(
     graph["104"]["inputs"]["image"] = face_image
     graph["101"]["inputs"]["filename_prefix"] = prefix
     graph["129"]["inputs"]["reference_guidance_scale"] = LTX_FACEID_GUIDANCE
+    graph["129"]["inputs"]["ref_resize_mode"] = LTX_FACEID_REF_RESIZE_MODE
     # S1 나레이션은 5.4에서 별도 TTS mux한다. 여기서 LTX 오디오를 디코드하면
     # 씬 사이 AudioVAE 로드가 대형 모델 offload와 스왑 스래싱을 유발한다.
     graph["56"]["inputs"].pop("audio", None)
@@ -1586,7 +1594,7 @@ def ffmpeg_concat(clip_paths: list[str], transitions: list[str], out_path: str,
                    width: int = WIDTH, height: int = HEIGHT) -> str:
     """트랜지션 포함 이어붙이기. transitions[i] = clip i→i+1 사이 ('crossfade'|'cut').
     width/height 기본값은 T2V fast/quality 프리셋(832x480 등) — LTX_FACEID 씬이 섞인
-    잡은 호출부(node_edit_concat)가 LTX_FACEID_WIDTH/HEIGHT(768x768)를 넘겨써야
+    잡은 호출부(node_edit_concat)가 LTX_FACEID_WIDTH/HEIGHT(1280x704)를 넘겨써야
     LTX 클립이 이 프리셋으로 다운스케일되지 않는다(Face-ID 화질 손실 방지)."""
     if len(clip_paths) == 1:
         subprocess.run(["ffmpeg", "-y", "-i", clip_paths[0], "-c", "copy", out_path],
