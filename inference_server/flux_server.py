@@ -62,30 +62,28 @@ _lock = threading.Lock()
 
 
 def _load():
+    """Caller must hold _lock. _load()+inference+_unload() need to run as one
+    atomic unit per request -- see the comment in generate() for why splitting
+    them into separate `with _lock` blocks still races."""
     global _pipe
-    # check-and-set must be inside _lock -- otherwise two overlapping requests
-    # (e.g. a client retry after its own timeout, while the first call is still
-    # loading) both see _pipe is None and each start a full ~34GB load, doubling
-    # GPU memory mid-load and getting OOM-killed (observed: status=9/KILL).
-    with _lock:
-        if _pipe is not None:
-            return
-        log.info("Loading FluxPipeline from %s", MODEL_PATH)
-        t0 = time.time()
-        pipe = FluxPipeline.from_pretrained(MODEL_PATH, torch_dtype=torch.bfloat16)
-        pipe.to("cuda")
-        _pipe = pipe
-        log.info("FLUX.1-schnell ready in %.1fs", time.time() - t0)
+    if _pipe is not None:
+        return
+    log.info("Loading FluxPipeline from %s", MODEL_PATH)
+    t0 = time.time()
+    pipe = FluxPipeline.from_pretrained(MODEL_PATH, torch_dtype=torch.bfloat16)
+    pipe.to("cuda")
+    _pipe = pipe
+    log.info("FLUX.1-schnell ready in %.1fs", time.time() - t0)
 
 
 def _unload():
-    """Free the ~34GB weight set right after use so this server can coexist with
-    comfyui.service (Stand-In). Measured (Z-Image-Turbo predecessor): both resident
-    at once -> CUDA OOM on this GB10 even though node_generate_image and Stand-In
-    never run at the same instant in the real pipeline (image step completes before
-    scene/clip generation starts). Costs a reload on the next request; runs once
-    per job, so that's a good trade for guaranteed coexistence. Skipped when
-    KEEP_RESIDENT."""
+    """Caller must hold _lock (see _load()). Free the ~34GB weight set right after
+    use so this server can coexist with comfyui.service (Stand-In). Measured
+    (Z-Image-Turbo predecessor): both resident at once -> CUDA OOM on this GB10
+    even though node_generate_image and Stand-In never run at the same instant in
+    the real pipeline (image step completes before scene/clip generation starts).
+    Costs a reload on the next request; runs once per job, so that's a good trade
+    for guaranteed coexistence. Skipped when KEEP_RESIDENT."""
     global _pipe
     if KEEP_RESIDENT or _pipe is None:
         return
@@ -119,7 +117,6 @@ def health():
 def generate(req: GenerateRequest):
     if not req.prompt or not req.prompt.strip():
         raise HTTPException(status_code=400, detail="prompt is required")
-    _load()
     kwargs = dict(
         prompt=req.prompt,
         width=req.width or DEF_W,
@@ -132,18 +129,18 @@ def generate(req: GenerateRequest):
     log.info("generate: size=%sx%s steps=%s seed=%s",
              kwargs["width"], kwargs["height"], kwargs["num_inference_steps"], req.seed)
     t0 = time.time()
-    try:
-        with _lock:
+    # load, inference and unload must all be ONE _lock hold, not three separate
+    # ones -- splitting them left a gap where a second request's _load() could see
+    # _pipe already set (from request A), then by the time it actually reached the
+    # inference `with _lock`, request A had already run its own inference AND
+    # unload in between, nulling _pipe out from under it: 'NoneType' object is not
+    # callable -> 500 (observed twice, 2026-08-03, genuine concurrent /generate
+    # calls from two different clients hitting this server at the same instant).
+    with _lock:
+        try:
+            _load()
             image = _pipe(**kwargs).images[0]
-    finally:
-        # _unload() must also be inside _lock (not just the inference call above) --
-        # otherwise a second concurrent request (e.g. node_generate_image's
-        # asyncio.gather firing 2-3 /generate calls at once for M2) can be evaluating
-        # `_pipe(**kwargs)` for its own with-block right as this request's unload sets
-        # global _pipe = None, raising "'NoneType' object is not callable" -> 500.
-        # Observed: job 78f91567, 2-query concurrent request, first image succeeded,
-        # second hit exactly this race.
-        with _lock:
+        finally:
             _unload()
     fname = f"{uuid.uuid4().hex}.png"
     out_path = os.path.join(OUT_DIR, fname)
