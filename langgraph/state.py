@@ -39,9 +39,9 @@ class GraphState(TypedDict, total=False):
     wardrobe_locks: dict[str, str] # 사람 ref 파일명 → 사용자가 선언한 고정 의상 설명
 
     # M2 이미지 생성 분기 (참조 이미지 미첨부 + 이미지 생성 요청 시)
-    image_request: str             # 사용자의 자연어 이미지 요청 (형식 강제 없음, 최대 3장 묘사 가능)
+    image_request: str             # 사용자의 자연어 이미지 요청 (형식 강제 없음)
     image_query: str               # 하위호환: image_queries[0]
-    image_queries: list[str]       # rewrite된 이미지 생성용 영어 프롬프트 (최대 3개, 2개+면 화풍 문구 공유)
+    image_queries: list[str]       # rewrite된 이미지 생성용 영어 프롬프트 (1개 고정, 리스트로 유지 — 하위호환)
     gen_image_path: str            # 하위호환: gen_image_paths[0]
     gen_image_paths: list[str]     # 생성된 이미지 png 경로들 (승인 게이트 대상)
 

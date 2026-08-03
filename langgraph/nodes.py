@@ -25,26 +25,24 @@ import metrics
 # ══════════════════════════════════════════════════════════
 
 _IMG_QUERY_SYSTEM = (
-    "You rewrite a user's free-form image request (any language) into prompts for a "
-    "text-to-image generator. The user may describe 1 to 3 distinct images in one request. "
-    "Output a JSON array of up to 3 objects, each {\"query\": \"<prompt>\"} — never more than 3. "
-    "Each query independently describes its own subject, composition, and lighting. "
+    "You rewrite a user's free-form image request (any language) into a single prompt for a "
+    "text-to-image generator. Even if the user describes multiple things, distill it into one "
+    "image request that captures the main subject, composition, and lighting. "
+    "Output a JSON array with exactly one object: [{\"query\": \"<prompt>\"}]. "
     "If the subject is a person or character, default to a photorealistic, cinematic "
     "live-action style unless the user explicitly asks for an anime, illustrated, or "
     "stylized look. "
-    "If the array has 2 or more entries, every entry's query MUST end with one identical "
-    "trailing clause, repeated verbatim across all entries, that pins down a shared art style "
-    "and mood (e.g. the same rendering technique, color palette, and lighting description) so "
-    "the images look like they belong to one consistent visual world. "
     "Output only the JSON array — no preamble, quotes, or markdown."
 )
 
 
 async def node_rewrite_image_query(state: GraphState) -> dict:
-    """M2-1: 사용자 자연어 이미지 요청(최대 3장 묘사 가능) → 이미지 생성용 영어 프롬프트들.
+    """M2-1: 사용자 자연어 이미지 요청 → 이미지 생성용 영어 프롬프트 1개.
     node_generate_prompts와 동일한 call_llm + clean_llm_prompt 패턴 재사용.
     사용자가 명시적으로 요청한 것이므로, 파싱 실패로 조용히 빈 결과를 주는 대신
-    /status의 error 필드로 재시도 안내를 노출한다(app.py except Exception → ERRORS[job_id])."""
+    /status의 error 필드로 재시도 안내를 노출한다(app.py except Exception → ERRORS[job_id]).
+    1장 고정(이전엔 최대 3장 동시 생성 허용 — flux_server.py 동시요청 레이스(job 78f91567)
+    + 콜드로드 비용이 장수만큼 배로 늘어 UX 나쁨, 1장 시나리오로 확정)."""
     request = (state.get("image_request") or "").strip()
     if not request:
         return {"image_queries": [], "image_query": ""}
@@ -61,7 +59,7 @@ async def node_rewrite_image_query(state: GraphState) -> dict:
         q = tools.clean_llm_prompt(q or "")
         if q:
             queries.append(q)
-    queries = queries[:3]
+    queries = queries[:1]
     if not queries:
         raise ValueError("이미지 생성 요청을 이해하지 못했습니다. 표현을 조금 바꿔서 다시 시도해주세요.")
     # M2 전용 phase — 기존 5단계 스테퍼(planning/prompting/anchoring/generating/done)
@@ -70,12 +68,12 @@ async def node_rewrite_image_query(state: GraphState) -> dict:
 
 
 async def node_generate_image(state: GraphState) -> dict:
-    """M2-2/M2-5: image_queries(최대 3개) → FLUX.1-schnell(:8501)로 정지 이미지 앵커를 한 번에 생성.
+    """M2-2/M2-5: image_queries(1개 고정) → FLUX.1-schnell(:8501)로 정지 이미지 앵커 생성.
     이전엔 Wan2.2-TI2V-5B(:8500, 이후 제거됨) 영상 파이프라인을 num_frames=1로 돌려썼는데(1장 뽑는 데 ~120s),
-    전용 T2I 모델로 교체해 ~10-15s로 단축. 산출: jobs/<job_id>/gen_img_N.png.
-    여러 장을 같은 seed로 생성해 화풍/색감 상관성을 높인다(모델이 이미지 조건 입력을
-    지원하지 않아 seed 공유가 화풍 통일을 위해 취할 수 있는 실질적인 방법)."""
-    queries = (state.get("image_queries") or [])[:3]
+    전용 T2I 모델로 교체. 산출: jobs/<job_id>/gen_img_0.png.
+    node_rewrite_image_query가 이미 1개로 자르지만, 방어적으로 여기서도 1개로 자른다
+    (동시 다중요청이던 예전엔 flux_server.py 언로드/락 레이스로 job 78f91567 500 재현됨)."""
+    queries = (state.get("image_queries") or [])[:1]
     if not queries:
         return {"gen_image_paths": [], "gen_image_path": ""}
     job_id = state["job_id"]
