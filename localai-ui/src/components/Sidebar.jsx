@@ -5,11 +5,9 @@ import ThemeToggle from './ThemeToggle'
 import LanguageSwitcher from './LanguageSwitcher'
 import { useAuth } from '../context/AuthContext'
 import { useBranding } from '../contexts/BrandingContext'
-import { useTheme } from '../contexts/ThemeContext'
 import { apiUrl } from '../utils/basePath'
 import { preloadRoute } from '../router'
 import daolvisionIcon from '../assets/daolvision-icon.png'
-import daolvisionLogoBlack from '../assets/daolvision-logo-black.png'
 import daolvisionLogoWhite from '../assets/daolvision-logo-white.png'
 
 const COLLAPSED_KEY = 'localai_sidebar_collapsed'
@@ -90,7 +88,6 @@ export default function Sidebar({ isOpen, onClose }) {
   const [openSections, setOpenSections] = useState(loadSectionState)
   const { isAdmin, authEnabled, user, logout, hasFeature } = useAuth()
   const branding = useBranding()
-  const { theme } = useTheme()
   const navigate = useNavigate()
   const location = useLocation()
   const closeBtnRef = useRef(null)
@@ -180,7 +177,7 @@ export default function Sidebar({ isOpen, onClose }) {
         {/* Logo */}
         <div className="sidebar-header">
           <a href="./" className="sidebar-logo-link">
-            <img src={theme === 'light' ? daolvisionLogoBlack : daolvisionLogoWhite} alt={branding.instanceName} className="sidebar-logo-img" />
+            <img src={daolvisionLogoWhite} alt={branding.instanceName} className="sidebar-logo-img" />
           </a>
           <a href="./" className="sidebar-logo-icon" title={branding.instanceName}>
             <img src={daolvisionIcon} alt={branding.instanceName} className="sidebar-logo-icon-img" />

@@ -2,17 +2,37 @@
    Adapted from claudemaster's Nord preset. Variable names preserved. */
 :root,
 [data-theme="dark"] {
-  /* Surfaces — deep blue-black, beyond polar night */
-  --color-bg-primary: #13171f;          /* page — very dark, cool */
-  --color-bg-secondary: #1a1f2a;        /* sidebar, headers, cards */
-  --color-bg-tertiary: #242a36;         /* wells / sunken rows */
-  --color-bg-overlay: rgba(19, 23, 31, 0.92);
-  --color-bg-hover: #242a36;
+  /* Surfaces — indigo-navy, lighter than before so glass panels read bright */
+  --color-bg-primary: #1b2030;          /* page base, gradient painted on top */
+  --color-bg-secondary: #232a3d;        /* sidebar, headers, cards */
+  --color-bg-tertiary: #2b3349;         /* wells / sunken rows */
+  --color-bg-overlay: rgba(27, 32, 48, 0.92);
+  --color-bg-hover: #2b3349;
 
-  --color-surface-raised: #1a1f2a;
-  --color-surface-sunken: #0e1117;
-  --color-surface-hover: #242a36;
-  --color-surface-elevated: #2f3644;
+  --color-surface-raised: #232a3d;
+  --color-surface-sunken: #171b28;
+  --color-surface-hover: #2b3349;
+  --color-surface-elevated: #333c56;
+
+  /* Bottom-up brightening wash — glow anchored low-left, fading to plain
+     base by the upper edge (mirrors the reference dot-pattern direction). */
+  --gradient-bg:
+    radial-gradient(1000px 800px at 10% 105%, rgba(136, 192, 208, 0.22), transparent 62%),
+    linear-gradient(to top, rgba(136, 192, 208, 0.10), transparent 55%),
+    var(--color-bg-primary);
+  --color-glass-bg: rgba(35, 42, 61, 0.6);
+  --color-glass-border: rgba(255, 255, 255, 0.08);
+
+  /* Category rail (sidebar), dark mode — navy (pre-cyan version, kept here
+     as-is; only light mode moved to the cyan tone — see [data-theme="light"]). */
+  --color-rail-bg: #1b2a4a;
+  --color-rail-text: rgba(255, 255, 255, 0.72);
+  --color-rail-text-strong: #ffffff;
+  --color-rail-active-bg: #ffffff;
+  --color-rail-active-text: #1b2a4a;
+  --color-rail-border: rgba(255, 255, 255, 0.10);
+  --color-rail-hover-bg: rgba(255, 255, 255, 0.08);
+  --color-rail-dot: rgba(255, 255, 255, 0.4);
 
   /* Primary — frost cyan (nord8) */
   --color-primary: #88c0d0;
@@ -113,12 +133,15 @@
   --spacing-3xl: 4rem;
   --space-section: clamp(2rem, 1.2rem + 3vw, 3.5rem);
 
-  /* Radii — sharp, editorial */
-  --radius-sm: 3px;
-  --radius-md: 5px;
-  --radius-lg: 8px;
-  --radius-xl: 10px;
+  /* Radii — soft, SaaS-rounded */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 22px;
   --radius-full: 9999px;
+
+  /* Glass surfaces + gradient mood — see [data-theme] blocks for per-theme values */
+  --glass-blur: 18px;
 
   /* Typography — Geist Variable + Geist Mono Variable */
   --font-sans: "Geist", "Geist Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", ui-sans-serif, system-ui, sans-serif;
@@ -163,17 +186,40 @@
 }
 
 [data-theme="light"] {
-  /* Snow storm */
-  --color-bg-primary: #eceff4;           /* nord6 */
-  --color-bg-secondary: #ffffff;
-  --color-bg-tertiary: #e5e9f0;          /* nord5 */
-  --color-bg-overlay: rgba(236, 239, 244, 0.92);
-  --color-bg-hover: #e5e9f0;
+  /* Plain white page, boxes sit on a light gray a step below white so they
+     read as distinct surfaces without a background wash. */
+  --color-bg-primary: #ffffff;
+  --color-bg-secondary: #f2f4f7;
+  --color-bg-tertiary: #e8ebf0;
+  --color-bg-overlay: rgba(255, 255, 255, 0.92);
+  --color-bg-hover: #e8ebf0;
 
-  --color-surface-raised: #ffffff;
-  --color-surface-sunken: #e5e9f0;
-  --color-surface-hover: #d8dee9;
-  --color-surface-elevated: #d8dee9;     /* nord4 */
+  --color-surface-raised: #f2f4f7;
+  --color-surface-sunken: #e8ebf0;
+  --color-surface-hover: #e2e6ec;
+  --color-surface-elevated: #e2e6ec;
+
+  /* Same bottom-up wash shape as dark mode (radial low-left + linear fade
+     to top) — kept here purely for structural consistency between themes;
+     color/strength differs since the page is white, not navy: much
+     lower alpha so it reads as a bare hint, not a colored panel. */
+  --gradient-bg:
+    radial-gradient(1000px 800px at 10% 105%, rgba(0, 151, 207, 0.08), transparent 62%),
+    linear-gradient(to top, rgba(0, 151, 207, 0.05), transparent 55%),
+    var(--color-bg-primary);
+  --color-glass-bg: rgba(255, 255, 255, 0.62);
+  --color-glass-border: rgba(46, 52, 64, 0.08);
+
+  /* Category rail (sidebar) — cyan tone, light mode only (dark mode kept
+     its earlier navy rail — see the [data-theme="dark"] block above). */
+  --color-rail-bg: #0097CF;
+  --color-rail-text: #CEF6FF;
+  --color-rail-text-strong: #ffffff;
+  --color-rail-active-bg: #21bAEE; /* sampled from reference active pill — solid, not translucent */
+  --color-rail-active-text: #ffffff;
+  --color-rail-border: rgba(206, 246, 255, 0.22);
+  --color-rail-hover-bg: rgba(206, 246, 255, 0.14);
+  --color-rail-dot: rgba(206, 246, 255, 0.55);
 
   /* Primary — deeper frost for WCAG on snow storm */
   --color-primary: #5e81ac;              /* nord10 */

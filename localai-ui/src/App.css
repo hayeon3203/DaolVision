@@ -3,7 +3,7 @@
   display: flex;
   min-height: 100vh;
   min-height: 100dvh;
-  background-color: var(--color-bg-primary);
+  background: transparent;
 }
 
 .main-content {
@@ -192,16 +192,53 @@
   width: var(--sidebar-width);
   height: 100vh;
   height: 100dvh;
-  background: var(--color-bg-secondary);
-  border-right: 1px solid var(--color-border-subtle);
+  background: var(--color-rail-bg);
+  border-right: 1px solid var(--color-rail-border);
+  /* Category rail is a fixed navy color in both themes (reference UI) — these
+     redefine the shared text/surface tokens for everything nested inside,
+     so nav items, labels, user footer etc. all recolor without per-selector
+     overrides. */
+  --color-text-primary: var(--color-rail-text-strong);
+  --color-text-secondary: var(--color-rail-text);
+  --color-text-muted: rgba(255, 255, 255, 0.5);
+  --color-border-subtle: var(--color-rail-border);
+  --color-border-default: var(--color-rail-border);
+  --color-bg-hover: var(--color-rail-hover-bg);
+  --color-surface-elevated: var(--color-rail-hover-bg);
+  --color-primary: var(--color-rail-active-text);
+  --color-primary-light: var(--color-rail-active-bg);
   display: flex;
   flex-direction: column;
   z-index: 50;
   overflow-y: auto;
+  overflow-x: hidden;
   box-shadow: var(--shadow-sidebar);
   transition: width var(--duration-normal) var(--ease-spring),
               transform var(--duration-normal) var(--ease-spring);
   will-change: transform;
+}
+
+/* Dot-grid glow, brightest at the bottom and fading out toward the top —
+   same direction/placement as the reference rail. */
+.sidebar::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background-image: radial-gradient(var(--color-rail-dot) 1px, transparent 1.6px);
+  background-size: 16px 16px;
+  background-position: -6px 10px;
+  -webkit-mask-image: linear-gradient(to top, black 0%, transparent 60%);
+  mask-image: linear-gradient(to top, black 0%, transparent 60%);
+  opacity: 0.5;
+}
+
+.sidebar-header,
+.sidebar-nav,
+.sidebar-footer {
+  position: relative;
+  z-index: 1;
 }
 
 .sidebar-overlay {
@@ -3298,25 +3335,10 @@ button.collapsible-header:focus-visible {
   align-self: flex-start;
 }
 
+/* Deliberately not the flat-color-square-badge avatar pattern — no solid
+   fill, no role-color tag. Bubble shape alone (align + accent) carries
+   who's-speaking; the avatar is just a quiet identity mark. */
 .chat-message-avatar {
-  width: 28px;
-  height: 28px;
-  border-radius: var(--radius-sm);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0.75rem;
-  flex-shrink: 0;
-}
-
-.chat-message-user .chat-message-avatar {
-  background: var(--color-primary);
-  color: var(--color-primary-text);
-}
-
-/* Assistant gets the left-border accent on the bubble; the avatar is
-   visual noise once that accent is in place. */
-.chat-message-assistant .chat-message-avatar {
   display: none;
 }
 

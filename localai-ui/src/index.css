@@ -19,7 +19,8 @@ body {
   font-feature-settings: "ss01", "ss03", "cv11";
   letter-spacing: -0.005em;
   min-height: 100%;
-  background-color: var(--color-bg-primary);
+  background: var(--gradient-bg);
+  background-attachment: fixed;
   color: var(--color-text-primary);
   transition: background-color var(--duration-normal) var(--ease-default),
               color var(--duration-normal) var(--ease-default);
