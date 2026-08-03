@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react'
-import PageHeader from '../components/PageHeader'
 import LoadingSpinner from '../components/LoadingSpinner'
 import AgentPhaseStepper from '../components/AgentPhaseStepper'
 import AgentScenePreview from '../components/AgentScenePreview'
@@ -14,6 +13,13 @@ import { gatewayApi, GATEWAY_BASE, fileToBase64 } from '../utils/api'
 // 추론 백엔드는 쓰지 않는다. phase→스텝 하이라이트는 AgentPhaseStepper(Task 6.4).
 const POLL_MS = 3000
 const JOB_STORAGE_KEY = 'gwAgentJobId'
+const AGENT_NODES = [
+  { key: 'planning', icon: 'fa-align-left', step: '01', title: '스토리 분석', description: '이야기의 흐름과 핵심 장면을 정리합니다.' },
+  { key: 'prompting', icon: 'fa-table-cells-large', step: '02', title: '씬 분할', description: '스토리를 영상에 맞는 씬 단위로 나눕니다.' },
+  { key: 'anchoring', icon: 'fa-user-check', step: '03', title: '캐릭터 앵커', description: '인물의 외형과 화풍을 장면마다 고정합니다.' },
+  { key: 'generating', icon: 'fa-clapperboard', step: '04', title: '영상 생성', description: '각 씬을 움직이는 영상 클립으로 만듭니다.' },
+  { key: 'done', icon: 'fa-wand-magic-sparkles', step: '05', title: '최종 합성', description: '클립과 나레이션을 하나의 영상으로 완성합니다.' },
+]
 
 export default function GatewayAgent() {
   const [inputMode, setInputMode] = useState('upload') // 'upload' | 'describe'
@@ -107,11 +113,42 @@ export default function GatewayAgent() {
   }
 
   const checkpoint = status?.status === 'waiting_for_approval' ? status.checkpoint : null
+  const activeNodeIndex = AGENT_NODES.findIndex((node) => node.key === status?.phase)
 
   return (
-    <div className="media-layout">
-      <div className="media-controls">
-        <PageHeader title={<><i className="fas fa-robot" /> Agent</>} supporting="스토리 → 씬분할 → 캐릭터 일관 영상 + 나레이션 (S1, :8700 게이트웨이)" />
+    <div className="agent-workspace">
+      <header className="agent-hero">
+        <div className="agent-hero__copy">
+          <span className="agent-hero__eyebrow"><i className="fas fa-sparkles" /> AI VIDEO WORKFLOW</span>
+          <h1>Agent</h1>
+          <p>스토리 <i className="fas fa-arrow-right" /> 씬 분할 <i className="fas fa-arrow-right" /> 캐릭터 일관 영상</p>
+        </div>
+        <div className="agent-hero__mark" aria-hidden="true"><i className="fas fa-robot" /></div>
+      </header>
+
+      <section className="agent-nodes" aria-label="Agent 작업 노드">
+        {AGENT_NODES.map((node, index) => {
+          const nodeState = activeNodeIndex < 0 ? '' : index < activeNodeIndex ? ' is-done' : index === activeNodeIndex ? ' is-active' : ''
+          return (
+            <article className={`agent-node${nodeState}`} key={node.key}>
+              <div className="agent-node__top">
+                <span className="agent-node__icon"><i className={`fas ${node.icon}`} /></span>
+                <span className="agent-node__step">NODE {node.step}</span>
+              </div>
+              <h2>{node.title}</h2>
+              <p>{node.description}</p>
+              <span className="agent-node__status">{nodeState === ' is-done' ? '완료' : nodeState === ' is-active' ? '진행 중' : '대기'}</span>
+            </article>
+          )
+        })}
+      </section>
+
+      <div className="media-layout agent-media-layout">
+        <div className="media-controls agent-panel agent-panel--controls">
+          <div className="agent-panel__heading">
+            <span className="agent-panel__number">01</span>
+            <div><h2>프로세스</h2><p>스토리와 캐릭터 정보를 입력하세요.</p></div>
+          </div>
         {!jobId ? (
           <form onSubmit={handleStart}>
             <div className="segmented">
@@ -221,8 +258,12 @@ export default function GatewayAgent() {
             )}
           </div>
         )}
-      </div>
-      <div className="media-preview">
+        </div>
+        <div className="media-preview agent-panel agent-panel--result">
+          <div className="agent-panel__heading">
+            <span className="agent-panel__number">02</span>
+            <div><h2>결과물</h2><p>생성 중인 장면과 완성 영상을 확인하세요.</p></div>
+          </div>
         <div className="media-result">
           {error ? (
             <p style={{ color: 'var(--color-error)' }}>Error: {error}</p>
@@ -243,6 +284,7 @@ export default function GatewayAgent() {
               ))}
             </div>
           )}
+        </div>
         </div>
       </div>
     </div>

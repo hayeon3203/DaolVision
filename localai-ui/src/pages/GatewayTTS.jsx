@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import PageHeader from '../components/PageHeader'
 import LoadingSpinner from '../components/LoadingSpinner'
+import GatewayPageShell, { GatewayPanels } from '../components/GatewayPageShell'
 import WaveformPlayer from '../components/audio/WaveformPlayer'
 import MediaInput from '../components/biometrics/MediaInput'
 import { gatewayApi } from '../utils/api'
@@ -40,9 +40,19 @@ export default function GatewayTTS() {
   }
 
   return (
-    <div className="media-layout">
-      <div className="media-controls">
-        <PageHeader title={<><i className="fas fa-headphones" /> 독립 TTS</>} supporting="내 목소리 클론 (Chatterbox V3, :8700 게이트웨이)" />
+    <GatewayPageShell
+      eyebrow="VOICE CLONING"
+      title="TTS (Clone)"
+      description="내 목소리의 특징을 담은 자연스러운 음성 생성"
+      icon="fa-headphones"
+      facts={[
+        { icon: 'fa-microphone', title: '녹음 또는 업로드', description: '직접 녹음하거나 사용 권한이 있는 참조 음성을 올립니다.' },
+        { icon: 'fa-language', title: '한국어 텍스트', description: '읽게 할 문장을 입력해 음성 콘텐츠를 구성합니다.' },
+        { icon: 'fa-wave-square', title: '음성 클론', description: 'Chatterbox V3가 참조 화자의 특징을 음성에 반영합니다.' },
+      ]}
+    >
+      <GatewayPanels inputDescription="참조 음성과 읽을 문장을 준비하세요." outputDescription="생성된 음성을 듣고 내려받으세요.">
+        <div>
         <form onSubmit={handleGenerate}>
           <div className="form-group">
             <MediaInput
@@ -62,8 +72,7 @@ export default function GatewayTTS() {
             {loading ? <><LoadingSpinner size="sm" /> 생성 중...</> : <><i className="fas fa-headphones" /> 생성</>}
           </button>
         </form>
-      </div>
-      <div className="media-preview">
+        </div>
         <div className="media-result">
           {loading ? (
             <LoadingSpinner size="lg" />
@@ -80,7 +89,7 @@ export default function GatewayTTS() {
             </div>
           )}
         </div>
-      </div>
-    </div>
+      </GatewayPanels>
+    </GatewayPageShell>
   )
 }

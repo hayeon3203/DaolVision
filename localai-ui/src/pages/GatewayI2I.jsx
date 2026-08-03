@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import PageHeader from '../components/PageHeader'
 import LoadingSpinner from '../components/LoadingSpinner'
+import GatewayPageShell, { GatewayPanels } from '../components/GatewayPageShell'
 import MediaInput from '../components/biometrics/MediaInput'
 import { gatewayApi } from '../utils/api'
 
@@ -51,9 +51,19 @@ export default function GatewayI2I() {
   }
 
   return (
-    <div className="media-layout">
-      <div className="media-controls">
-        <PageHeader title={<><i className="fas fa-palette" /> I2I 스타일 변환</>} supporting="얼굴사진 → 스타일 변환 (Flux.1 Kontext, :8700 게이트웨이)" />
+    <GatewayPageShell
+      eyebrow="IMAGE TO IMAGE"
+      title="Image to Image"
+      description="한 장의 얼굴 사진을 새로운 스타일의 캐릭터로"
+      icon="fa-palette"
+      facts={[
+        { icon: 'fa-camera', title: '사진 또는 웹캠', description: '이미지를 업로드하거나 카메라로 바로 촬영합니다.' },
+        { icon: 'fa-swatchbook', title: '6가지 스타일', description: '시네마틱부터 수채화까지 원하는 화풍을 선택합니다.' },
+        { icon: 'fa-user-check', title: '캐릭터 연결', description: '완성 이미지를 Agent 영상의 일관된 캐릭터로 사용합니다.' },
+      ]}
+    >
+      <GatewayPanels inputDescription="원본 사진과 변환 스타일을 선택하세요." outputDescription="새롭게 스타일링된 캐릭터를 확인하세요.">
+        <div>
         <form onSubmit={handleGenerate}>
           <MediaInput
             mode="image"
@@ -83,8 +93,7 @@ export default function GatewayI2I() {
             이 캐릭터로 S1 영상을 만들 수 있어요 (S2→S1 연결).
           </p>
         )}
-      </div>
-      <div className="media-preview">
+        </div>
         <div className="media-result">
           {loading ? (
             <LoadingSpinner size="lg" />
@@ -98,7 +107,7 @@ export default function GatewayI2I() {
             </div>
           )}
         </div>
-      </div>
-    </div>
+      </GatewayPanels>
+    </GatewayPageShell>
   )
 }

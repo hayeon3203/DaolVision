@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import PageHeader from '../components/PageHeader'
 import LoadingSpinner from '../components/LoadingSpinner'
+import GatewayPageShell, { GatewayPanels } from '../components/GatewayPageShell'
 import { gatewayApi } from '../utils/api'
 
 // Task 7.6: T2V 단발샷 카테고리 (이전 I2V 단발샷 대체). anim-agent 게이트웨이
@@ -30,9 +30,19 @@ export default function GatewayT2V() {
   }
 
   return (
-    <div className="media-layout">
-      <div className="media-controls">
-        <PageHeader title={<><i className="fas fa-video" /> T2V 단발샷</>} supporting="프롬프트 → 영상 (Cosmos3-Nano, :8700 게이트웨이)" />
+    <GatewayPageShell
+      eyebrow="TEXT TO VIDEO"
+      title="Text to Video"
+      description="한 줄의 아이디어를 움직이는 장면으로"
+      icon="fa-video"
+      facts={[
+        { icon: 'fa-align-left', title: '텍스트 프롬프트', description: '만들고 싶은 장면과 움직임을 자연어로 설명합니다.' },
+        { icon: 'fa-dice', title: '재현 가능한 시드', description: '시드를 고정해 같은 조건의 결과를 다시 생성합니다.' },
+        { icon: 'fa-clapperboard', title: '단일 영상 클립', description: 'Cosmos3-Nano가 바로 재생 가능한 영상을 완성합니다.' },
+      ]}
+    >
+      <GatewayPanels inputDescription="장면 설명과 생성 조건을 입력하세요." outputDescription="완성된 영상 클립을 확인하세요.">
+        <div>
         <form onSubmit={handleGenerate}>
           <div className="form-group">
             <label className="form-label">프롬프트</label>
@@ -46,8 +56,7 @@ export default function GatewayT2V() {
             {loading ? <><LoadingSpinner size="sm" /> 생성 중... (수 분)</> : <><i className="fas fa-video" /> 생성</>}
           </button>
         </form>
-      </div>
-      <div className="media-preview">
+        </div>
         <div className="media-result">
           {loading ? (
             <LoadingSpinner size="lg" />
@@ -61,7 +70,7 @@ export default function GatewayT2V() {
             </div>
           )}
         </div>
-      </div>
-    </div>
+      </GatewayPanels>
+    </GatewayPageShell>
   )
 }

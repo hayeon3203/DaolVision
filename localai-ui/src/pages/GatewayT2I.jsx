@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import PageHeader from '../components/PageHeader'
 import LoadingSpinner from '../components/LoadingSpinner'
+import GatewayPageShell, { GatewayPanels } from '../components/GatewayPageShell'
 import { gatewayApi } from '../utils/api'
 
 // Task 6.3: 독립 T2I 카테고리. anim-agent 게이트웨이(:8700) POST /t2i만 호출한다 —
@@ -33,9 +33,19 @@ export default function GatewayT2I() {
   }
 
   return (
-    <div className="media-layout">
-      <div className="media-controls">
-        <PageHeader title={<><i className="fas fa-image" /> T2I</>} supporting="텍스트 → 이미지 (Flux.1-schnell, :8700 게이트웨이)" />
+    <GatewayPageShell
+      eyebrow="TEXT TO IMAGE"
+      title="Text to Image"
+      description="상상한 장면을 선명한 이미지 한 장으로"
+      icon="fa-image"
+      facts={[
+        { icon: 'fa-pen-nib', title: '자유로운 프롬프트', description: '원하는 피사체, 분위기, 조명을 자연어로 묘사합니다.' },
+        { icon: 'fa-expand', title: '맞춤 해상도', description: '가로와 세로 크기를 콘텐츠 용도에 맞게 설정합니다.' },
+        { icon: 'fa-bolt', title: '빠른 이미지 생성', description: 'Flux.1-schnell이 아이디어를 빠르게 시각화합니다.' },
+      ]}
+    >
+      <GatewayPanels inputDescription="이미지 설명과 크기를 입력하세요." outputDescription="완성된 이미지를 확인하세요.">
+        <div>
         <form onSubmit={handleGenerate}>
           <div className="form-group">
             <label className="form-label">프롬프트</label>
@@ -59,8 +69,7 @@ export default function GatewayT2I() {
             {loading ? <><LoadingSpinner size="sm" /> 생성 중...</> : <><i className="fas fa-wand-magic-sparkles" /> 생성</>}
           </button>
         </form>
-      </div>
-      <div className="media-preview">
+        </div>
         <div className="media-result">
           {loading ? (
             <LoadingSpinner size="lg" />
@@ -74,7 +83,7 @@ export default function GatewayT2I() {
             </div>
           )}
         </div>
-      </div>
-    </div>
+      </GatewayPanels>
+    </GatewayPageShell>
   )
 }

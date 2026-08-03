@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react'
-import PageHeader from '../components/PageHeader'
 import LoadingSpinner from '../components/LoadingSpinner'
 import { gatewayApi } from '../utils/api'
 import { apiUrl } from '../utils/basePath'
@@ -132,78 +131,34 @@ export default function GatewayDashboard() {
   const memPercent = status ? (status.gpu.used_gb / status.gpu.total_gb) * 100 : 0
 
   return (
-    <div className="page page--wide gw-dashboard-page">
-      <style>{`
-        .gw-dashboard-page .page-header--editorial { margin-bottom: var(--spacing-sm); }
-        .score-card-row {
-          display: grid;
-          grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-          gap: var(--spacing-md);
-          margin-bottom: var(--spacing-lg);
-        }
-        .score-card {
-          border-radius: var(--radius-lg);
-          padding: var(--spacing-lg) var(--spacing-md);
-          color: #fff;
-          text-shadow: 0 1px 2px rgba(0,0,0,0.25);
-        }
-        .score-card--success { background: var(--color-success); }
-        .score-card--warning { background: var(--color-warning); }
-        .score-card--error { background: var(--color-error); }
-        .score-card__label {
-          font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em;
-          opacity: 0.85; margin-bottom: 4px;
-        }
-        .score-card__value { font-size: 2rem; font-weight: 700; line-height: 1; }
-        .score-card__unit { font-size: 1rem; font-weight: 500; margin-left: 4px; opacity: 0.85; }
-        .chart-row {
-          display: grid;
-          grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-          gap: var(--spacing-md);
-          margin-bottom: var(--spacing-lg);
-        }
-        .line-chart {
-          background: var(--color-bg-secondary);
-          border: 1px solid var(--color-border-subtle);
-          border-radius: var(--radius-lg);
-          padding: var(--spacing-sm) var(--spacing-md);
-        }
-        .line-chart__title {
-          font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em;
-          color: var(--color-text-muted); margin-bottom: 4px;
-        }
-        .line-chart__grid { stroke: var(--color-border-subtle); stroke-width: 1; }
-        .line-chart__path { fill: none; stroke: var(--color-primary); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
-        .line-chart__dot { fill: var(--color-primary); stroke: var(--color-bg-secondary); stroke-width: 2; }
-        .line-chart__crosshair { stroke: var(--color-text-muted); stroke-width: 1; stroke-dasharray: 2,2; }
-        .line-chart__tooltip {
-          display: flex; justify-content: space-between; align-items: baseline;
-          margin-top: 4px; font-size: 0.8125rem;
-        }
-        .line-chart__tooltip strong { color: var(--color-text-primary); font-size: 1rem; }
-        .line-chart__tooltip span { color: var(--color-text-muted); font-size: 0.75rem; }
-        .hf-chip-row { display: flex; flex-wrap: wrap; gap: var(--spacing-xs); }
-        .hf-chip {
-          display: inline-flex; align-items: center; gap: 6px;
-          padding: 3px 10px;
-          border-radius: var(--radius-full);
-          border: 1px solid var(--color-border-subtle);
-          background: var(--color-bg-secondary);
-          font-size: 0.75rem;
-          color: var(--color-text-secondary);
-          white-space: nowrap;
-        }
-        .hf-chip i { font-size: 0.7rem; color: var(--color-text-muted); }
-        .hf-chip__logo { width: 12px; height: 12px; }
-        .hf-chip--success i { color: var(--color-success); }
-        .hf-chip--warning i { color: var(--color-warning); }
-        .hf-chip--error i { color: var(--color-error); }
-      `}</style>
-
-      <PageHeader
-        title={<><i className="fas fa-gauge-high" /> 모니터링 대시보드</>}
-        supporting="External calls / GB10 메모리·전력·온도 실시간 표시"
-      />
+    <div className="gateway-workspace gw-dashboard-page">
+      <header className="gateway-hero dashboard-hero">
+        <div className="gateway-hero__copy">
+          <span className="gateway-hero__eyebrow"><i className="fas fa-sparkles" /> SYSTEM MONITORING</span>
+          <h1>Dashboard</h1>
+          <p>GB10 메모리·전력·온도와 실행 흐름을 실시간으로</p>
+          {!loading && !error && (
+            <div className="dashboard-hero__pills">
+              <HfChip
+                img={trace.some((t) => t.vendor === 'nvidia') ? apiUrl('/nvidia_logo_icon.svg') : null}
+                icon="fas fa-microchip"
+                label={trace.some((t) => t.vendor === 'nvidia') ? 'nvidia' : 'GPU'}
+              />
+              <HfChip
+                icon={status.offline ? 'fas fa-circle-check' : 'fas fa-triangle-exclamation'}
+                tone={status.offline ? 'success' : 'warning'}
+                label={status.offline ? '오프라인' : '온라인'}
+              />
+              <HfChip
+                icon="fas fa-arrow-right-arrow-left"
+                tone={status.offline ? 'success' : 'warning'}
+                label={`External calls: ${status.external_calls}`}
+              />
+            </div>
+          )}
+        </div>
+        <div className="gateway-hero__mark" aria-hidden="true"><i className="fas fa-gauge-high" /></div>
+      </header>
 
       {loading ? (
         <div style={{ display: 'flex', justifyContent: 'center', padding: 'var(--spacing-xl)' }}>
@@ -213,23 +168,6 @@ export default function GatewayDashboard() {
         <p style={{ color: 'var(--color-error)' }}>Error: {error}</p>
       ) : (
         <>
-          {/* 배지: nvidia / 오프라인 / External calls 실측 (HF 칩 디자인) */}
-          <div className="hf-chip-row" style={{ marginBottom: 'var(--spacing-lg)' }}>
-            {trace.some((t) => t.vendor === 'nvidia') && (
-              <HfChip img={apiUrl('/nvidia_logo_icon.svg')} label="nvidia" />
-            )}
-            <HfChip
-              icon={status.offline ? 'fas fa-circle-check' : 'fas fa-triangle-exclamation'}
-              tone={status.offline ? 'success' : 'warning'}
-              label={status.offline ? '오프라인' : '온라인'}
-            />
-            <HfChip
-              icon="fas fa-arrow-right-arrow-left"
-              tone={status.offline ? 'success' : 'warning'}
-              label={`External calls: ${status.external_calls}`}
-            />
-          </div>
-
           {/* 최상단 스코어카드: 메모리 / 전력 / 온도 (grafana stat 패널 형식) */}
           <div className="score-card-row">
             <ScoreCard
@@ -260,8 +198,11 @@ export default function GatewayDashboard() {
           </div>
 
           {/* 실행트레이스 */}
-          <div style={{ marginBottom: 'var(--spacing-lg)' }}>
-            <h3 style={{ marginBottom: 'var(--spacing-sm)' }}>실행트레이스</h3>
+          <div className="dashboard-trace">
+            <div className="dashboard-section-heading">
+              <span className="gateway-panel__number">04</span>
+              <div><h2>실행트레이스</h2><p>현재 워크플로에서 호출된 모델과 공급자를 확인하세요.</p></div>
+            </div>
             <table className="table">
               <thead>
                 <tr>
