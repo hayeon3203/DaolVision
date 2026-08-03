@@ -23,6 +23,7 @@ export default function GatewayAgent() {
   const [jobId, setJobId] = useState(null)
   const [status, setStatus] = useState(null)
   const [manualPayload, setManualPayload] = useState('{}')
+  const [scenarioText, setScenarioText] = useState('')
   const [error, setError] = useState(null)
   const [starting, setStarting] = useState(false)
   const timerRef = useRef(null)
@@ -102,6 +103,7 @@ export default function GatewayAgent() {
     setScriptText('')
     setRefFiles([])
     setImageRequest('')
+    setScenarioText('')
   }
 
   const checkpoint = status?.status === 'waiting_for_approval' ? status.checkpoint : null
@@ -184,6 +186,25 @@ export default function GatewayAgent() {
                 onApprove={() => handleApprove({ action: 'approve_all' })}
                 onRegenerate={(sceneIds) => handleApprove({ action: 'regenerate', scene_ids: sceneIds })}
               />
+            ) : checkpoint && checkpoint.checkpoint?.startsWith('2-4') ? (
+              <div className="form-group">
+                <p><strong>{checkpoint.message || '이미지가 승인되었습니다. 시나리오를 입력해주세요.'}</strong></p>
+                <textarea
+                  className="textarea"
+                  value={scenarioText}
+                  onChange={(e) => setScenarioText(e.target.value)}
+                  rows={5}
+                  placeholder="이 이미지로 만들 영상의 시나리오를 입력하세요..."
+                />
+                <button
+                  type="button"
+                  className="btn btn-primary btn-full"
+                  disabled={!scenarioText.trim()}
+                  onClick={() => { handleApprove({ script_text: scenarioText.trim() }); setScenarioText('') }}
+                >
+                  제출
+                </button>
+              </div>
             ) : checkpoint && (
               <div className="form-group">
                 <p><strong>승인 대기: {checkpoint.checkpoint}</strong></p>
