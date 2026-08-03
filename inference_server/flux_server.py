@@ -136,7 +136,15 @@ def generate(req: GenerateRequest):
         with _lock:
             image = _pipe(**kwargs).images[0]
     finally:
-        _unload()
+        # _unload() must also be inside _lock (not just the inference call above) --
+        # otherwise a second concurrent request (e.g. node_generate_image's
+        # asyncio.gather firing 2-3 /generate calls at once for M2) can be evaluating
+        # `_pipe(**kwargs)` for its own with-block right as this request's unload sets
+        # global _pipe = None, raising "'NoneType' object is not callable" -> 500.
+        # Observed: job 78f91567, 2-query concurrent request, first image succeeded,
+        # second hit exactly this race.
+        with _lock:
+            _unload()
     fname = f"{uuid.uuid4().hex}.png"
     out_path = os.path.join(OUT_DIR, fname)
     image.save(out_path)
