@@ -143,9 +143,9 @@
   /* Glass surfaces + gradient mood — see [data-theme] blocks for per-theme values */
   --glass-blur: 18px;
 
-  /* Typography — Geist Variable + Geist Mono Variable */
-  --font-sans: "Geist", "Geist Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "Geist Mono", "Geist Mono Variable", ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  /* Typography — Pretendard Variable throughout the entire UI. */
+  --font-sans: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-mono: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
 
   --text-xs: 0.6875rem;
   --text-sm: 0.8125rem;

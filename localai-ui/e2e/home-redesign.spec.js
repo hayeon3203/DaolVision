@@ -6,8 +6,8 @@ test.describe('Home editorial redesign', () => {
     const greeting = page.locator('.home-greeting')
     await expect(greeting).toBeVisible({ timeout: 15_000 })
     const family = await greeting.evaluate(el => getComputedStyle(el).fontFamily)
-    // Refined-grotesk direction: the greeting uses Geist (no serif).
-    expect(family.toLowerCase()).toContain('geist')
+    // The greeting follows the global Pretendard typography.
+    expect(family.toLowerCase()).toContain('pretendard')
     expect(family.toLowerCase()).not.toContain('fraunces')
   })
 

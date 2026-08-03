@@ -6,8 +6,8 @@ test.describe('Editorial design system', () => {
     const title = page.locator('.page-title').first()
     await expect(title).toBeVisible({ timeout: 15_000 })
     const family = await title.evaluate(el => getComputedStyle(el).fontFamily)
-    // Editorial-grotesk direction: headings use the Geist sans family, no serif.
-    expect(family.toLowerCase()).toContain('geist')
+    // All UI typography uses Pretendard, including headings.
+    expect(family.toLowerCase()).toContain('pretendard')
     expect(family.toLowerCase()).not.toContain('fraunces')
   })
 
