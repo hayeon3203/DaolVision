@@ -64,7 +64,9 @@ async def node_rewrite_image_query(state: GraphState) -> dict:
     queries = queries[:3]
     if not queries:
         raise ValueError("이미지 생성 요청을 이해하지 못했습니다. 표현을 조금 바꿔서 다시 시도해주세요.")
-    return {"image_queries": queries, "image_query": queries[0] if queries else ""}
+    # M2 전용 phase — 기존 5단계 스테퍼(planning/prompting/anchoring/generating/done)
+    # 앞에 오는 별도 단계라 AgentPhaseStepper가 image_gen_used일 때만 조건부로 그린다.
+    return {"image_queries": queries, "image_query": queries[0] if queries else "", "phase": "image_generating"}
 
 
 async def node_generate_image(state: GraphState) -> dict:
@@ -83,7 +85,7 @@ async def node_generate_image(state: GraphState) -> dict:
         for i, q in enumerate(queries)
     ])
     paths = list(paths)
-    return {"gen_image_paths": paths, "gen_image_path": paths[0]}
+    return {"gen_image_paths": paths, "gen_image_path": paths[0], "phase": "image_generating"}
 
 
 def node_checkpoint_image_approval(state: GraphState) -> Command:

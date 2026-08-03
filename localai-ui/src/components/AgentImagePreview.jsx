@@ -16,7 +16,13 @@ export default function AgentImagePreview({ imageUrls, imageQueries, onApprove, 
         {imageUrls.map((url, i) => (
           <li key={url} className="scene-preview__card">
             <div className="scene-preview__thumb">
-              <img src={`${GATEWAY_BASE}${url}`} alt={`생성 이미지 ${i + 1}`} />
+              {/* gen_img_N.png 파일명이 재생성해도 고정이라 URL이 똑같아 브라우저가 옛
+                  이미지를 캐시한다(video_generator의 openwebui_anim_function.py가 같은
+                  문제를 쿼리스트링으로 우회했던 전례) — 프롬프트가 바뀔 때마다 캐시 무효화. */}
+              <img
+                src={`${GATEWAY_BASE}${url}${imageQueries[i] ? `?v=${encodeURIComponent(imageQueries[i])}` : ''}`}
+                alt={`생성 이미지 ${i + 1}`}
+              />
             </div>
             <div className="scene-preview__body">
               <div className="scene-preview__meta">

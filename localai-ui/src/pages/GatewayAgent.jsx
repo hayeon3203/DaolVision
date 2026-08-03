@@ -149,7 +149,7 @@ export default function GatewayAgent() {
           </form>
         ) : (
           <div>
-            <AgentPhaseStepper phase={status?.phase} />
+            <AgentPhaseStepper phase={status?.phase} imageGenUsed={status?.image_gen_used} />
             <div className="agent-jobbar">
               <p className="form-field__hint">job_id: {jobId}</p>
               <button type="button" className="btn btn-secondary" onClick={handleReset}>

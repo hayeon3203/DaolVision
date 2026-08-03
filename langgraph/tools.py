@@ -484,7 +484,10 @@ async def generate_t2i_image(job_id: str, prompt: str, seed: int | None = None, 
     ~7-12s지만, flux_server.py가 매 요청마다 모델을 언로드하는 정책(FLUX_KEEP_RESIDENT=0
     기본값 — Task 2.4 GB10 전 모델 상주 OOM 실측 후 채택)이라 매 콜마다 콜드 로드 비용이
     붙는다. job a96857e4 ReadTimeout 재현 실측: 콜드 전체 175s(로드 168s+생성 7.5s,
-    시스템 메모리 압박 상태). 기존 120s read timeout은 이 콜드 로드를 못 버텨 끊겼다.
+    시스템 메모리 압박 상태). 이후 job 937f1da6도 동일 원인으로 재발(당시 서버
+    프로세스가 재시작 전이라 옛 120s 코드로 떠 있었음) — 메모리 압박이 더 심하면
+    175s도 못 버틸 수 있다고 보고 generate_t2v_clip/generate_chatterbox_clone과
+    같은 600s(온디맨드 콜드로드 있는 다른 backend들의 기존 전례)로 여유있게 상향.
     return: 로컬 png 경로. index: 한 배치에서 여러 장 생성 시 파일명 구분용
     (gen_img_0.png, gen_img_1.png, ...). T2I_WIDTH/HEIGHT(16:9)는 영상 WIDTH/HEIGHT
     프리셋과 별개 — 승인 후 이 이미지가 그대로 ref_images로 첨부되는 기본 캐릭터
@@ -492,7 +495,7 @@ async def generate_t2i_image(job_id: str, prompt: str, seed: int | None = None, 
     body = {"prompt": prompt, "width": T2I_WIDTH, "height": T2I_HEIGHT}
     if seed is not None:
         body["seed"] = seed
-    timeout = httpx.Timeout(connect=10.0, read=300.0, write=60.0, pool=None)
+    timeout = httpx.Timeout(connect=10.0, read=600.0, write=60.0, pool=None)
     async with oom.phase("t2i"), httpx.AsyncClient(timeout=timeout) as client:
         resp = await client.post(f"{T2I_URL}/generate", json=body)
         resp.raise_for_status()
@@ -513,7 +516,7 @@ async def generate_t2i_anchor(
 ) -> dict:
     """:8700 /t2i 게이트웨이 엔드포인트용 T2I 프록시(FLUX.1-schnell, :8501). job_id 스코프
     파일이 필요없는 단발 호출(대시보드 미리보기 등)이라 job_dir에 안 쓰고 base64로 바로 반환.
-    read timeout은 generate_t2i_image와 동일한 콜드 로드 비용을 겪으므로 같이 300s로
+    read timeout은 generate_t2i_image와 동일한 콜드 로드 비용을 겪으므로 같이 600s로
     맞춘다(둘 다 같은 :8501 FLUX 서버, 같은 매콜 언로드 정책)."""
     body = {"prompt": prompt}
     if width is not None:
@@ -522,7 +525,7 @@ async def generate_t2i_anchor(
         body["height"] = height
     if seed is not None:
         body["seed"] = seed
-    timeout = httpx.Timeout(connect=10.0, read=300.0, write=60.0, pool=None)
+    timeout = httpx.Timeout(connect=10.0, read=600.0, write=60.0, pool=None)
     async with oom.phase("t2i"), httpx.AsyncClient(timeout=timeout) as client:
         resp = await client.post(f"{T2I_URL}/generate", json=body)
         resp.raise_for_status()

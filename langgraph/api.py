@@ -210,14 +210,18 @@ async def job_status(job_id: str):
     resuming = task is not None and not task.done()
     interrupts = [i.value for t in snapshot.tasks for i in (getattr(t, "interrupts", ()) or ())]
     vals = snapshot.values or {}
+    # M2(이미지 설명으로 생성)로 들어온 job인지 — image_request는 승인 이후에도
+    # state에 남아있으므로 job 수명 내내 안정적으로 참조 가능. AgentPhaseStepper가
+    # 이 값일 때만 image_generating 리딩 스텝을 그린다.
+    image_gen_used = bool(vals.get("image_request"))
     if job_id in ERRORS:
         return {"job_id": job_id, "status": "error", "error": ERRORS[job_id],
-                "phase": vals.get("phase"),
+                "phase": vals.get("phase"), "image_gen_used": image_gen_used,
                 "comfyui": tools.comfy_job_progress(job_id)}
     # resume 직후엔 그래프가 인터럽트를 지나기 전까지 체크포인터에 구 인터럽트가
     # 잠깐 남는다 — 실행 중 태스크가 있으면 그 인터럽트는 stale이므로 running으로 취급.
     if interrupts and not resuming:  # 사람 승인 대기 (interrupt 발생)
-        return {"job_id": job_id, "status": "waiting_for_approval",
+        return {"job_id": job_id, "status": "waiting_for_approval", "image_gen_used": image_gen_used,
                 "checkpoint": _checkpoint_for_client(interrupts[0])}
     if resuming:
         scenes = vals.get("scenes") or []
@@ -226,6 +230,7 @@ async def job_status(job_id: str):
         clips = [{"scene_id": s.get("id"), "url": _to_url(s.get("clip_path"))}
                  for s in results if s.get("clip_path")]
         return {"job_id": job_id, "status": "running", "phase": vals.get("phase"),
+                "image_gen_used": image_gen_used,
                 "clips_done": len(results), "clips_total": len(scenes),
                 "clips": clips,
                 "comfyui": tools.comfy_job_progress(job_id)}
@@ -235,12 +240,12 @@ async def job_status(job_id: str):
         # 죽거나 서버가 재시작된 경우. running으로 숨기면 OWU가 영원히 polling한다.
         return {"job_id": job_id, "status": "error",
                 "error": f"job stalled with pending graph nodes: {list(snapshot.next)}",
-                "phase": vals.get("phase"),
+                "phase": vals.get("phase"), "image_gen_used": image_gen_used,
                 "next": list(snapshot.next),
                 "comfyui": tools.comfy_job_progress(job_id)}
     # 돌 게 없고 interrupt도 없음 → 종료
     return {"job_id": job_id, "status": "done" if vals.get("phase") == "done" else "idle",
-            "phase": vals.get("phase"),
+            "phase": vals.get("phase"), "image_gen_used": image_gen_used,
             "final_video_url": _to_url(vals.get("final_video_path"))}
 
 

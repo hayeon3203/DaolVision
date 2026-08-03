@@ -17,9 +17,9 @@
 - **콜드 로드 비용 주의**: `flux_server.py`는 매 요청마다 모델을 언로드한다
   (`FLUX_KEEP_RESIDENT=0` 기본값, Task 2.4 GB10 전 모델 상주 OOM 실측 후 채택).
   순수 추론은 웜 기준 ~7-12s지만, 콜드 로드+전송까지 포함하면 시스템 메모리
-  압박 상태에서 실측 175s(로드 168s)까지 걸림(job a96857e4 ReadTimeout 재현,
-  2026-08-02). `tools.py`의 read timeout을 120s→300s로 상향해 대응
-  (Task 6.15 후속)
+  압박 상태에서 실측 175s(로드 168s)까지 걸림(job a96857e4/937f1da6 ReadTimeout
+  재현, 2026-08-02). `tools.py`의 read timeout을 120s→600s로 상향해 대응
+  (Task 6.15 후속, 다른 온디맨드 콜드로드 backend인 t2v/tts와 동일 여유값)
 
 중국 원산 모델을 제외하면서 속도, 품질, 상업적 활용 가능성을 함께 만족하는
 현재의 검증된 선택이다. FLUX와 I2V sampling은 동시에 실행하지 않고 LangGraph의
