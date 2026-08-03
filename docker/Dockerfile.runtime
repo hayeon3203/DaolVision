@@ -1,0 +1,64 @@
+# DaolVision 샌드박스 런타임 (Task 8.2.1)
+#
+# 의도적으로 얇다. 웨이트·venv·서비스 코드는 전부 호스트에 남기고
+# scripts/start_studio.sh 가 원래 경로 그대로 hostPath 로 마운트해 넣는다.
+# 이 이미지가 지는 책임은 그 호스트 venv 들이 링크하는 OS 공유 라이브러리뿐.
+#
+# 왜 pip install 이 없나:
+#   - GB10 은 ARM64 + Blackwell(sm_121) 이라 torch/cu130 휠 재현이 비싸고,
+#     venv 마다 버전이 다르다(ComfyUI/T2I 2.12.1, Chatterbox 2.11.0,
+#     Cosmos3Nano 2.13.0). 이미지 안에서 이걸 다시 맞추면 빌드가 수십 GB /
+#     수십 분이 되고 호스트와 미세하게 달라진다.
+#   - torch 휠은 CUDA 런타임을 site-packages/nvidia/* 에 자체 동봉하고,
+#     드라이버는 NVIDIA 컨테이너 런타임이 호스트에서 넘겨준다. 그래서
+#     CUDA 툴킷도 여기 없다.
+#   결과: 빌드가 apt 몇 개짜리라 OOM 위험이 사실상 없다.
+#
+# ponytail: 파이썬 서비스 5종이 이미지 하나를 공유한다. 서로 다른 건 마운트·
+# 환경변수·커맨드뿐이고 시스템 의존성은 같다. 한 서비스가 실제로 충돌하는
+# apt 패키지를 요구할 때 그때 쪼갠다.
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# python3 — 호스트의 /home/admin/.venv, huyuan-env, .venv-kokoro,
+#   .venv-cosmos3nano 가 /usr/bin/python3 를 base 로 잡고 있어 같은 마이너
+#   버전이 이미지 안에도 있어야 한다(Ubuntu 24.04 = 3.12.3, 호스트와 동일).
+#   `python3.12` 만 깔면 /usr/bin/python3 심볼릭이 안 생겨서 venv 의
+#   bin/python -> python3 -> /usr/bin/python3 사슬이 끊긴다(실측 확인).
+#   Chatterbox 는 uv 가 관리하는 3.11 을 쓰므로 그 인터프리터 디렉토리를
+#   통째로 마운트해서 해결한다(apt 로는 24.04 에 3.11 이 없다).
+# libgl1 / libglib2.0-0t64 — ComfyUI, diffusers 쪽 opencv 계열
+# libsndfile1 / ffmpeg    — Kokoro, Chatterbox 오디오 IO
+# libgomp1                — onnxruntime, torch OpenMP
+# git                     — ComfyUI-Manager 가 런타임에 호출
+# iproute2 / iptables     — openshell supervisor 가 파드 안에서 네트워크
+#                           네임스페이스를 직접 만든다. 없으면 기동 실패:
+#                           "Network namespace creation failed and proxy mode
+#                            requires isolation ... iproute2 is installed"
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3 \
+        libgl1 \
+        libglib2.0-0t64 \
+        libsndfile1 \
+        ffmpeg \
+        libgomp1 \
+        git \
+        ca-certificates \
+        curl \
+        iproute2 \
+        iptables \
+    && rm -rf /var/lib/apt/lists/*
+
+# openshell supervisor 는 이미지에 'sandbox' 유저/그룹이 있어야 파드를 띄운다
+# (없으면 CrashLoopBackOff + "sandbox user 'sandbox' not found in image").
+# uid/gid 는 호스트의 admin(1000)에 맞춘다 — 마운트한 웨이트·코드가 전부
+# uid 1000 소유라 이래야 rw 마운트(ComfyUI output/, ollama blobs)에 그대로
+# 쓸 수 있다. ubuntu:24.04 가 1000 을 'ubuntu' 로 선점하고 있어 먼저 지운다.
+RUN userdel -r ubuntu 2>/dev/null || true; \
+    groupadd -g 1000 sandbox && \
+    useradd -u 1000 -g 1000 -m -s /bin/bash sandbox
+
+# openshell 이 파드를 띄울 때 엔트리포인트를 자기 supervisor 로 갈아끼운다.
+# 아래 CMD 는 `docker run` 스모크 테스트용 폴백일 뿐이다.
+CMD ["sleep", "infinity"]

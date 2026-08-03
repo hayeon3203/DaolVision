@@ -25,3 +25,6 @@ localai-ui/coverage/
 
 # superpowers SDD scratch (ledger, briefs, reports, review diffs)
 .superpowers/
+
+# start_studio.sh 가 서비스별로 생성하는 landlock 정책 (런타임 산출물)
+docker/policies/
