@@ -275,6 +275,12 @@ export default function GatewayAgent() {
             <video controls className="media-result" style={{ minHeight: 0 }} src={`${GATEWAY_BASE}${status.final_video_url}`} />
           ) : status.status === 'error' ? (
             <p style={{ color: 'var(--color-error)' }}>{status.error}</p>
+          ) : checkpoint && checkpoint.checkpoint?.startsWith('2-3') && (checkpoint.gen_image_urls || []).length > 0 ? (
+            <img
+              src={`${GATEWAY_BASE}${checkpoint.gen_image_urls[0]}${checkpoint.image_queries?.[0] ? `?v=${encodeURIComponent(checkpoint.image_queries[0])}` : ''}`}
+              alt="생성 이미지"
+              style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
+            />
           ) : (
             <div style={{ width: '100%' }}>
               <p><LoadingSpinner size="sm" /> phase: {status.phase || status.status}</p>

@@ -28,12 +28,61 @@ _IMG_QUERY_SYSTEM = (
     "You rewrite a user's free-form image request (any language) into a single prompt for a "
     "text-to-image generator. Even if the user describes multiple things, distill it into one "
     "image request that captures the main subject, composition, and lighting. "
+    "The target model (FLUX.1-schnell, 4-step distilled) follows vague framing words like "
+    "'wide shot' or 'face clearly visible' poorly and defaults to an extreme close-up — a single "
+    "technical term like '24mm lens' or 'full-body shot' is NOT enough on its own (verified by "
+    "A/B render test, 2026-08-03: it still produced a head-and-shoulders medium shot). It only "
+    "reliably goes wide when the scale is stated redundantly, in plain descriptive terms, at "
+    "least three ways: (1) the subject 'stands/is small within the frame', (2) a concrete camera "
+    "distance like 'several meters from camera', and (3) the background described as vast/tall/ "
+    "expansive 'stretching far into the background'. So whenever the user's request implies "
+    "anything other than a tight close-up (e.g. wide, full-body, standing, from a distance, "
+    "establishing shot), include all three of those redundant scale cues plus the body being "
+    "fully visible head-to-toe/head-to-boots and a named wide-angle lens. Never mention the face, "
+    "eyes, or 'head to shoulders' at all in a wide/full-body shot, even if the user asked for "
+    "the face to be visible — any face-emphasis or shoulders-up wording biases the model back "
+    "toward a close-up and contradicts the full-body framing. State only that the subject faces "
+    "the camera; the face will read as visible once the whole body is in frame. Only describe "
+    "the face/eyes in detail if the user explicitly asks for a close-up or portrait, in which "
+    "case skip all the wide-shot phrasing above entirely. "
+    "Write ONE well-formed, properly punctuated sentence (or comma-joined clauses) — never a "
+    "bare run-on list of phrases with no commas or periods. A run-on with the scale cues just "
+    "mashed together (verified by A/B test, 2026-08-03: 'stands wide in the frame his "
+    "head-to-boots he is small within the frame several meters from camera the background "
+    "stretches far into the background') reliably fails and regresses to a close-up, while the "
+    "same content as a clean punctuated sentence ('stands small within the frame, several "
+    "meters from camera, entire body visible head-to-boots, inside a vast dim space stretching "
+    "far into the background') reliably produces the correct wide shot. Match the second style. "
     "Output a JSON array with exactly one object: [{\"query\": \"<prompt>\"}]. "
     "If the subject is a person or character, default to a photorealistic, cinematic "
     "live-action style unless the user explicitly asks for an anime, illustrated, or "
     "stylized look. "
     "Output only the JSON array — no preamble, quotes, or markdown."
 )
+
+
+_WIDE_SHOT_SIGNAL = re.compile(
+    r"\b(full[- ]body|head[- ]to[- ](boots|toe|feet)|wide[- ]angle|wide shot|establishing shot)\b",
+    re.I,
+)
+_FACE_EMPHASIS_PHRASE = re.compile(
+    r",?\s*\b(with\s+)?(his\s+|her\s+|their\s+|its\s+|the\s+)?face[s]?\s+(is\s+|are\s+)?(clearly\s+|fully\s+)?visible"
+    r"(\s+from\s+[a-z][a-z\- ]*?(?=[,.]|$))?",
+    re.I,
+)
+
+
+def _strip_face_emphasis_if_wide(text: str) -> str:
+    """FLUX.1-schnell 실측(2026-08-03): LLM에게 'wide shot에는 얼굴 강조 문구 넣지 마라'고
+    시스템 프롬프트로 지시해도 소형 로컬 LLM이 곧잘 무시하고 'face clearly visible'을
+    끼워 넣는다 — 이 문구 하나만으로 full-body 지시가 있어도 결과 이미지가 다시
+    얼빡샷(face close-up)으로 회귀함을 확인(t2i_test1 vs t2i_test2 A/B). 프롬프트
+    지시만으로는 신뢰할 수 없어 wide-shot 신호가 있으면 얼굴 강조 문구를 결정적으로
+    제거한다."""
+    if _WIDE_SHOT_SIGNAL.search(text):
+        text = _FACE_EMPHASIS_PHRASE.sub("", text)
+        text = re.sub(r"\s{2,}", " ", text).strip(" ,")
+    return text
 
 
 async def node_rewrite_image_query(state: GraphState) -> dict:
@@ -57,6 +106,7 @@ async def node_rewrite_image_query(state: GraphState) -> dict:
     for item in items if isinstance(items, list) else []:
         q = item.get("query") if isinstance(item, dict) else item if isinstance(item, str) else None
         q = tools.clean_llm_prompt(q or "")
+        q = _strip_face_emphasis_if_wide(q)
         if q:
             queries.append(q)
     queries = queries[:1]

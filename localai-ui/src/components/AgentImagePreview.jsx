@@ -1,38 +1,19 @@
 import { useState } from 'react'
-import { GATEWAY_BASE } from '../utils/api'
 
 // checkpoint 2-3_image_approval 리뷰 UI. 전에는 autoDecisionFor가 '2-3'을 원클릭 승인해버려
 // M2(이미지 설명으로 생성)에서 나온 결과물을 한 번도 보여주지 않았다 — 백엔드
 // (nodes.py:node_checkpoint_image_approval)는 {approved:true}면 그대로 진행,
 // {feedback:"..."}면 원 요청에 피드백을 누적해 M2-1(rewrite)부터 전체 재생성한다.
+// 실제 이미지는 오른쪽 결과물 패널(GatewayAgent.jsx의 media-result)에 크게 표시된다 —
+// 여기서는 승인/재생성 컨트롤만 다룬다(64x64 썸네일 중복 표시하지 않음).
 export default function AgentImagePreview({ imageUrls, imageQueries, onApprove, onRegenerate }) {
   const [revising, setRevising] = useState(false)
   const [feedback, setFeedback] = useState('')
 
   return (
     <div className="scene-preview">
-      <p className="form-field__hint">이미지 {imageUrls.length}장 생성됨 — 확인 후 승인하거나 수정 요청을 입력하세요.</p>
-      <ol className="scene-preview__list">
-        {imageUrls.map((url, i) => (
-          <li key={url} className="scene-preview__card">
-            <div className="scene-preview__thumb">
-              {/* gen_img_N.png 파일명이 재생성해도 고정이라 URL이 똑같아 브라우저가 옛
-                  이미지를 캐시한다(video_generator의 openwebui_anim_function.py가 같은
-                  문제를 쿼리스트링으로 우회했던 전례) — 프롬프트가 바뀔 때마다 캐시 무효화. */}
-              <img
-                src={`${GATEWAY_BASE}${url}${imageQueries[i] ? `?v=${encodeURIComponent(imageQueries[i])}` : ''}`}
-                alt={`생성 이미지 ${i + 1}`}
-              />
-            </div>
-            <div className="scene-preview__body">
-              <div className="scene-preview__meta">
-                <span className="scene-preview__badge">#{i + 1}</span>
-              </div>
-              {imageQueries[i] && <p className="scene-preview__text">{imageQueries[i]}</p>}
-            </div>
-          </li>
-        ))}
-      </ol>
+      <p className="form-field__hint">이미지 {imageUrls.length}장 생성됨 — 오른쪽에서 확인 후 승인하거나 수정 요청을 입력하세요.</p>
+      {imageQueries[0] && <p className="scene-preview__text">{imageQueries[0]}</p>}
 
       {!revising ? (
         <div className="scene-preview__actions">
