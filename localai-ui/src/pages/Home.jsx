@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom'
 import { useBranding } from '../contexts/BrandingContext'
 import SectionHeading from '../components/SectionHeading'
+import nvidiaLogo from '../../../NVIDIA.svg'
 
 const studios = [
   {
@@ -166,8 +167,20 @@ export default function Home() {
       </section>
 
       <section className="home-loaded dv-runtime-note">
-        <SectionHeading>Active models</SectionHeading>
-        <div><span className="dv-live-dot" /> 모든 생성 도구는 독립된 OpenShell 환경에서 준비됩니다.</div>
+        <div className="dv-runtime-copy">
+          <span className="dv-runtime-kicker">MODEL RUNTIME</span>
+          <SectionHeading>Active models</SectionHeading>
+          <div className="dv-runtime-status">
+            <span className="dv-live-dot" aria-hidden="true" />
+            <span>모든 생성 도구는 독립된 OpenShell 환경에서 준비됩니다.</span>
+          </div>
+        </div>
+        <div className="dv-runtime-brand" aria-label="NVIDIA accelerated computing">
+          <span>ACCELERATED BY</span>
+          <span className="dv-runtime-logo">
+            <img src={nvidiaLogo} alt="NVIDIA" />
+          </span>
+        </div>
       </section>
 
       <section className="dv-bottom-cta">
