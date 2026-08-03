@@ -1,7 +1,7 @@
 import { useNavigate } from 'react-router-dom'
 import { useBranding } from '../contexts/BrandingContext'
 import SectionHeading from '../components/SectionHeading'
-import nvidiaLogo from '../../../NVIDIA.svg'
+import nvidiaLogo from '../../../NVIDIA.png'
 
 const studios = [
   {
@@ -166,7 +166,7 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="home-loaded dv-runtime-note">
+      <section className="dv-runtime-note">
         <div className="dv-runtime-copy">
           <span className="dv-runtime-kicker">MODEL RUNTIME</span>
           <SectionHeading>Active models</SectionHeading>
