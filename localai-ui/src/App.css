@@ -1174,7 +1174,6 @@
   width: 100%;
   max-width: var(--page-max, var(--page-max-default));
   margin: 0 auto;
-  animation: fadeIn var(--duration-normal) var(--ease-default);
 }
 
 .page--narrow { --page-max: var(--page-max-narrow); }
@@ -3114,9 +3113,9 @@ button.collapsible-header:focus-visible {
   to { opacity: 1; transform: translateY(0); }
 }
 
-/* Page route transitions */
+/* Route content changes in place. Navigation state carries the motion through
+   the active menu background; the content itself stays spatially stable. */
 .page-transition {
-  animation: pageReveal var(--duration-reveal) var(--ease-reveal) both;
   display: flex;
   flex-direction: column;
   flex: 1;
