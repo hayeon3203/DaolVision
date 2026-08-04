@@ -4,7 +4,6 @@ import { useTranslation } from 'react-i18next'
 import Sidebar from './components/Sidebar'
 import OperationsBar from './components/OperationsBar'
 import { ToastContainer, useToast } from './components/Toast'
-import { systemApi } from './utils/api'
 import { useTheme } from './contexts/ThemeContext'
 import { useBranding } from './contexts/BrandingContext'
 import { useAuth } from './context/AuthContext'
@@ -30,7 +29,6 @@ export default function App() {
     try { return localStorage.getItem(COLLAPSED_KEY) === 'true' } catch (_) { return false }
   })
   const { toasts, addToast, removeToast } = useToast()
-  const [version, setVersion] = useState('')
   const location = useLocation()
   const navigate = useNavigate()
   const { theme, toggleTheme } = useTheme()
@@ -39,12 +37,6 @@ export default function App() {
   const { t } = useTranslation('nav')
   const hamburgerRef = useRef(null)
   const isChatRoute = location.pathname.match(/\/chat(\/|$)/) || location.pathname.match(/\/agents\/[^/]+\/chat/)
-
-  useEffect(() => {
-    systemApi.version()
-      .then(data => setVersion(typeof data === 'string' ? data : (data?.version || '')))
-      .catch(() => {})
-  }, [])
 
   useEffect(() => {
     const handler = (e) => setSidebarCollapsed(e.detail.collapsed)
@@ -157,24 +149,9 @@ export default function App() {
         {!isChatRoute && (
           <footer className="app-footer">
             <div className="app-footer-inner">
-              {version && (
-                <span className="app-footer-version">
-                  {branding.instanceName} <span style={{ fontWeight: 500 }}>{version}</span>
-                </span>
-              )}
-              <div className="app-footer-links">
-                <a href="https://github.com/mudler/LocalAI" target="_blank" rel="noopener noreferrer">
-                  <i className="fab fa-github" /> {t('footer.github')}
-                </a>
-                <a href="https://localai.io" target="_blank" rel="noopener noreferrer">
-                  <i className="fas fa-book" /> {t('footer.documentation')}
-                </a>
-                <a href="https://mudler.pm" target="_blank" rel="noopener noreferrer">
-                  <i className="fas fa-user" /> {t('footer.author')}
-                </a>
-              </div>
               <span className="app-footer-copyright">
-                &copy; 2023-2026 <a href="https://mudler.pm" target="_blank" rel="noopener noreferrer">Ettore Di Giacinto</a>
+                MIT License<br />
+                Copyright (c) 2023-2025 Ettore Di Giacinto (mudler@localai.io)
               </span>
             </div>
           </footer>
