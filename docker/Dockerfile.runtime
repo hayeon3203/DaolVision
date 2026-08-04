@@ -1,7 +1,7 @@
 # DaolVision 샌드박스 런타임 (Task 8.2.1)
 #
 # 의도적으로 얇다. 웨이트·venv·서비스 코드는 전부 호스트에 남기고
-# scripts/start_studio.sh 가 원래 경로 그대로 hostPath 로 마운트해 넣는다.
+# scripts/start_studio.sh 가 원래 경로 그대로 bind mount 로 넣는다.
 # 이 이미지가 지는 책임은 그 호스트 venv 들이 링크하는 OS 공유 라이브러리뿐.
 #
 # 왜 pip install 이 없나:
@@ -58,6 +58,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN userdel -r ubuntu 2>/dev/null || true; \
     groupadd -g 1000 sandbox && \
     useradd -u 1000 -g 1000 -m -s /bin/bash sandbox
+
+# openshell 0.0.96 부터는 유저가 존재하는 것만으로 부족하다. OCI 이미지에
+# USER 가 없으면 supervisor 가 뜨자마자 죽고 컨테이너가 재시작 루프를 돈다:
+#   "OCI USER is required because run_as_user is omitted"
+USER sandbox
 
 # openshell 이 파드를 띄울 때 엔트리포인트를 자기 supervisor 로 갈아끼운다.
 # 아래 CMD 는 `docker run` 스모크 테스트용 폴백일 뿐이다.
