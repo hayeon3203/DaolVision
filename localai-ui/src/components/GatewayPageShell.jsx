@@ -1,4 +1,6 @@
-export default function GatewayPageShell({ eyebrow, title, description, icon, facts, children }) {
+import GatewayHeroPills from './GatewayHeroPills'
+
+export default function GatewayPageShell({ eyebrow, title, description, icon, facts, models, techniques, children }) {
   return (
     <div className="gateway-workspace">
       <header className="gateway-hero">
@@ -6,6 +8,7 @@ export default function GatewayPageShell({ eyebrow, title, description, icon, fa
           <span className="gateway-hero__eyebrow"><i className="fas fa-sparkles" /> {eyebrow}</span>
           <h1>{title}</h1>
           <p>{description}</p>
+          <GatewayHeroPills models={models} techniques={techniques} />
         </div>
         <div className="gateway-hero__mark" aria-hidden="true"><i className={`fas ${icon}`} /></div>
       </header>

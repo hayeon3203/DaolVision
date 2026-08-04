@@ -56,6 +56,8 @@ export default function GatewayI2I() {
       title="Image to Image"
       description="한 장의 얼굴 사진을 새로운 스타일의 캐릭터로"
       icon="fa-palette"
+      models={[{ label: 'FLUX.1 Kontext Dev · Black Forest Labs', company: 'Black Forest Labs' }]}
+      techniques={['Reference Conditioning']}
       facts={[
         { icon: 'fa-camera', title: '사진 또는 웹캠', description: '이미지를 업로드하거나 카메라로 바로 촬영합니다.' },
         { icon: 'fa-swatchbook', title: '6가지 스타일', description: '시네마틱부터 수채화까지 원하는 화풍을 선택합니다.' },

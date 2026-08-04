@@ -45,6 +45,8 @@ export default function GatewayTTS() {
       title="TTS (Clone)"
       description="내 목소리의 특징을 담은 자연스러운 음성 생성"
       icon="fa-headphones"
+      models={[{ label: 'Chatterbox Multilingual V3 · Resemble AI', company: 'Resemble AI' }]}
+      techniques={['Zero-shot Voice Cloning']}
       facts={[
         { icon: 'fa-microphone', title: '녹음 또는 업로드', description: '직접 녹음하거나 사용 권한이 있는 참조 음성을 올립니다.' },
         { icon: 'fa-language', title: '한국어 텍스트', description: '읽게 할 문장을 입력해 음성 콘텐츠를 구성합니다.' },

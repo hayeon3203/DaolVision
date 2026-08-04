@@ -200,7 +200,6 @@ export default function GatewayDashboard() {
           {/* 실행트레이스 */}
           <div className="dashboard-trace">
             <div className="dashboard-section-heading">
-              <span className="gateway-panel__number">04</span>
               <div><h2>실행트레이스</h2><p>현재 워크플로에서 호출된 모델과 공급자를 확인하세요.</p></div>
             </div>
             <table className="table">

@@ -38,6 +38,8 @@ export default function GatewayT2I() {
       title="Text to Image"
       description="상상한 장면을 선명한 이미지 한 장으로"
       icon="fa-image"
+      models={[{ label: 'FLUX.1 Schnell · Black Forest Labs', company: 'Black Forest Labs' }]}
+      techniques={['Distilled Diffusion']}
       facts={[
         { icon: 'fa-pen-nib', title: '자유로운 프롬프트', description: '원하는 피사체, 분위기, 조명을 자연어로 묘사합니다.' },
         { icon: 'fa-expand', title: '맞춤 해상도', description: '가로와 세로 크기를 콘텐츠 용도에 맞게 설정합니다.' },

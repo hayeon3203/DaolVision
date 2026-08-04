@@ -4,6 +4,7 @@ import AgentPhaseStepper from '../components/AgentPhaseStepper'
 import AgentScenePreview from '../components/AgentScenePreview'
 import AgentClipPreview from '../components/AgentClipPreview'
 import AgentImagePreview from '../components/AgentImagePreview'
+import GatewayHeroPills from '../components/GatewayHeroPills'
 import { gatewayApi, GATEWAY_BASE, fileToBase64 } from '../utils/api'
 
 // Task 6.3: Agent 카테고리(S1 — 텍스트 스토리 → 캐릭터 일관 영상 + 나레이션).
@@ -122,6 +123,15 @@ export default function GatewayAgent() {
           <span className="agent-hero__eyebrow"><i className="fas fa-sparkles" /> AI VIDEO WORKFLOW</span>
           <h1>Agent</h1>
           <p>스토리 <i className="fas fa-arrow-right" /> 씬 분할 <i className="fas fa-arrow-right" /> 캐릭터 일관 영상</p>
+          <GatewayHeroPills
+            models={[
+              { label: 'Nemotron 3 Nano · NVIDIA', company: 'NVIDIA' },
+              { label: 'Gemma 4 · Google', company: 'Google' },
+              { label: 'FLUX.1 Schnell · Black Forest Labs', company: 'Black Forest Labs' },
+              { label: 'LTX-Video · Lightricks', company: 'Lightricks' },
+            ]}
+            techniques={['LangGraph Workflow', 'Character Consistency']}
+          />
         </div>
         <div className="agent-hero__mark" aria-hidden="true"><i className="fas fa-robot" /></div>
       </header>

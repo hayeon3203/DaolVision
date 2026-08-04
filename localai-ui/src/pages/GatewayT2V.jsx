@@ -35,6 +35,8 @@ export default function GatewayT2V() {
       title="Text to Video"
       description="한 줄의 아이디어를 움직이는 장면으로"
       icon="fa-video"
+      models={[{ label: 'Cosmos3-Nano · NVIDIA', company: 'NVIDIA' }]}
+      techniques={['Diffusion']}
       facts={[
         { icon: 'fa-align-left', title: '텍스트 프롬프트', description: '만들고 싶은 장면과 움직임을 자연어로 설명합니다.' },
         { icon: 'fa-dice', title: '재현 가능한 시드', description: '시드를 고정해 같은 조건의 결과를 다시 생성합니다.' },

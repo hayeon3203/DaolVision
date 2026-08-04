@@ -9,7 +9,7 @@ const studios = [
     icon: 'fa-wand-magic-sparkles',
     eyebrow: 'STORY STUDIO',
     title: '스토리 영상',
-    description: '아이디어 한 줄에서 장면, 영상, 목소리까지. 완성된 이야기로 연결합니다.',
+    description: '아이디어 한 줄에서 장면과 영상까지. 완성된 이야기로 연결합니다.',
     color: 'violet',
     preview: 'timeline',
     featured: true,
@@ -58,7 +58,6 @@ function StudioPreview({ type }) {
       <div className="dv-scene dv-scene--one"><i className="fas fa-mountain-sun" /></div>
       <div className="dv-scene dv-scene--two"><i className="fas fa-person-walking" /></div>
       <div className="dv-scene dv-scene--three"><i className="fas fa-city" /></div>
-      <span className="dv-playhead" />
     </div>
   )
   if (type === 'video') return (
