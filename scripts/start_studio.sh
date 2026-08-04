@@ -89,6 +89,21 @@ each_service() {
 # 마운트 항목은 "/경로"(읽기전용) 또는 "rw:/경로"(쓰기 허용).
 mnt_path() { printf '%s' "${1#rw:}"; }
 
+# 포트를 쥔 프로세스가 systemd 유닛이면 유닛 이름을 돌려준다. 그냥 kill 하면
+# systemd 가 곧바로 되살려서 전환이 조용히 실패한다(실측: comfyui.service 가
+# --up 도중 :8188 을 다시 잡아 forward 가 dead 로 죽었는데, 포트는 여전히
+# 200 을 응답해서 성공처럼 보였다).
+port_unit() {
+    local port="$1" pid unit
+    pid=$(ss -tlnpH "sport = :$port" 2>/dev/null \
+          | grep -oE 'pid=[0-9]+' | head -1 | cut -d= -f2)
+    [ -n "$pid" ] || return 1
+    # user 유닛은 .../app.slice/<unit>.service, 시스템 유닛은 /system.slice/<unit>.service
+    unit=$(grep -oE '[A-Za-z0-9@._-]+\.service' "/proc/$pid/cgroup" 2>/dev/null | tail -1)
+    [ -n "$unit" ] || return 1
+    printf '%s' "$unit"
+}
+
 # ---------------------------------------------------------------- preflight
 
 check() {
@@ -109,7 +124,16 @@ check() {
     local busy=0
     while IFS='|' read -r name port gpu workdir cmd env mounts; do
         if ss -tln 2>/dev/null | grep -qE "[:.]${port}[[:space:]]"; then
-            echo "  [!] :$port ($name) 호스트에서 사용 중 — 전환하려면 먼저 내려야 함"
+            unit="$(port_unit "$port" || true)"
+            if [ -n "$unit" ]; then
+                # kill 로는 안 된다. stop 만 하면 재부팅·재시작 때 되살아나므로
+                # disable 까지 안내한다.
+                echo "  [!] :$port ($name) — systemd 유닛 $unit 가 점유 중"
+                echo "        systemctl --user stop $unit && systemctl --user disable $unit"
+                echo "        (시스템 유닛이면 --user 대신 sudo)"
+            else
+                echo "  [!] :$port ($name) 호스트에서 사용 중 — 전환하려면 먼저 내려야 함"
+            fi
             busy=1
         fi
     done < <(each_service)
@@ -179,7 +203,18 @@ sandbox_up() {
         # 그대로 두면 파이프가 안 닫혀서 `./start_studio.sh --up | tail` 이
         # 영원히 안 끝난다(실측). 데몬 쪽 fd 를 끊어준다.
         openshell forward start --background "$port" "$name" >/dev/null 2>&1
-        echo "  기동 완료 (마운트 $(echo $mounts | wc -w)개)"
+
+        # forward 가 붙었는지 확인한다. 포트로 curl 만 해보면 안 된다 —
+        # 호스트가 같은 포트를 다시 잡았을 때 그쪽이 200 을 돌려주므로
+        # 전환 실패가 성공으로 보인다(실측: comfyui). forward 상태를 본다.
+        sleep 2
+        if openshell forward list 2>/dev/null \
+           | awk -v n="$name" -v p="$port" '$1==n && $3==p {print $NF}' \
+           | grep -q running; then
+            echo "  기동 완료 (마운트 $(echo $mounts | wc -w)개)"
+        else
+            die "$name forward 가 붙지 않았다 (:$port). 호스트가 포트를 다시 잡았는지 확인할 것 — ./scripts/start_studio.sh --check $name"
+        fi
     done < <(each_service)
 }
 
