@@ -57,13 +57,19 @@ POLICY_DIR="${REPO_ROOT}/docker/policies"
 # chatterbox 의 librosa→numba 가 그렇다(실측: "cannot cache function '__o_fold':
 # no locator available for .../librosa/core/notation.py"). 캐시 경로를 정책상
 # 쓰기 가능한 /tmp 로 돌려서 푼다 — venv 를 rw 로 여는 게 아니라.
+#
+# 같은 이유로 $HOME 도 맞춰줘야 한다. 샌드박스의 로그인 유저는 sandbox 라
+# HOME 이 /home/sandbox 인데 거긴 정책상 못 쓴다. ollama 는 첫 기동에
+# $HOME/.ollama 에 키를 만들므로 그대로면 죽는다(실측: "could not create
+# directory mkdir /home/sandbox/.ollama: permission denied"). HOME 을
+# /home/admin 으로 돌려 rw 로 물린 .ollama 를 쓰게 한다.
 read -r -d '' SERVICES <<EOF || true
 comfyui|8188|yes|/home/admin/video_generator/ComfyUI|/home/admin/.venv/bin/python main.py --cache-classic --highvram --listen 0.0.0.0|-|rw:/home/admin/video_generator/ComfyUI /home/admin/.venv
 t2i|8501|yes|/home/admin/DaolVision/inference_server|/home/admin/huyuan-env/bin/python flux_server.py|HYV_HOST=0.0.0.0 HYV_PORT=8501|/home/admin/DaolVision/inference_server /home/admin/huyuan-env ${HF_HUB}/models--black-forest-labs--FLUX.1-schnell
 kokoro|8503|no|/home/admin/DaolVision|/home/admin/DaolVision/.venv-kokoro/bin/python tts/kokoro/server.py|KOKORO_HOST=0.0.0.0 KOKORO_PORT=8503|/home/admin/DaolVision/tts/kokoro /home/admin/DaolVision/.venv-kokoro ${HF_HUB}/models--onnx-community--Kokoro-82M-v1.0-ONNX-timestamped
 chatterbox|8504|yes|/home/admin/DaolVision|/home/admin/DaolVision/.venv-chatterbox/bin/python tts/chatterbox/server.py|CHATTERBOX_HOST=0.0.0.0 CHATTERBOX_PORT=8504 NUMBA_CACHE_DIR=/tmp|/home/admin/DaolVision/tts/chatterbox /home/admin/DaolVision/.venv-chatterbox /home/admin/.local/share/uv/python ${HF_HUB}/models--ResembleAI--chatterbox
 cosmos3nano|8505|yes|/home/admin/DaolVision|/home/admin/DaolVision/.venv-cosmos3nano/bin/python t2v/cosmos3nano/server.py|COSMOS3NANO_HOST=0.0.0.0 COSMOS3NANO_PORT=8505 COSMOS3NANO_IDLE_TIMEOUT=86400|/home/admin/DaolVision/t2v/cosmos3nano /home/admin/DaolVision/.venv-cosmos3nano ${HF_HUB}/models--nvidia--Cosmos3-Nano
-ollama|11434|yes|/home/admin|/usr/local/bin/ollama serve|OLLAMA_HOST=0.0.0.0:11434 OLLAMA_MAX_LOADED_MODELS=2|/usr/local/bin/ollama rw:/home/admin/.ollama
+ollama|11434|yes|/home/admin|/usr/local/bin/ollama serve|HOME=/home/admin OLLAMA_HOST=0.0.0.0:11434 OLLAMA_MAX_LOADED_MODELS=2|/usr/local/bin/ollama rw:/home/admin/.ollama
 EOF
 
 die() { echo "ERROR: $*" >&2; exit 1; }
