@@ -71,14 +71,20 @@ export default function GatewayAgent() {
     setStarting(true)
     setError(null)
     try {
-      const refImages = inputMode === 'upload'
-        ? await Promise.all(refFiles.map(async (f) => `data:${f.type};base64,${await fileToBase64(f)}`))
-        : []
-      const { job_id } = await gatewayApi.startJob(
-        inputMode === 'describe' ? '' : scriptText.trim(),
-        refImages,
-        inputMode === 'describe' ? imageRequest.trim() : '',
-      )
+      let requestScript = ''
+      let requestRefImages = []
+      let requestImageDescription = ''
+
+      if (inputMode === 'upload') {
+        requestScript = scriptText.trim()
+        requestRefImages = await Promise.all(refFiles.map(async (f) => `data:${f.type};base64,${await fileToBase64(f)}`))
+      } else if (inputMode === 'describe') {
+        requestImageDescription = imageRequest.trim()
+      } else if (inputMode === 'noref') {
+        requestScript = scriptText.trim()
+      }
+
+      const { job_id } = await gatewayApi.startJob(requestScript, requestRefImages, requestImageDescription)
       setJobId(job_id)
       localStorage.setItem(JOB_STORAGE_KEY, job_id)
       await poll(job_id)
@@ -182,7 +188,7 @@ export default function GatewayAgent() {
                   <textarea className="textarea" value={scriptText} onChange={(e) => setScriptText(e.target.value)} rows={5} placeholder="한 우주비행사가 노을 지는 발사대에서 로켓을 타고 이륙한다..." />
                 </div>
                 <div className="form-group">
-                  <label className="form-label">캐릭터 참조 이미지 (선택 — I2I 카테고리에서 만든 우주비행사 등)</label>
+                  <label className="form-label">캐릭터 참조 이미지 (I2I 카테고리에서 만든 우주비행사 등)</label>
                   <input className="input" type="file" accept="image/*" multiple onChange={(e) => setRefFiles(Array.from(e.target.files || []))} />
                   {refFiles.length > 0 && <span className="form-field__hint">{refFiles.length}장 첨부됨</span>}
                 </div>
