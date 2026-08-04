@@ -52,11 +52,16 @@ POLICY_DIR="${REPO_ROOT}/docker/policies"
 # 필요한 경로만 `rw:` 를 붙인다:
 #   comfyui  — output/ temp/ user/ 에 결과물을 쓴다
 #   ollama   — pull 시 blobs/manifests 를 쓴다
+#
+# 읽기전용 venv 는 "런타임에 자기 site-packages 에 쓰는" 라이브러리를 깨뜨린다.
+# chatterbox 의 librosa→numba 가 그렇다(실측: "cannot cache function '__o_fold':
+# no locator available for .../librosa/core/notation.py"). 캐시 경로를 정책상
+# 쓰기 가능한 /tmp 로 돌려서 푼다 — venv 를 rw 로 여는 게 아니라.
 read -r -d '' SERVICES <<EOF || true
 comfyui|8188|yes|/home/admin/video_generator/ComfyUI|/home/admin/.venv/bin/python main.py --cache-classic --highvram --listen 0.0.0.0|-|rw:/home/admin/video_generator/ComfyUI /home/admin/.venv
 t2i|8501|yes|/home/admin/DaolVision/inference_server|/home/admin/huyuan-env/bin/python flux_server.py|HYV_HOST=0.0.0.0 HYV_PORT=8501|/home/admin/DaolVision/inference_server /home/admin/huyuan-env ${HF_HUB}/models--black-forest-labs--FLUX.1-schnell
 kokoro|8503|no|/home/admin/DaolVision|/home/admin/DaolVision/.venv-kokoro/bin/python tts/kokoro/server.py|KOKORO_HOST=0.0.0.0 KOKORO_PORT=8503|/home/admin/DaolVision/tts/kokoro /home/admin/DaolVision/.venv-kokoro ${HF_HUB}/models--onnx-community--Kokoro-82M-v1.0-ONNX-timestamped
-chatterbox|8504|yes|/home/admin/DaolVision|/home/admin/DaolVision/.venv-chatterbox/bin/python tts/chatterbox/server.py|CHATTERBOX_HOST=0.0.0.0 CHATTERBOX_PORT=8504|/home/admin/DaolVision/tts/chatterbox /home/admin/DaolVision/.venv-chatterbox /home/admin/.local/share/uv/python ${HF_HUB}/models--ResembleAI--chatterbox
+chatterbox|8504|yes|/home/admin/DaolVision|/home/admin/DaolVision/.venv-chatterbox/bin/python tts/chatterbox/server.py|CHATTERBOX_HOST=0.0.0.0 CHATTERBOX_PORT=8504 NUMBA_CACHE_DIR=/tmp|/home/admin/DaolVision/tts/chatterbox /home/admin/DaolVision/.venv-chatterbox /home/admin/.local/share/uv/python ${HF_HUB}/models--ResembleAI--chatterbox
 cosmos3nano|8505|yes|/home/admin/DaolVision|/home/admin/DaolVision/.venv-cosmos3nano/bin/python t2v/cosmos3nano/server.py|COSMOS3NANO_HOST=0.0.0.0 COSMOS3NANO_PORT=8505 COSMOS3NANO_IDLE_TIMEOUT=86400|/home/admin/DaolVision/t2v/cosmos3nano /home/admin/DaolVision/.venv-cosmos3nano ${HF_HUB}/models--nvidia--Cosmos3-Nano
 ollama|11434|yes|/home/admin|/usr/local/bin/ollama serve|OLLAMA_HOST=0.0.0.0:11434 OLLAMA_MAX_LOADED_MODELS=2|/usr/local/bin/ollama rw:/home/admin/.ollama
 EOF
@@ -151,12 +156,16 @@ sandbox_up() {
         # 시그널로 스크립트째 죽는다 — 로그가 create 출력에서 뚝 끊긴다.
         # create 는 샌드박스가 Ready 가 된 뒤에도 커맨드에 계속 붙어 있으므로
         # setsid + stdin 차단으로 떼어놓고 Ready 를 직접 기다린다.
+        # 서비스가 죽으면 create 프로세스도 같이 끝난다. 출력을 버리면 왜
+        # 죽었는지가 통째로 사라지므로(실측: chatterbox 의 numba 캐시 오류가
+        # 조용히 사라졌다) 서비스별 로그로 남긴다.
         setsid openshell sandbox create --name "$name" "${gpuflag[@]}" --no-tty \
             --policy "${POLICY_DIR}/${name}.yaml" \
             --driver-config-json "$(driver_json "$mounts")" \
             "${envflags[@]}" \
             --from "$DOCKERFILE" \
-            -- sh -c "cd '$workdir' && exec $cmd" < /dev/null >/dev/null 2>&1 &
+            -- sh -c "cd '$workdir' && exec $cmd" \
+            < /dev/null > "/tmp/start_studio-${name}.log" 2>&1 &
         wait_ready "$name" || die "$name 이 Ready 가 되지 않음"
 
         # forward start 는 포그라운드로 붙잡는다(Ctrl+C 대기). --background 필수.
