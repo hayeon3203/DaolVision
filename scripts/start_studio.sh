@@ -63,13 +63,19 @@ POLICY_DIR="${REPO_ROOT}/docker/policies"
 # $HOME/.ollama 에 키를 만들므로 그대로면 죽는다(실측: "could not create
 # directory mkdir /home/sandbox/.ollama: permission denied"). HOME 을
 # /home/admin 으로 돌려 rw 로 물린 .ollama 를 쓰게 한다.
+#
+# ollama 는 바이너리 하나로 끝나지 않는다. 추론 러너가 /usr/local/lib/ollama 로
+# 분리돼 있어서(llama-server + libggml*.so + cuda_v12/v13) /usr/local/bin/ollama
+# 만 마운트하면 서버는 뜨고 /api/tags 도 200 을 돌려주는데 실제 추론은 전부
+# 죽는다: "error starting llama-server: llama-server binary not found". 모델
+# 목록만 보고 판정하면 못 잡는 실패다 — 반드시 generate/embeddings 로 확인할 것.
 read -r -d '' SERVICES <<EOF || true
 comfyui|8188|yes|/home/admin/video_generator/ComfyUI|/home/admin/.venv/bin/python main.py --cache-classic --highvram --listen 0.0.0.0|-|rw:/home/admin/video_generator/ComfyUI /home/admin/.venv
-t2i|8501|yes|/home/admin/DaolVision/inference_server|/home/admin/huyuan-env/bin/python flux_server.py|HYV_HOST=0.0.0.0 HYV_PORT=8501|/home/admin/DaolVision/inference_server /home/admin/huyuan-env ${HF_HUB}/models--black-forest-labs--FLUX.1-schnell
+t2i|8501|yes|/home/admin/DaolVision/inference_server|/home/admin/huyuan-env/bin/python flux_server.py|HYV_HOST=0.0.0.0 HYV_PORT=8501 FLUX_KEEP_RESIDENT=1 HF_HOME=/home/admin/.cache/huggingface HF_HUB_OFFLINE=1|/home/admin/DaolVision/inference_server rw:/home/admin/DaolVision/inference_server/outputs /home/admin/huyuan-env ${HF_HUB}/models--black-forest-labs--FLUX.1-schnell
 kokoro|8503|no|/home/admin/DaolVision|/home/admin/DaolVision/.venv-kokoro/bin/python tts/kokoro/server.py|KOKORO_HOST=0.0.0.0 KOKORO_PORT=8503|/home/admin/DaolVision/tts/kokoro /home/admin/DaolVision/.venv-kokoro ${HF_HUB}/models--onnx-community--Kokoro-82M-v1.0-ONNX-timestamped
 chatterbox|8504|yes|/home/admin/DaolVision|/home/admin/DaolVision/.venv-chatterbox/bin/python tts/chatterbox/server.py|CHATTERBOX_HOST=0.0.0.0 CHATTERBOX_PORT=8504 NUMBA_CACHE_DIR=/tmp|/home/admin/DaolVision/tts/chatterbox /home/admin/DaolVision/.venv-chatterbox /home/admin/.local/share/uv/python ${HF_HUB}/models--ResembleAI--chatterbox
 cosmos3nano|8505|yes|/home/admin/DaolVision|/home/admin/DaolVision/.venv-cosmos3nano/bin/python t2v/cosmos3nano/server.py|COSMOS3NANO_HOST=0.0.0.0 COSMOS3NANO_PORT=8505 COSMOS3NANO_IDLE_TIMEOUT=86400|/home/admin/DaolVision/t2v/cosmos3nano /home/admin/DaolVision/.venv-cosmos3nano ${HF_HUB}/models--nvidia--Cosmos3-Nano
-ollama|11434|yes|/home/admin|/usr/local/bin/ollama serve|HOME=/home/admin OLLAMA_HOST=0.0.0.0:11434 OLLAMA_MAX_LOADED_MODELS=2|/usr/local/bin/ollama rw:/home/admin/.ollama
+ollama|11434|yes|/home/admin|/usr/local/bin/ollama serve|HOME=/home/admin OLLAMA_HOST=0.0.0.0:11434 OLLAMA_MAX_LOADED_MODELS=2|/usr/local/bin/ollama /usr/local/lib/ollama rw:/home/admin/.ollama
 EOF
 
 die() { echo "ERROR: $*" >&2; exit 1; }
