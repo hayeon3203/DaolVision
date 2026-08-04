@@ -23,7 +23,10 @@ const AGENT_NODES = [
 ]
 
 export default function GatewayAgent() {
-  const [inputMode, setInputMode] = useState('upload') // 'upload' | 'describe'
+  // 'upload'=시나리오+인물사진 / 'describe'=이미지 설명으로 생성 후 시나리오 /
+  // 'noref'=참조 없이 시나리오만. noref는 upload에 파일 0장과 페이로드가 같지만,
+  // 결과가 다른 경로(캐릭터 시트로 인물 고정)라 사용자가 명시적으로 고르게 한다.
+  const [inputMode, setInputMode] = useState('upload')
   const [scriptText, setScriptText] = useState('')
   const [refFiles, setRefFiles] = useState([])
   const [imageRequest, setImageRequest] = useState('')
@@ -72,7 +75,7 @@ export default function GatewayAgent() {
         ? await Promise.all(refFiles.map(async (f) => `data:${f.type};base64,${await fileToBase64(f)}`))
         : []
       const { job_id } = await gatewayApi.startJob(
-        inputMode === 'upload' ? scriptText.trim() : '',
+        inputMode === 'describe' ? '' : scriptText.trim(),
         refImages,
         inputMode === 'describe' ? imageRequest.trim() : '',
       )
@@ -168,6 +171,9 @@ export default function GatewayAgent() {
               <button type="button" className={`segmented__item${inputMode === 'describe' ? ' is-active' : ''}`} onClick={() => setInputMode('describe')}>
                 <i className="fas fa-wand-magic-sparkles" /> 이미지 설명으로 생성
               </button>
+              <button type="button" className={`segmented__item${inputMode === 'noref' ? ' is-active' : ''}`} onClick={() => setInputMode('noref')}>
+                <i className="fas fa-pen-nib" /> 시나리오만
+              </button>
             </div>
             {inputMode === 'upload' ? (
               <>
@@ -181,11 +187,17 @@ export default function GatewayAgent() {
                   {refFiles.length > 0 && <span className="form-field__hint">{refFiles.length}장 첨부됨</span>}
                 </div>
               </>
-            ) : (
+            ) : inputMode === 'describe' ? (
               <div className="form-group">
                 <label className="form-label">이미지 설명</label>
                 <textarea className="textarea" value={imageRequest} onChange={(e) => setImageRequest(e.target.value)} rows={5} placeholder="우주복을 입은 우주비행사가 노을 지는 발사대 앞에 서있는 모습, 시네마틱..." />
                 <span className="form-field__hint">참조 사진 없이 설명만으로 캐릭터 이미지를 생성합니다(T2I, FLUX.1-schnell). 승인하면 그 이미지로 시나리오를 이어서 입력합니다.</span>
+              </div>
+            ) : (
+              <div className="form-group">
+                <label className="form-label">스토리</label>
+                <textarea className="textarea" value={scriptText} onChange={(e) => setScriptText(e.target.value)} rows={5} placeholder="한 우주비행사가 노을 지는 발사대에서 로켓을 타고 이륙한다..." />
+                <span className="form-field__hint">참조 이미지 없이 시나리오만으로 영상을 만듭니다. 인물이 등장하면 장면마다 같은 외형이 유지되도록 자동으로 설정합니다.</span>
               </div>
             )}
             <button
