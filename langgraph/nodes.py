@@ -415,9 +415,13 @@ async def node_split_scenes(state: GraphState) -> dict:
         "text는 반드시 입력 시나리오와 '같은 언어'로 써라 — 다른 언어(특히 중국어/영어)로 "
         "번역하지 마라. 시나리오 문장을 임의로 요약·창작하지 말고 원문의 내용과 순서를 보존하라. "
         "한 문장(주어+목적어+동사)을 문법 단위 중간에서 두 씬으로 쪼개지 마라. "
-        "나쁜 예: 원문 '우주선이 지구를 향해 천천히 다가간다.' → 씬A text='우주선이 지구를', "
-        "씬B text='향해 천천히 다가간다.' (틀림 — 목적어 '지구'와 동사가 분리돼 두 씬 다 "
-        "무슨 장면인지 알 수 없다). 좋은 예: 씬 text='우주선이 지구를 향해 천천히 다가간다.' "
+        # 예시는 도메인 중립이어야 한다. 전엔 '우주선이 지구를…'을 썼는데, 4B 모델이
+        # 묘사할 피사체가 없는 씬에서 이 예시를 그대로 주워다 썼다(job 14a61492 실측:
+        # "Earth hangs above the skyline", "abandoned earth space station", "ISS at
+        # 400 km altitude"). 교훈(문장 중간 절단 금지)은 어떤 문장으로도 전달된다.
+        "나쁜 예: 원문 '학생이 책을 책상에 내려놓는다.' → 씬A text='학생이 책을', "
+        "씬B text='책상에 내려놓는다.' (틀림 — 목적어 '책'과 동사가 분리돼 두 씬 다 "
+        "무슨 장면인지 알 수 없다). 좋은 예: 씬 text='학생이 책을 책상에 내려놓는다.' "
         "그대로 한 씬에 담고, 부족한 씬 개수는 다른 씬에서 다른 각도·디테일로 채운다. "
         "각 씬의 text는 그 자체로 '누가/무엇이 무엇을 하는지' 완결되게 읽혀야 한다. 문장 수가 "
         "4개보다 적으면 한 문장을 다른 각도·디테일로 확장해 채우고, 많으면 의미가 이어지는 "
@@ -468,7 +472,7 @@ async def node_split_scenes(state: GraphState) -> dict:
         elif fractured:
             instruction = (
                 "이전 결과는 원문의 한 문장(주어+목적어+동사)을 씬 경계에서 중간에 잘랐다 "
-                "— 예: '우주선이 지구를' / '향해 다가간다'처럼 목적어와 동사가 다른 씬으로 "
+                "— 예: '학생이 책을' / '책상에 내려놓는다'처럼 목적어와 동사가 다른 씬으로 "
                 "분리됐다. 문장을 자르지 말고 각 씬 text가 완결된 문장(또는 완결된 절)이 "
                 "되도록 다시 나눠라. 내용과 시간 순서는 보존하되, 문장 수가 4개보다 적으면 "
                 "같은 문장을 다른 각도·디테일로 확장해 채워라. JSON 배열 외에는 아무것도 "
@@ -496,6 +500,14 @@ async def node_split_scenes(state: GraphState) -> dict:
 
     ref_set = set(state.get("ref_images") or [])
     scenes: list[Scene] = []
+    # 한국어는 첫 문장 뒤로 주어를 생략한다(pro-drop). "한 여성 모델이 옥상에서 걸어온다 /
+    # 엘리베이터를 타고 내려온다 / 횡단보도에서 하늘을 본다"는 전부 같은 인물인데
+    # _subject_type_from_text가 씬을 개별로 보므로 2번째 씬부터 None→"none"이 된다.
+    # "none"이면 _scene_prompt_system(has_human_subject=False)가 "사람을 만들지 마라"를
+    # 걸어 주인공을 지워버린다(job 14a61492 실측: 4씬 중 3씬에서 인물이 사라지고 트램·
+    # 우주정거장이 대신 등장). 참조 이미지가 있으면 캡션이 빈자리를 메워 가려지므로
+    # 참조 없는 job에서만 드러난다. setting이 이미 쓰는 forward-fill을 여기도 적용한다.
+    carried_subject_type: str | None = None
     for i, s in enumerate(scenes_raw):
         if isinstance(s, str):        # qwen이 씬을 객체 대신 문자열로 뱉을 때 방어 → 그 문자열을 씬 텍스트로
             s = {"text": s}
@@ -507,12 +519,27 @@ async def node_split_scenes(state: GraphState) -> dict:
             subject_type = "none"
         if matched not in ref_set:  # LLM이 없는 파일명을 환각하면 T2V로 강등
             matched = None
-        # subject_type 진실원천: 씬 텍스트 키워드(캡션 불필요, M3-6 이전 동작) > 캡션 > LLM.
+        # subject_type 진실원천: 씬 텍스트 키워드 > 캡션 > 직전 씬 물려받기 > LLM.
         # 7b가 subject_type을 자주 누락(→None)해 마스코트가 얼굴(STANDIN) 경로로 새던 회귀를 막는다.
+        #
+        # 물려받기가 LLM보다 위인 이유: 이 4B는 subject_type을 누락만 하는 게 아니라
+        # 틀리게도 답한다(job 74ea0e1a 실측 — "횡단보도에서 신호를 기다리며 고개를 들어
+        # 하늘을 본다"를 nonhuman으로 분류, 텍스트엔 비인간 키워드가 하나도 없다). 그
+        # 결과 _scene_prompt_system이 "사람을 만들지 마라"를 걸어 주인공 대신 신호등이
+        # 주인공이 됐다. 텍스트·캡션이라는 실제 증거가 없을 때는 LLM의 씬별 추측보다
+        # "이야기의 피사체는 이어진다"는 연속성이 더 신뢰할 만하다.
         cap_type = _subject_type_from_caption(captions.get(matched, "")) if matched else None
         derived = _subject_type_from_text(s.get("text", "")) or cap_type
         if derived:
             subject_type = derived
+        elif carried_subject_type:
+            # ponytail: 첫 씬은 물려받을 게 없어 LLM 값이 그대로 선다 — 거기서 틀리면
+            # 전 씬이 같이 틀린다. 풍경 전용 씬이 인물을 물려받는 과포함도 감수한다
+            # (주인공이 삭제되는 쪽보다 피해가 작다). 무인물 씬을 정확히 표현해야 하면
+            # 그때 씬 텍스트의 무인물 신호를 _NONHUMAN_TEXT에 추가한다.
+            subject_type = carried_subject_type
+        if subject_type in ("human", "nonhuman"):
+            carried_subject_type = subject_type
         role = _normalise_image_role(matched, s.get("image_role"), subject_type)
         # duration clamp: 스텝시간이 프레임 수에 초선형이라 긴 씬이 속도를 지배한다.
         # LLM 출력만 제한하고, 사람이 1-4 게이트에서 고친 값은 그대로 존중한다.
@@ -611,8 +638,11 @@ STYLE_LOCK_TOKEN = """  Maintain one cohesive visual world across every scene. K
   underlying visual style."""
 
 
-async def _make_style_bible(state: GraphState) -> str:
+async def _make_style_bible(state: GraphState) -> tuple[str, str]:
     """전체 시나리오 기준 공통 스타일 규격 1개 생성. 실패 시 기존 토큰으로 폴백.
+    반환: (style_bible, character_sheet). character_sheet는 참조 이미지가 없고 사람이
+    등장하는 job에서만 채워지며(needs_character_sheet), 그 외에는 빈 문자열이다 —
+    LLM 호출은 여전히 1회다(같은 응답에서 두 줄로 받아 쪼갠다).
     image_query(있으면)가 정지 이미지 앵커의 화풍을 정의하므로, 영상 스타일이 그와
     독립적으로 결정되면 이미지·영상 그림체가 어긋난다 → image_query를 앵커로 넘겨
     같은 렌더링 기법을 따르도록 강제한다."""
@@ -623,6 +653,13 @@ async def _make_style_bible(state: GraphState) -> str:
     has_face_ref = any(
         s.get("subject_type") == "human" and s.get("image_role") in ("start", "ref")
         for s in (state.get("scenes") or [])
+    )
+    # 참조 이미지가 하나도 없는데 사람이 등장하는 job(= no-ref 모드)에서만 캐릭터 시트를
+    # 함께 뽑는다. 참조가 있으면 Stand-In/Face-ID latent나 캡션이 이미 identity를 쥐고
+    # 있어 텍스트로 또 고정하면 표정·자세까지 굳는다(node_generate_prompts의 standin 주석).
+    needs_character_sheet = (
+        not (state.get("ref_images") or [])
+        and any(s.get("subject_type") == "human" for s in (state.get("scenes") or []))
     )
     system_prompt = (
           "You are an art director for a short video. "
@@ -685,9 +722,26 @@ async def _make_style_bible(state: GraphState) -> str:
           "swings with the narrative beat (tense, calm, joyful) and is specified "
           "separately per scene. "
 
-          "Do not standardize character identity, anatomy, clothing, or appearance. "
-          "Output only a compact comma-separated English style specification "
-          "under 130 words. No preamble, quotes, or markdown."
+          # 참조 이미지가 있으면 identity는 이미지 latent(Stand-In/Face-ID)나 캡션이
+          # 담당하므로 bible이 외모를 정하면 안 된다. 참조가 없으면 그 반대다 — 아무도
+          # 인물을 고정하지 않아 씬마다 새 사람이 나온다(job 1a0b199d 실측: 1씬 "a woman
+          # model"이 4씬에서 "beside him"으로 성별까지 바뀜).
+          + ("Do not standardize character identity, anatomy, clothing, or appearance. "
+             if not needs_character_sheet else
+             "No reference photo exists for the people in this story, so nothing else "
+             "pins their appearance down — you must. ")
+
+          + ("Output only a compact comma-separated English style specification "
+             "under 130 words. No preamble, quotes, or markdown."
+             if not needs_character_sheet else
+             "Output exactly two lines, no preamble, quotes, or markdown:\n"
+             "STYLE: <compact comma-separated English style specification, under 130 words>\n"
+             "CHARACTER: <the single main character's fixed physical appearance in one "
+             "sentence — approximate age, build, hair colour/length/style, skin tone, "
+             "distinctive features, and default outfit. State the gender explicitly. Be "
+             "concrete enough that a different artist would draw the same person twice. "
+             "Describe appearance ONLY — no pose, expression, action, location, or "
+             "lighting. If the story genuinely has no person in it, output CHARACTER: none>")
     )
     user_prompt = json.dumps({
         "script": state["script_text"],
@@ -696,10 +750,44 @@ async def _make_style_bible(state: GraphState) -> str:
         **({"image_anchor_prompt": image_query} if image_query else {}),
     }, ensure_ascii=False)
     try:
-        bible = tools.clean_llm_prompt(await tools.call_llm(system_prompt, user_prompt))
-        return bible if bible else STYLE_LOCK_TOKEN
+        raw = tools.clean_llm_prompt(await tools.call_llm(system_prompt, user_prompt))
+        bible, sheet = _split_style_and_character(raw) if needs_character_sheet else (raw, "")
+        return (bible or STYLE_LOCK_TOKEN), sheet
     except Exception:
-        return STYLE_LOCK_TOKEN
+        return STYLE_LOCK_TOKEN, ""
+
+
+def _split_style_and_character(raw: str) -> tuple[str, str]:
+    """needs_character_sheet일 때의 "STYLE: ... / CHARACTER: ..." 2줄 응답을 쪼갠다.
+
+    LLM이 형식을 안 지키면(라벨 누락) 전체를 style bible로 보고 시트는 비운다 — 시트가
+    비면 호출부가 주입을 건너뛸 뿐이라 기존 동작으로 안전하게 되돌아간다. 라벨을 못
+    떼면 "CHARACTER: ..."가 모든 씬 프롬프트 꼬리에 그대로 붙어버리므로 여기서 반드시
+    떼어내야 한다.
+    """
+    style_parts: list[str] = []
+    sheet = ""
+    current = None
+    for line in (raw or "").splitlines():
+        stripped = line.strip()
+        low = stripped.lower()
+        if low.startswith("style:"):
+            current = "style"
+            stripped = stripped[len("style:"):].strip()
+        elif low.startswith("character:"):
+            current = "character"
+            stripped = stripped[len("character:"):].strip()
+        if not stripped:
+            continue
+        if current == "character":
+            sheet = f"{sheet} {stripped}".strip()
+        elif current == "style":
+            style_parts.append(stripped)
+    if not style_parts:          # 라벨을 아예 안 지킴 → 전체를 bible로, 시트는 포기
+        return (raw or "").strip(), ""
+    if sheet.lower().rstrip(". ") == "none":   # 인물 없는 이야기
+        sheet = ""
+    return " ".join(style_parts), sheet
 
 
 _LIGHTING_SYSTEM = (
@@ -713,8 +801,9 @@ _LIGHTING_SYSTEM = (
     "scene continues in the SAME place as the previous scene, output an empty string \"\" for setting "
     "(it inherits the previous location). Only fill setting when the location changes. When in doubt, "
     "fill it in rather than leaving it empty — scenes that name a different physical environment "
-    "(e.g. a launch pad vs. open space vs. an alien planet's surface vs. re-entry through the "
-    "atmosphere) are almost always DIFFERENT settings, even if no location word is repeated. "
+    # 도메인 중립 예시 — 위 split 프롬프트와 같은 이유로 우주 소재를 걷어냈다.
+    "(e.g. a hotel lobby vs. a rooftop terrace vs. a subway platform vs. a riverside path) "
+    "are almost always DIFFERENT settings, even if no location word is repeated. "
     'Output ONLY a JSON object mapping each scene id (string) to {"lighting": "...", "setting": "..."}, '
     'e.g. {"1": {"lighting": "low-key dim, deep shadows, cool cast", "setting": "어두운 사무실"}, '
     '"2": {"lighting": "sudden bright key light", "setting": ""}}. No preamble, no markdown.'
@@ -781,7 +870,12 @@ async def node_generate_prompts(state: GraphState) -> dict:
     """
     captions = state.get("ref_captions") or {}
     wardrobe_locks = state.get("wardrobe_locks") or {}
-    bible = state.get("style_bible") or await _make_style_bible(state)
+    # 재생성(regen)이면 이미 state에 있는 값을 그대로 쓴다 — 씬만 다시 만들 때 인물이
+    # 바뀌면 안 되므로 시트도 bible과 같이 보존한다.
+    if state.get("style_bible"):
+        bible, character_sheet = state["style_bible"], (state.get("character_sheet") or "")
+    else:
+        bible, character_sheet = await _make_style_bible(state)
 
     # M3-7 재조명 + 배경 연속성: 씬별 조명 큐 + 장소(setting)를 한 번의 focused 호출로 생성
     # (추가 LLM 호출 없음 — 기존 조명 호출에 fold). 이미 둘 다 있으면(재생성) 재호출 생략.
@@ -841,14 +935,21 @@ async def node_generate_prompts(state: GraphState) -> dict:
             full_prompt = f"{raw_prompt}.{lock} {bible}"
         else:                               # 이미지 없음
             mode = "T2V"
-            full_prompt = f"{raw_prompt}, {bible}"
+            # no-ref 인물 씬: 참조가 없어 identity를 쥔 게 아무것도 없다. 캐릭터 시트를
+            # 위 캡션록(928행)과 같은 문구로 붙여 씬마다 새 사람이 나오는 걸 막는다.
+            # 무인물 씬에는 붙이지 않는다 — _scene_prompt_system이 그 씬엔 "사람을
+            # 만들지 마라"를 걸고 있어 정면으로 충돌한다.
+            lock = (f" The main character: {character_sheet}."
+                    if character_sheet and has_human_subject else "")
+            full_prompt = f"{raw_prompt}.{lock} {bible}"
 
         # M3-7: 씬 재조명 큐를 결정적으로 프롬프트 끝에 못박는다 — rewrite LLM이 조명을
         # 약하게 반영해도 어두운 씬은 실제로 저조도 지시가 남는다(참조 밝기 상속 방지).
         full_prompt = f"{full_prompt} Scene lighting and atmosphere: {cue}."
         updated_scenes.append({**scene, "prompt": full_prompt, "mode": mode, "lighting": cue})
 
-    return {"scenes": updated_scenes, "style_bible": bible, "phase": "prompting"}
+    return {"scenes": updated_scenes, "style_bible": bible,
+            "character_sheet": character_sheet, "phase": "prompting"}
 
 
 def node_classify_faceid_scenes(state: GraphState) -> dict:

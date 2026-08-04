@@ -37,7 +37,7 @@ async def main() -> int:
     state["script_text"] = SCRIPT
     state["scenes"] = [{"text": "햇살이 쏟아지는 잔디밭에 고양이가 뛰어놀고 있는 장면."}]
     state["ref_captions"] = {}
-    bible = await _make_style_bible(state)
+    bible, _sheet = await _make_style_bible(state)
 
     print("\n=== 결과 ===")
     print("image_query :", state["image_query"])

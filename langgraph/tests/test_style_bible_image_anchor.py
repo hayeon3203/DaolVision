@@ -20,7 +20,7 @@ from nodes import _make_style_bible
 
 async def _run(state):
     with patch("tools.call_llm", new=AsyncMock(return_value="anime illustration style, cel-shaded")) as mock_llm:
-        bible = await _make_style_bible(state)
+        bible, _sheet = await _make_style_bible(state)  # no-ref 시트는 이 테스트 범위 밖
     return bible, mock_llm
 
 
