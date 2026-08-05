@@ -1024,6 +1024,13 @@ FLUX_KONTEXT_VAE = os.environ.get("AGENT_FLUX_KONTEXT_VAE", "ae.safetensors")
 FLUX_KONTEXT_STEPS = int(os.environ.get("AGENT_FLUX_KONTEXT_STEPS", "20"))
 FLUX_KONTEXT_GUIDANCE = float(os.environ.get("AGENT_FLUX_KONTEXT_GUIDANCE", "2.5"))
 
+# ── ControlNet(canny) 구도 고정 — Kontext 텍스트 앵커만으론 줌인 드리프트("왕대갈") 못 잡아서
+# 추가. Shakker-Labs Union Pro는 canny/depth/pose 등 여러 타입을 한 체크포인트로 지원 —
+# 신규 depth 추정기 없이 core 내장 Canny 전처리만으로 구도(엣지) 고정한다.
+FLUX_CONTROLNET_UNION = os.environ.get(
+    "AGENT_FLUX_CONTROLNET_UNION", "flux1-dev-controlnet-union-pro-2.0.safetensors")
+FLUX_CONTROLNET_STRENGTH = float(os.environ.get("AGENT_FLUX_CONTROLNET_STRENGTH", "0.6"))
+
 # ComfyUI comfy_extras/nodes_flux.py의 FluxKontextImageScale이 내부적으로 고르는
 # 해상도 버킷과 동일 목록 — EmptySD3LatentImage에 같은 width/height를 넣어야 latent
 # 크기가 어긋나지 않는다(그래프 실행 전 파이썬에서 미리 같은 알고리즘으로 계산).
@@ -1069,10 +1076,23 @@ def _build_flux_kontext_graph(
                "inputs": {"conditioning": ["9", 0], "guidance": FLUX_KONTEXT_GUIDANCE}},
         "11": {"class_type": "EmptySD3LatentImage",
                "inputs": {"width": width, "height": height, "batch_size": 1}},
+        # ControlNet(canny) 구도 고정 — 원본과 동일 스케일(노드7)에서 엣지 뽑아 KSampler
+        # conditioning에 얹는다. Kontext 텍스트 앵커만으론 줌인 드리프트 못 잡아서 추가.
+        "15": {"class_type": "Canny",
+               "inputs": {"image": ["7", 0], "low_threshold": 0.4, "high_threshold": 0.8}},
+        "16": {"class_type": "ControlNetLoader",
+               "inputs": {"control_net_name": FLUX_CONTROLNET_UNION}},
+        "17": {"class_type": "SetShakkerLabsUnionControlNetType",
+               "inputs": {"control_net": ["16", 0], "type": "canny"}},
+        "18": {"class_type": "ControlNetApplyAdvanced", "inputs": {
+            "positive": ["10", 0], "negative": ["5", 0], "control_net": ["17", 0],
+            "image": ["15", 0], "vae": ["3", 0], "strength": FLUX_CONTROLNET_STRENGTH,
+            "start_percent": 0.0, "end_percent": 1.0,
+        }},
         "12": {"class_type": "KSampler", "inputs": {
             "model": ["1", 0], "seed": seed, "steps": FLUX_KONTEXT_STEPS, "cfg": 1.0,
             "sampler_name": "euler", "scheduler": "simple",
-            "positive": ["10", 0], "negative": ["5", 0], "latent_image": ["11", 0],
+            "positive": ["18", 0], "negative": ["18", 1], "latent_image": ["11", 0],
             "denoise": 1.0,
         }},
         "13": {"class_type": "VAEDecode", "inputs": {"samples": ["12", 0], "vae": ["3", 0]}},
