@@ -265,6 +265,24 @@ def _mood_to_lighting(mood: str) -> str:
     return _MOOD_LIGHTING.get((mood or "neutral").strip().lower(), _MOOD_LIGHTING["neutral"])
 
 
+# LLM이 neutral/happy 장면에도 "low-key dim"을 반복 선택하는 경향을 결정론적으로
+# 차단한다. 프롬프트 지시만으로는 실제 job에서 해질녘의 happy 장면까지 deep shadows로
+# 내려간 사례가 있었으므로, 이 두 mood는 최소 노출을 코드 레벨에서 보장한다.
+_DARK_LIGHTING_RE = re.compile(
+    r"\b(low[- ]key|dim(?:ly)?|underexpos(?:ed|ure)|low exposure|deep shadows?|"
+    r"near[- ]black|poorly lit|dark lighting)\b", re.I)
+
+
+def _enforce_mood_exposure(mood: str, cue: str) -> str:
+    normalized = (mood or "neutral").strip().lower()
+    cleaned = (cue or "").strip()
+    if normalized in {"happy", "neutral"} and (
+        not cleaned or _DARK_LIGHTING_RE.search(cleaned)
+    ):
+        return _MOOD_LIGHTING[normalized]
+    return cleaned or _mood_to_lighting(normalized)
+
+
 # M3-8: 참조 사진은 대개 밝은/중립 조명이라, 저조도·강대비 mood가 참조와 가장 크게
 # 괴리된다 → 이런 씬만 서버측 relight 노브를 켜 첫프레임 latent 잠금을 완화한다. 밝은/
 # 중립 mood는 참조와 유사해 노브 미적용(기존 동작 유지).
@@ -703,8 +721,7 @@ async def _make_style_bible(state: GraphState) -> tuple[str, str]:
           "scene (the art style / 화풍): rendering technique, line and edge treatment, "
           "shape language, surface materials, texture density, environmental detail "
           "level, prop design language, camera character, COLOR GRADING (palette bias, "
-          "saturation, contrast character — e.g. desaturated teal-orange, warm film "
-          "stock, bleach-bypass), and LENS STYLE (focal length feel, depth-of-field "
+          "saturation, and contrast character), and LENS STYLE (focal length feel, depth-of-field "
           "character, any distortion — e.g. wide-angle deep focus, anamorphic shallow "
           "DOF, telephoto compression). Think of all four clips as connected shots from "
           "the same short film shot on the same camera/lens package and graded in the "
@@ -794,9 +811,11 @@ _LIGHTING_SYSTEM = (
     "You are a cinematographer + continuity supervisor for a short video. The art style (화풍) is "
     "FIXED across scenes — you do NOT touch it. For EACH scene output two things: "
     "(1) lighting — one short English clause: exposure/brightness, key-light quality, shadow depth, "
-    "contrast, color temperature, translating the scene's MOOD. A dark/sad/tense beat MUST be low-key "
-    "and genuinely dim; a joyful beat bright and high-key. Never inherit a bright reference image's "
-    "brightness. No character appearance/clothing/pose — lighting only. "
+    "contrast, color temperature, translating the scene's MOOD. ONLY sad or tense beats should be "
+    "low-key or genuinely dim. Happy scenes MUST be bright/high-key with clear subject exposure; "
+    "neutral scenes MUST have balanced natural exposure with readable midtones and no deep shadows; "
+    "calm scenes should use soft even light at normal exposure, not default to dimness. Never inherit "
+    "a bright reference image's brightness. No character appearance/clothing/pose — lighting only. "
     "(2) setting — the scene's physical LOCATION/background in the script's own language. If this "
     "scene continues in the SAME place as the previous scene, output an empty string \"\" for setting "
     "(it inherits the previous location). Only fill setting when the location changes. When in doubt, "
@@ -892,9 +911,12 @@ async def node_generate_prompts(state: GraphState) -> dict:
         standin = bool(img) and role in ("start", "ref") and tools.USE_STANDIN
         wardrobe = wardrobe_locks.get(img, "") if standin else ""
         # 보존(identity·화풍)과 분리된 '적응' 축: 이 씬의 재조명 큐.
-        cue = (lighting_map.get(scene.get("id"))
-               or scene.get("lighting")
-               or _mood_to_lighting(scene.get("mood", "neutral")))
+        cue = _enforce_mood_exposure(
+            scene.get("mood", "neutral"),
+            (lighting_map.get(scene.get("id"))
+             or scene.get("lighting")
+             or _mood_to_lighting(scene.get("mood", "neutral"))),
+        )
 
         has_human_subject = bool(standin or subject_ref or scene.get("subject_type") == "human")
         raw_prompt = _strip_echoed_bible(tools.clean_llm_prompt(

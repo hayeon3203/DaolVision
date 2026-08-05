@@ -13,7 +13,12 @@ from unittest.mock import AsyncMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from nodes import _mood_to_lighting, _LIGHTING_SYSTEM, node_generate_prompts
+from nodes import (
+    _enforce_mood_exposure,
+    _mood_to_lighting,
+    _LIGHTING_SYSTEM,
+    node_generate_prompts,
+)
 
 
 def test_fallback_distinct():
@@ -26,6 +31,20 @@ def test_fallback_distinct():
     # 미지 mood는 neutral 폴백
     assert _mood_to_lighting("bogus") == _mood_to_lighting("neutral")
     print("ok: mood 폴백 조명 큐 밝은 씬≠어두운 씬")
+
+
+def test_happy_neutral_minimum_exposure():
+    """LLM이 어두운 큐를 반환해도 happy/neutral 최소 노출은 코드가 보장."""
+    for mood in ("happy", "neutral"):
+        cue = _enforce_mood_exposure(mood, "low-key dim, deep shadows, cool cast")
+        lowered = cue.lower()
+        assert "low-key" not in lowered and "dim" not in lowered
+        assert "deep shadow" not in lowered
+        assert cue == _mood_to_lighting(mood)
+    # 서사상 어두워야 하는 mood는 원래 큐를 보존한다.
+    dark = "low-key dim, deep shadows, cool cast"
+    assert _enforce_mood_exposure("sad", dark) == dark
+    print("ok: happy/neutral 최소 노출 보장 + sad 저조도 보존")
 
 
 def _base_state():
@@ -95,6 +114,7 @@ def test_regen_skips_lighting_llm():
 
 def main():
     test_fallback_distinct()
+    test_happy_neutral_minimum_exposure()
     test_injection_and_style_invariant()
     test_regen_skips_lighting_llm()
     print("\nall M3-7 lighting tests passed")
