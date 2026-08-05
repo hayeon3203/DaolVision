@@ -113,6 +113,29 @@ def health():
     }
 
 
+@app.post("/unload")
+def unload():
+    """Force the weights out even when KEEP_RESIDENT is on.
+
+    Residency is a win only while nothing bigger needs the room. Measured on this
+    GB10 (2026-08-04): FLUX resident (36.6GB) alongside ComfyUI's LTX-13B is fine
+    (77.8GiB peak, 41GiB spare), but alongside LTX-22B Face-ID it drives the box to
+    93GiB+ with 2.1GiB free -- ComfyUI drops into lowvram mode and partially
+    unloads/reloads per scene, turning a 2-scene batch into 70+ minutes.
+
+    So the caller that knows what it is about to load (langgraph tools._release_t2i,
+    called from the 22B and Wan reference paths) tells us to step aside. Takes _lock
+    so this cannot null _pipe out from under an in-flight /generate."""
+    global _pipe
+    with _lock:
+        was_loaded = _pipe is not None
+        _pipe = None
+        gc.collect()
+        torch.cuda.empty_cache()
+    log.info("unload requested (was_loaded=%s)", was_loaded)
+    return {"unloaded": was_loaded}
+
+
 @app.post("/generate")
 def generate(req: GenerateRequest):
     if not req.prompt or not req.prompt.strip():
