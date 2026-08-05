@@ -71,7 +71,7 @@ Go 바이너리에 `//go:embed react-ui/dist/*`로 빌드 시점에 고정 임�
 
 ```bash
 docker start localai-spike || docker run -d --name localai-spike -p 8094:8080 localai/localai:master-nvidia-l4t-arm64
-cd localai-ui && npm install && LOCALAI_URL=http://localhost:8094 npm run dev   # :3000, 우리가 고친 소스 실시간 서빙
+cd localai-ui && npm install && LOCALAI_URL=http://localhost:8094 npm run dev   # :5199, 우리가 고친 소스 실시간 서빙
 # :8700 게이트웨이(langgraph/api.py)도 별도로 떠 있어야 gw-* 페이지가 동작한다
 ```
 

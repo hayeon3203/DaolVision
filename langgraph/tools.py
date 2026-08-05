@@ -56,6 +56,7 @@ CHATTERBOX_NARRATION_REFERENCE = Path(
         ),
     )
 )
+LLM_KEEP_RESIDENT = os.environ.get("AGENT_LLM_KEEP_RESIDENT", "1") == "1"
 
 # ── ComfyUI Stand-In (참조-이미지 씬의 얼굴 일관성 경로) ──────────
 COMFYUI_URL = os.environ.get("AGENT_COMFYUI_URL", "http://127.0.0.1:8188")
@@ -239,10 +240,16 @@ def refs_dir(job_id: str) -> Path:
 
 
 async def _unload_llm_backend() -> None:
-    """씬분할/캡션 두 Ollama 모델을 명시적으로 언로드(keep_alive=0). Task 4.4 —
-    2.4 실측상 이 언로드 없이 다음 backend(T2I 등)로 전환하면 이중 상주로 OOM."""
+    """비전 모델은 전환 시 내리되, 작은 씬분할 Nemotron은 선택적으로 상주시킨다.
+
+    전체 resident 모드는 여전히 사용하지 않는다. 과거 OOM의 큰 축인 비전 모델은
+    계속 내리고 LLM_KEEP_RESIDENT=1인 경우 LLM_MODEL 하나만 예외로 남긴다.
+    """
+    models = {VISION_MODEL}
+    if not LLM_KEEP_RESIDENT:
+        models.add(LLM_MODEL)
     async with httpx.AsyncClient(timeout=30) as client:
-        for model in {LLM_MODEL, VISION_MODEL}:
+        for model in models:
             try:
                 await client.post(OLLAMA_GEN_URL, json={"model": model, "keep_alive": 0})
             except httpx.HTTPError:
@@ -276,6 +283,7 @@ async def call_llm(system_prompt: str, user_prompt: str) -> str:
             json={
                 "model": LLM_MODEL,
                 "stream": False,
+                "keep_alive": -1 if LLM_KEEP_RESIDENT else "5m",
                 # Ollama 모델별 지원 여부와 무관하게 비사고 모드로 고정한다.
                 # JSON-only 씬 분할에 숨은 CoT가 섞이거나 지연되는 것을 방지한다.
                 "think": False,

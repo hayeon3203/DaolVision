@@ -6,6 +6,7 @@ export AGENT_API_HOST="${AGENT_API_HOST:-0.0.0.0}"
 export AGENT_API_PORT="${AGENT_API_PORT:-8700}"
 export AGENT_OLLAMA_URL="${AGENT_OLLAMA_URL:-http://127.0.0.1:11434/api/chat}"
 export AGENT_LLM_MODEL="${AGENT_LLM_MODEL:-hf.co/nvidia/NVIDIA-Nemotron-3-Nano-4B-GGUF:Q4_K_M}"
+export AGENT_LLM_KEEP_RESIDENT="${AGENT_LLM_KEEP_RESIDENT:-1}"
   # 2026-08-02: gemma4:latest로 잠깐 바꿨다가 롤백 — matched_image/subject_type을
   # LLM 판단에 맡기지 않고 단일 참조 시 node_split_scenes가 결정론적으로 강제하도록
   # 고쳐서(nodes.py "단일 참조 결정론적 매칭") 씬분할 LLM 자체의 이 약점은 더는 문제 아님.
@@ -33,5 +34,18 @@ export AGENT_FPS="${AGENT_FPS:-24}"          # Wan2.2-TI2V-5B 네이티브 24fps
 # 무관한 별도 변수. distilled 체크포인트라 4~8이 원 학습 레짐, job 78cb492c/4265fba0
 # 퀄리티 저하 디버깅 중 12로 상향 테스트(2026-08-02).
 export AGENT_LTX13B_STEPS="${AGENT_LTX13B_STEPS:-12}"
+
+# 사용자 첫 요청 전에 Nemotron을 Ollama에 적재한다. call_llm도 keep_alive=-1을
+# 반복해서 보내며, tools.py의 backend 전환 훅은 이 모델을 언로드하지 않는다.
+# 전체 resident 모드를 켜는 것이 아니라 작은 씬분할 LLM 하나만 상주시켜 기존
+# LLM→I2V/TTS 직렬화와 대형 모델 언로드 정책은 그대로 유지한다.
+if [ "$AGENT_LLM_KEEP_RESIDENT" = "1" ]; then
+  ollama_base="${AGENT_OLLAMA_URL%/api/chat}"
+  warmup_body="$(printf '{"model":"%s","keep_alive":-1,"options":{"num_ctx":8192}}' "$AGENT_LLM_MODEL")"
+  curl -fsS --max-time 300 \
+    -H 'Content-Type: application/json' \
+    --data-binary "$warmup_body" \
+    "$ollama_base/api/generate" >/dev/null
+fi
 
 exec ./.venv/bin/python api.py

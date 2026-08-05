@@ -42,7 +42,8 @@ export default defineConfig({
   // core/http/app.go), so both proxied and root deployments load correctly.
   base: './',
   server: {
-    port: 3000,
+    port: 5199,
+    strictPort: true,
     proxy: {
       '/api': backendUrl,
       '/v1': backendUrl,

@@ -10,7 +10,7 @@
 | UI 프론트 | LocalAI 포크 (Go 템플릿 + Alpine.js) | 룩앤필·카테고리 기본 제공, 껍데기만 재활용 |
 | 게이트웨이 | :8700 FastAPI (기존 LangGraph API 확장) | 라우팅·OOM 오케·대시보드 집계 단일 총괄자 |
 | 에이전트 | LangGraph + SQLite 체크포인터 | 승인 3게이트(interrupt), thread_id=job_id 재개 |
-| LLM 서빙 | Ollama (:11434) | Nemotron-4B/VL-8B GGUF, keep_alive 제어 |
+| LLM 서빙 | Ollama (:11434) | Nemotron-4B는 기동 시 워밍업 후 상주, 비전 모델은 배치 언로드 |
 | 이미지 | Flux.1/SDXL(:8501) · Flux Kontext(ComfyUI :8188) | T2I 앵커 / I2I 얼굴변환 |
 | 영상 | ComfyUI(:8188): LTX distilled+Face-ID / Cosmos벤치 (Wan 제거, Task 6.5) | 캐릭터+화풍 일관 I2V, T2V |
 | 영상 나레이션 TTS | Chatterbox Multilingual V3 | S1 전용 고정 CC0 한국어 화자 |
