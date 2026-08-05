@@ -545,6 +545,25 @@ async def generate_t2i_image(job_id: str, prompt: str, seed: int | None = None, 
     return str(out)
 
 
+_ASCII_ONLY_RE = re.compile(r"^[\x00-\x7F]*$")
+
+
+async def _ensure_english_prompt(prompt: str) -> str:
+    """FLUX.1-schnell 텍스트 인코더(CLIP-L 위주)는 영어 학습이 압도적이라 비영어 프롬프트를
+    사실상 OOV로 처리한다 — 무관한 장면 + 의미없는 가짜 글자 간판으로 환각하는 실패 패턴을
+    2026-08-05 T2I 카테고리에서 실측(한국어 프롬프트 입력 → 일본 상점가+가짜 한자 간판 출력).
+    ASCII 프롬프트는 그대로 통과, 비ASCII만 LLM(call_llm, Ollama)로 영어 번역."""
+    if _ASCII_ONLY_RE.match(prompt):
+        return prompt
+    translated = await call_llm(
+        "Translate the user's text into natural, concise English for use as a text-to-image "
+        "generation prompt. Output ONLY the translated English text, nothing else — no quotes, "
+        "no explanation.",
+        prompt,
+    )
+    return translated.strip()
+
+
 async def generate_t2i_anchor(
     prompt: str,
     width: int | None = None,
@@ -555,6 +574,7 @@ async def generate_t2i_anchor(
     파일이 필요없는 단발 호출(대시보드 미리보기 등)이라 job_dir에 안 쓰고 base64로 바로 반환.
     read timeout은 generate_t2i_image와 동일한 콜드 로드 비용을 겪으므로 같이 600s로
     맞춘다(둘 다 같은 :8501 FLUX 서버, 같은 매콜 언로드 정책)."""
+    prompt = await _ensure_english_prompt(prompt)
     body = {"prompt": prompt}
     if width is not None:
         body["width"] = width
