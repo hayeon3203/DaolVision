@@ -31,9 +31,9 @@ export AGENT_MAX_CONCURRENT_CLIPS="${AGENT_MAX_CONCURRENT_CLIPS:-1}"  # 씬 클�
 export AGENT_VIDEO_PRESET="${AGENT_VIDEO_PRESET:-fast}"
 export AGENT_FPS="${AGENT_FPS:-24}"          # Wan2.2-TI2V-5B 네이티브 24fps
 # T2V/I2V-폴백/I2V-단발샷(전부 LTX-13B-distilled)의 실제 diffusion step 수 — 프리셋과
-# 무관한 별도 변수. distilled 체크포인트라 4~8이 원 학습 레짐, job 78cb492c/4265fba0
-# 퀄리티 저하 디버깅 중 12로 상향 테스트(2026-08-02).
-export AGENT_LTX13B_STEPS="${AGENT_LTX13B_STEPS:-12}"
+# 무관한 별도 변수. distilled 체크포인트의 원 학습 레짐(4~8) 상단인
+# 8 steps를 기본으로 사용한다.
+export AGENT_LTX13B_STEPS="${AGENT_LTX13B_STEPS:-8}"
 
 # 사용자 첫 요청 전에 Nemotron을 Ollama에 적재한다. call_llm도 keep_alive=-1을
 # 반복해서 보내며, tools.py의 backend 전환 훅은 이 모델을 언로드하지 않는다.

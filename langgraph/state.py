@@ -18,7 +18,7 @@ class Scene(TypedDict, total=False):
     image_role: Optional[Literal["start", "ref", "character_ref"]]
     # start=사진 구도로 시작 / ref=사람 얼굴 identity / character_ref=비인간 캐릭터·제품 전체 참조
     subject_type: Optional[Literal["human", "nonhuman", "none"]]  # 라우팅 진실원천(캡션 기반 보정)
-    setting: str                   # 이 씬의 장소/배경. 연속 씬은 직전 씬에서 forward-fill(배경 연속성)
+    setting: str                   # 이 씬의 장소/배경. 추출 누락 시 해당 씬 원문으로 폴백
     prompt: str                    # Phase 2에서 생성된 최종 프롬프트
     face_id_ref: Optional[str]     # LTX Face-ID에 별도 첨부할 사람 identity 참조 파일명
     mode: Literal["I2V", "T2V", "STANDIN", "SUBJECT_REF", "LTX_FACEID"]

@@ -5400,6 +5400,10 @@ button.collapsible-header:focus-visible {
 .agent-panel__heading h2, .gateway-panel__heading h2 { margin: 0 0 2px; color: var(--color-text-primary); font-size: 1rem; }
 .agent-panel__heading p, .gateway-panel__heading p { margin: 0; color: var(--color-text-muted); font-size: .75rem; }
 .agent-panel--result .media-result, .gateway-panel--result .media-result { border: 1px dashed color-mix(in srgb, var(--agent-cyan) 35%, var(--color-border)); border-radius: 16px; background: color-mix(in srgb, var(--agent-cyan) 3%, var(--color-bg-primary)); }
+.agent-panel--result > .media-result { flex-direction: column; gap: var(--spacing-md); }
+.agent-result-prompt { width: 100%; margin-bottom: var(--spacing-md); padding: 14px 16px; border: 1px solid color-mix(in srgb, var(--agent-cyan) 28%, var(--color-border)); border-radius: 12px; background: color-mix(in srgb, var(--agent-cyan) 7%, var(--color-bg-secondary)); text-align: left; }
+.agent-result-prompt__label { display: inline-flex; align-items: center; gap: 6px; margin-bottom: 7px; color: var(--agent-blue); font-size: .7rem; font-weight: 800; letter-spacing: .08em; }
+.agent-result-prompt p { display: block; margin: 0; color: var(--color-text-primary); font-size: .84rem; font-weight: 550; line-height: 1.6; white-space: pre-wrap; }
 .dashboard-hero__pills { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 24px; }
 .gateway-hero__pills { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 24px; }
 .dashboard-hero__pills .hf-chip,
@@ -5428,7 +5432,7 @@ button.collapsible-header:focus-visible {
 .hf-chip-row { display: flex; flex-wrap: wrap; gap: var(--spacing-xs); }
 .hf-chip { display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px; border: 1px solid var(--color-border-subtle); border-radius: var(--radius-full); background: var(--color-bg-secondary); color: var(--color-text-secondary); font-size: .75rem; white-space: nowrap; }
 .hf-chip i { color: var(--color-text-muted); font-size: .7rem; }
-.hf-chip__logo { width: 12px; height: 12px; }
+.hf-chip__logo { width: 14px; height: 14px; object-fit: contain; }
 .hf-chip--success i { color: var(--color-success); }
 .hf-chip--warning i { color: var(--color-warning); }
 .hf-chip--error i { color: var(--color-error); }

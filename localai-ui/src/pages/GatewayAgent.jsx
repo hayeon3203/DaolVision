@@ -293,6 +293,12 @@ export default function GatewayAgent() {
             <div><h2>결과물</h2><p>생성 중인 장면과 완성 영상을 확인하세요.</p></div>
           </div>
         <div className="media-result">
+          {status?.input_message && (
+            <div className="agent-result-prompt">
+              <span className="agent-result-prompt__label"><i className="fas fa-message" /> 입력 메시지</span>
+              <p>{status.input_message}</p>
+            </div>
+          )}
           {error ? (
             <p style={{ color: 'var(--color-error)' }}>Error: {error}</p>
           ) : !status ? (

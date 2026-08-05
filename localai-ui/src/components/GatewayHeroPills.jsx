@@ -1,10 +1,10 @@
-import { apiUrl } from '../utils/basePath'
+import nvidiaLogo from '../../../nvidia_logo_icon.png'
 
 function HeroPill({ label, nvidia = false, technique = false }) {
   return (
     <span className="hf-chip">
       {nvidia ? (
-        <img src={apiUrl('/nvidia_logo_icon.svg')} alt="" className="hf-chip__logo" />
+        <img src={nvidiaLogo} alt="" className="hf-chip__logo" />
       ) : (
         <i className={technique ? 'fas fa-diagram-project' : 'fas fa-microchip'} />
       )}

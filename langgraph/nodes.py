@@ -831,7 +831,8 @@ _LIGHTING_SYSTEM = (
 
 async def _make_scene_context(state: GraphState) -> tuple[dict[int, str], dict[int, str]]:
     """M3-7 + 배경 연속성: 씬별 재조명 큐 + 장소(setting)를 한 번의 focused LLM 호출로 생성.
-    bible(불변 화풍)과 분리. setting은 빈값이면 직전 씬 장소를 forward-fill(연속성).
+    bible(불변 화풍)과 분리. setting 추출이 비었거나 실패하면 직전 씬을
+    추측해 상속하지 않고 해당 씬 원문으로 폴백해 사용자 내용을 보존한다.
     이전엔 setting을 giant split 호출에 얹었는데 9b가 run마다 누락 → focused 호출로 이관해 안정화.
     반환: (lighting_map, setting_map). 실패/누락 씬은 호출부에서 폴백."""
     scenes = state.get("scenes") or []
@@ -868,14 +869,13 @@ async def _make_scene_context(state: GraphState) -> tuple[dict[int, str], dict[i
         setting = set_map
         if len(setting) >= min_filled:    # 최소 절반 이상 장소를 얻으면 종료
             break
-    # 장소 forward-fill: 빈(=이어지는) 씬은 직전 씬 장소 상속. 씬 순서대로.
-    prev = ""
+    # 빈 setting은 "같은 장소"와 "LLM 추출 실패"를 구분할 수 없다. 추출
+    # 실패를 연속으로 오판하면 첫 씬의 배경이 전체 스토리를 덮으므로, 해당
+    # 씬 원문을 결정적 폴백으로 쓴다. 명시적 연속성 필드는 후속 설계 사항.
     for s in scenes:
         sid = s.get("id")
-        if setting.get(sid):
-            prev = setting[sid]
-        elif prev:
-            setting[sid] = prev
+        if not setting.get(sid):
+            setting[sid] = (s.get("text") or "").strip()
     return lighting, setting
 
 
