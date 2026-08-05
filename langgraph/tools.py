@@ -271,8 +271,30 @@ async def _unload_i2v_backend() -> None:
 
 
 oom.register_unload("i2v", _unload_i2v_backend)
-# t2i(Flux)는 unload hook 불필요 — flux_server.py의 _unload()가 /generate 응답 전에
-# 매 요청마다 자체 언로드한다(KEEP_RESIDENT=0 기본), oom.phase 진입 시점엔 이미 비어있음.
+# t2i(Flux)는 oom hook을 쓰지 않는다. oom_orchestrator는 backend '전환'만 알지 그
+# i2v 안에서 어떤 모델이 뜨는지는 모르는데, 여기서 필요한 건 정확히 그 모델별 분기라
+# 층이 다르다. FLUX_KEEP_RESIDENT=0(기본)이면 flux_server가 매 요청 자체 언로드하므로
+# 애초에 hook이 불필요하고, =1이면 아래 _release_t2i()를 무거운 경로에서만 부른다.
+
+
+async def _release_t2i() -> None:
+    """무거운 ComfyUI 경로 진입 전에 FLUX(:8501) 상주분을 비운다.
+
+    GB10 실측(2026-08-04, FLUX_KEEP_RESIDENT=1):
+      - FLUX 상주 + LTX-13B T2V  → peak 77.8GiB, 여유 41GiB, 정상 속도(1클립 149s)
+      - FLUX 상주 + LTX-22B FaceID → peak 93GiB+, free 2.1GiB, ComfyUI가 lowvram으로
+        강등(로그 "lowvram patches: 1244")되어 씬마다 부분 언로드/재로드 → 2씬 70분+
+    즉 13B는 공존 가능하고 22B는 불가능하다. 그래서 '전부 상주/전부 온디맨드'가 아니라
+    무거운 경로만 자리를 비우게 한다 — 13B 경로(generate_t2v_clip 등)는 이 함수를
+    부르지 않으므로 상주 이득(콜드로드 ~176s 회피)을 그대로 가져간다.
+
+    best-effort: 비우기는 성능 최적화지 정합성 조건이 아니다. :8501이 없거나 실패해도
+    호출부는 그대로 진행한다(그 경우 예전처럼 메모리가 빡빡할 뿐 결과는 같다)."""
+    try:
+        async with httpx.AsyncClient(timeout=60) as client:
+            await client.post(f"{T2I_URL}/unload")
+    except httpx.HTTPError:
+        pass  # 서버 부재/실패 — 다음 /generate가 알아서 재적재한다
 
 
 # ── LLM ─────────────────────────────────────────────────────
@@ -1341,6 +1363,9 @@ async def generate_ltx_faceid_batch(job_id: str, scenes: list[dict]) -> dict[int
         return {}
     timeout = httpx.Timeout(connect=10.0, read=60.0, write=60.0, pool=None)
     async with oom.phase("i2v"), httpx.AsyncClient(timeout=timeout) as client:
+        # 22B는 상주 FLUX와 공존 못 한다(_release_t2i 도크스트링의 실측). 업로드보다
+        # 먼저 비워야 ComfyUI가 첫 로드부터 lowvram으로 안 떨어진다.
+        await _release_t2i()
         uploaded: dict[str, str] = {}
         # 동일 캐릭터 참조는 배치 전체에서 한 번만 업로드한다.
         for scene in scenes:
@@ -1487,6 +1512,10 @@ async def _generate_reference_clip(
         oom.phase("i2v"),
         httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=60.0, write=60.0, pool=None)) as client,
     ):
+        # ponytail: Wan(i2v_14b/standin_t2v) 경로의 FLUX 동시 peak은 미실측이다. 22B가
+        # 무너진 걸 봤으니 안전쪽(비우고 시작)에 둔다 — 실측해서 13B처럼 여유가
+        # 확인되면 이 줄만 빼면 상주 이득을 이 경로에도 돌려줄 수 있다.
+        await _release_t2i()
         # 1) 참조 이미지 업로드 → ComfyUI input/ 에 올려 LoadImage가 파일명으로 참조
         img_path = refs_dir(job_id) / ref_image
         upload_name = f"{'subject' if subject_ref else 'face'}_v{REFERENCE_PREPROCESS_VERSION}_{img_path.stem}.png"
