@@ -48,14 +48,14 @@ export default function GatewayT2V() {
         <form onSubmit={handleGenerate}>
           <div className="form-group">
             <label className="form-label">프롬프트</label>
-            <textarea className="textarea" value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={3} placeholder="a paper airplane gliding through a sunlit office..." />
+            <textarea className="textarea" value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={3} placeholder="햇살이 비치는 사무실 안을 종이비행기가 부드럽게 날아가는 장면..." />
           </div>
           <div className="form-group">
             <label className="form-label">시드 (선택)</label>
             <input className="input" type="number" value={seed} onChange={(e) => setSeed(e.target.value)} placeholder="랜덤" />
           </div>
           <button type="submit" className="btn btn-primary btn-full" disabled={loading || !prompt.trim()}>
-            {loading ? <><LoadingSpinner size="sm" /> 생성 중... (수 분)</> : <><i className="fas fa-video" /> 생성</>}
+            {loading ? <><LoadingSpinner size="sm" /> 생성 중..</> : <><i className="fas fa-video" /> 생성</>}
           </button>
         </form>
         </div>
