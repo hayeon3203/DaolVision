@@ -9,12 +9,10 @@ import { gatewayApi } from '../utils/api'
 // 이미지 백엔드는 쓰지 않는다. 결과는 6.2의 S2→S1 연결(ref_images)에 그대로
 // 쓸 수 있는 base64 PNG — Agent 카테고리에서 참조 이미지로 재업로드해 쓴다.
 const STYLES = [
-  { key: 'cinematic', label: '시네마틱' },
-  { key: 'anime', label: '애니메이션' },
-  { key: 'cyberpunk', label: '사이버펑크' },
-  { key: 'lowpoly', label: '로우폴리' },
   { key: 'claymation', label: '클레이메이션' },
+  { key: 'anime', label: '애니메이션' },
   { key: 'watercolor', label: '수채화' },
+  { key: 'lowpoly', label: '로우폴리' },
 ]
 
 // 업로드 vs 웹캠 촬영 선택 + 촬영본 미리보기/재촬영은 MediaInput(biometrics에서
@@ -27,7 +25,7 @@ async function toBlob(photo) {
 
 export default function GatewayI2I() {
   const [sourcePhoto, setSourcePhoto] = useState(null)
-  const [style, setStyle] = useState('cinematic')
+  const [style, setStyle] = useState('claymation')
   const [seed, setSeed] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
