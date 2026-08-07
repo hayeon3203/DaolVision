@@ -86,6 +86,8 @@ host 유닛과 샌드박스는 같은 포트를 두고 배타적이다 — 전�
 Cosmos3-Nano는 아직 이 스크립트의 서비스 테이블에 없다 — 샌드박스 격리 대상
 밖, host에서 직접 실행.
 
+구조·마운트 규칙·ollama 특이사항 상세: [docs/openshell-sandbox.md](docs/openshell-sandbox.md)
+
 ## 기획 문서
 
 - [docs/PRD.md](docs/PRD.md) — 제품 요구사항 (product contract)
