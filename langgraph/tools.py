@@ -1031,6 +1031,18 @@ FLUX_CONTROLNET_UNION = os.environ.get(
     "AGENT_FLUX_CONTROLNET_UNION", "flux1-dev-controlnet-union-pro-2.0.safetensors")
 FLUX_CONTROLNET_STRENGTH = float(os.environ.get("AGENT_FLUX_CONTROLNET_STRENGTH", "0.6"))
 
+# 배경 세그멘테이션 — ControlNet(canny)+ReferenceLatent가 원본 사진 전체(배경 포함)를
+# 그대로 조건으로 걸어서, 웹캠 배경의 warm 조명색이 클레이 스타일(원래 warm/terracotta
+# 편향)과 겹쳐 배경이 과하게 붉게 나오는 문제가 있었다(건호군.jpg는 우연히 중성 회색
+# 배경이라 안 보임). 1차 수정(EmptyImage 단색 합성)은 과교정 — 배경 edge/색 정보가
+# 아예 0이 되니 Kontext가 참조할 게 없어서 실측(웹캠 사무실 사진)에서 배경이 통짜
+# 주황색으로 날아감. 단색 대신 원본 배경을 강하게 블러(ImageBlur)한 걸 합성 —
+# 색/톤(사무실 창문·조명의 대략적인 색감)은 남기고 디테일 edge만 죽여서 ControlNet이
+# 잔가지 구조까지 고정 안 하게 하면서도 KSampler가 완전 무근거로 배경색을 굴리지
+# 않게 한다.
+FLUX_BG_REMOVAL_MODEL = os.environ.get("AGENT_FLUX_BG_REMOVAL_MODEL", "birefnet.safetensors")
+FLUX_BG_BLUR_RADIUS = 31  # ComfyUI ImageBlur 최댓값
+
 # ComfyUI comfy_extras/nodes_flux.py의 FluxKontextImageScale이 내부적으로 고르는
 # 해상도 버킷과 동일 목록 — EmptySD3LatentImage에 같은 width/height를 넣어야 latent
 # 크기가 어긋나지 않는다(그래프 실행 전 파이썬에서 미리 같은 알고리즘으로 계산).
@@ -1069,17 +1081,33 @@ def _build_flux_kontext_graph(
         "5": {"class_type": "ConditioningZeroOut", "inputs": {"conditioning": ["4", 0]}},
         "6": {"class_type": "LoadImage", "inputs": {"image": image_name}},
         "7": {"class_type": "FluxKontextImageScale", "inputs": {"image": ["6", 0]}},
-        "8": {"class_type": "VAEEncode", "inputs": {"pixels": ["7", 0], "vae": ["3", 0]}},
+        # 배경 세그멘테이션 — 인물만 선명하게 두고 배경은 강하게 블러한 합성본(노드22)을
+        # VAEEncode/Canny 양쪽에 물려서, 원본 배경의 세밀한 구조/색은 조건에서 빠지되
+        # 대략적인 톤(사무실 조명·창문 색감 등)은 남는다. 최종 출력은 어차피
+        # EmptySD3LatentImage(노드11, 순수 노이즈)에서 새로 샘플링되므로 배경도 그대로
+        # 클레이 스타일로 그려짐 — 원본 구조 강제만 빠진다.
+        "19": {"class_type": "LoadBackgroundRemovalModel",
+               "inputs": {"bg_removal_name": FLUX_BG_REMOVAL_MODEL}},
+        "20": {"class_type": "RemoveBackground",
+               "inputs": {"bg_removal_model": ["19", 0], "image": ["7", 0]}},
+        "21": {"class_type": "ImageBlur", "inputs": {
+            "image": ["7", 0], "blur_radius": FLUX_BG_BLUR_RADIUS, "sigma": 10.0,
+        }},
+        "22": {"class_type": "ImageCompositeMasked", "inputs": {
+            "destination": ["21", 0], "source": ["7", 0], "x": 0, "y": 0,
+            "resize_source": False, "mask": ["20", 0],
+        }},
+        "8": {"class_type": "VAEEncode", "inputs": {"pixels": ["22", 0], "vae": ["3", 0]}},
         "9": {"class_type": "ReferenceLatent",
               "inputs": {"conditioning": ["4", 0], "latent": ["8", 0]}},
         "10": {"class_type": "FluxGuidance",
                "inputs": {"conditioning": ["9", 0], "guidance": FLUX_KONTEXT_GUIDANCE}},
         "11": {"class_type": "EmptySD3LatentImage",
                "inputs": {"width": width, "height": height, "batch_size": 1}},
-        # ControlNet(canny) 구도 고정 — 원본과 동일 스케일(노드7)에서 엣지 뽑아 KSampler
+        # ControlNet(canny) 구도 고정 — 배경-제거 합성본(노드22)에서 엣지 뽑아 KSampler
         # conditioning에 얹는다. Kontext 텍스트 앵커만으론 줌인 드리프트 못 잡아서 추가.
         "15": {"class_type": "Canny",
-               "inputs": {"image": ["7", 0], "low_threshold": 0.4, "high_threshold": 0.8}},
+               "inputs": {"image": ["22", 0], "low_threshold": 0.4, "high_threshold": 0.8}},
         "16": {"class_type": "ControlNetLoader",
                "inputs": {"control_net_name": FLUX_CONTROLNET_UNION}},
         "17": {"class_type": "SetShakkerLabsUnionControlNetType",
@@ -1096,8 +1124,21 @@ def _build_flux_kontext_graph(
             "denoise": 1.0,
         }},
         "13": {"class_type": "VAEDecode", "inputs": {"samples": ["12", 0], "vae": ["3", 0]}},
+        # 배경 색 고정 — ControlNet은 edge만 잠그고 색은 안 건드려서 clay 스타일의
+        # warm/테라코타 편향이 배경 조명색까지 밀어붙이는 문제(실측: 사무실 흰 형광등이
+        # 주황으로 뜸)가 있었다. KSampler 출력 전체를 블러 배경(노드21, 원본 톤)에 Reinhard
+        # LAB color-match(KJNodes ColorMatchV2, 이미 설치돼있음)로 맞춘 뒤, 인물 부분만
+        # 보정 전 원본 생성물(노드13)로 다시 덮어써서 얼굴/피부 clay 톤은 안 건드린다.
+        "23": {"class_type": "ColorMatchV2", "inputs": {
+            "image_target": ["13", 0], "image_ref": ["21", 0],
+            "method": "reinhard_lab_gpu", "strength": 1.0, "multithread": True,
+        }},
+        "24": {"class_type": "ImageCompositeMasked", "inputs": {
+            "destination": ["23", 0], "source": ["13", 0], "x": 0, "y": 0,
+            "resize_source": False, "mask": ["20", 0],
+        }},
         "14": {"class_type": "SaveImage",
-               "inputs": {"images": ["13", 0], "filename_prefix": "i2i_style"}},
+               "inputs": {"images": ["24", 0], "filename_prefix": "i2i_style"}},
     }
 
 
