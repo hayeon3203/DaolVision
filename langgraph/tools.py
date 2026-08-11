@@ -1031,6 +1031,13 @@ FLUX_CONTROLNET_UNION = os.environ.get(
     "AGENT_FLUX_CONTROLNET_UNION", "flux1-dev-controlnet-union-pro-2.0.safetensors")
 FLUX_CONTROLNET_STRENGTH = float(os.environ.get("AGENT_FLUX_CONTROLNET_STRENGTH", "0.6"))
 
+# 스타일별 오버라이드 — clay/watercolor류(구도 유지가 스타일 본질)는 기본값(0.6/2.5) 그대로
+# 두고, cinematic/cyberpunk처럼 조명·분위기 자체가 스타일인 애들만 낮춘 strength로
+# ControlNet lock을 풀어준다(실측: 0.6에선 조명/재질이 거의 안 바뀜, 0.35에서 확 좋아짐).
+# 목록에 없는 스타일은 FLUX_CONTROLNET_STRENGTH/FLUX_KONTEXT_GUIDANCE 기본값을 그대로 씀.
+STYLE_CONTROLNET_STRENGTH: dict[str, float] = {"cinematic": 0.35, "cyberpunk": 0.35}
+STYLE_KONTEXT_GUIDANCE: dict[str, float] = {"cinematic": 4.0}
+
 # 배경 세그멘테이션 — ControlNet(canny)+ReferenceLatent가 원본 사진 전체(배경 포함)를
 # 그대로 조건으로 걸어서, 웹캠 배경의 warm 조명색이 클레이 스타일(원래 warm/terracotta
 # 편향)과 겹쳐 배경이 과하게 붉게 나오는 문제가 있었다(건호군.jpg는 우연히 중성 회색
@@ -1066,11 +1073,17 @@ def _flux_kontext_dims(img_width: int, img_height: int) -> tuple[int, int]:
 
 def _build_flux_kontext_graph(
     *, prompt: str, image_name: str, width: int, height: int, seed: int,
+    lock_bg_color: bool, guidance: float, controlnet_strength: float,
 ) -> dict:
     """docs.comfy.org/tutorials/flux/flux-1-kontext-dev 공식 워크플로와 동일한
     API-format 그래프(LoadImage→FluxKontextImageScale→VAEEncode→ReferenceLatent로
-    입력 얼굴사진을 조건으로 건 뒤 EmptySD3LatentImage에서 새로 샘플링)."""
-    return {
+    입력 얼굴사진을 조건으로 건 뒤 EmptySD3LatentImage에서 새로 샘플링).
+
+    lock_bg_color=True(claymation 전용)면 노드23/24로 배경을 원본 톤에 강제 매칭한다 —
+    clay는 조명이 안 바뀌는 스타일이라 이게 warm 편향 배경버그를 잡아주는데, cinematic/
+    cyberpunk처럼 조명·분위기 자체가 스타일 본질인 애들한텐 그 강제가 스타일을 눌러버려서
+    "그냥 어두워지기만 함" 부작용이 남(실측 확인). 그래서 clay만 켠다."""
+    graph = {
         "1": {"class_type": "UNETLoader",
               "inputs": {"unet_name": FLUX_KONTEXT_UNET, "weight_dtype": "default"}},
         "2": {"class_type": "DualCLIPLoader", "inputs": {
@@ -1101,7 +1114,7 @@ def _build_flux_kontext_graph(
         "9": {"class_type": "ReferenceLatent",
               "inputs": {"conditioning": ["4", 0], "latent": ["8", 0]}},
         "10": {"class_type": "FluxGuidance",
-               "inputs": {"conditioning": ["9", 0], "guidance": FLUX_KONTEXT_GUIDANCE}},
+               "inputs": {"conditioning": ["9", 0], "guidance": guidance}},
         "11": {"class_type": "EmptySD3LatentImage",
                "inputs": {"width": width, "height": height, "batch_size": 1}},
         # ControlNet(canny) 구도 고정 — 배경-제거 합성본(노드22)에서 엣지 뽑아 KSampler
@@ -1114,7 +1127,7 @@ def _build_flux_kontext_graph(
                "inputs": {"control_net": ["16", 0], "type": "canny"}},
         "18": {"class_type": "ControlNetApplyAdvanced", "inputs": {
             "positive": ["10", 0], "negative": ["5", 0], "control_net": ["17", 0],
-            "image": ["15", 0], "vae": ["3", 0], "strength": FLUX_CONTROLNET_STRENGTH,
+            "image": ["15", 0], "vae": ["3", 0], "strength": controlnet_strength,
             "start_percent": 0.0, "end_percent": 1.0,
         }},
         "12": {"class_type": "KSampler", "inputs": {
@@ -1124,22 +1137,28 @@ def _build_flux_kontext_graph(
             "denoise": 1.0,
         }},
         "13": {"class_type": "VAEDecode", "inputs": {"samples": ["12", 0], "vae": ["3", 0]}},
-        # 배경 색 고정 — ControlNet은 edge만 잠그고 색은 안 건드려서 clay 스타일의
-        # warm/테라코타 편향이 배경 조명색까지 밀어붙이는 문제(실측: 사무실 흰 형광등이
-        # 주황으로 뜸)가 있었다. KSampler 출력 전체를 블러 배경(노드21, 원본 톤)에 Reinhard
-        # LAB color-match(KJNodes ColorMatchV2, 이미 설치돼있음)로 맞춘 뒤, 인물 부분만
-        # 보정 전 원본 생성물(노드13)로 다시 덮어써서 얼굴/피부 clay 톤은 안 건드린다.
-        "23": {"class_type": "ColorMatchV2", "inputs": {
+    }
+    if lock_bg_color:
+        # 배경 색 고정(clay 전용) — ControlNet은 edge만 잠그고 색은 안 건드려서 clay
+        # 스타일의 warm/테라코타 편향이 배경 조명색까지 밀어붙이는 문제(실측: 사무실 흰
+        # 형광등이 주황으로 뜸)가 있었다. KSampler 출력 전체를 블러 배경(노드21, 원본
+        # 톤)에 Reinhard LAB color-match(KJNodes ColorMatchV2, 이미 설치돼있음)로 맞춘 뒤,
+        # 인물 부분만 보정 전 원본 생성물(노드13)로 다시 덮어써서 얼굴/피부 clay 톤은
+        # 안 건드린다.
+        graph["23"] = {"class_type": "ColorMatchV2", "inputs": {
             "image_target": ["13", 0], "image_ref": ["21", 0],
             "method": "reinhard_lab_gpu", "strength": 1.0, "multithread": True,
-        }},
-        "24": {"class_type": "ImageCompositeMasked", "inputs": {
+        }}
+        graph["24"] = {"class_type": "ImageCompositeMasked", "inputs": {
             "destination": ["23", 0], "source": ["13", 0], "x": 0, "y": 0,
             "resize_source": False, "mask": ["20", 0],
-        }},
-        "14": {"class_type": "SaveImage",
-               "inputs": {"images": ["24", 0], "filename_prefix": "i2i_style"}},
-    }
+        }}
+        final_image = ["24", 0]
+    else:
+        final_image = ["13", 0]
+    graph["14"] = {"class_type": "SaveImage",
+                   "inputs": {"images": final_image, "filename_prefix": "i2i_style"}}
+    return graph
 
 
 async def generate_i2i_style(image_bytes: bytes, style: str, seed: int | None = None) -> dict:
@@ -1169,7 +1188,10 @@ async def generate_i2i_style(image_bytes: bytes, style: str, seed: int | None = 
         image_name = f"{uj['subfolder']}/{uj['name']}" if uj.get("subfolder") else uj["name"]
 
         graph = _build_flux_kontext_graph(
-            prompt=prompt, image_name=image_name, width=width, height=height, seed=seed)
+            prompt=prompt, image_name=image_name, width=width, height=height, seed=seed,
+            lock_bg_color=(style == "claymation"),
+            guidance=STYLE_KONTEXT_GUIDANCE.get(style, FLUX_KONTEXT_GUIDANCE),
+            controlnet_strength=STYLE_CONTROLNET_STRENGTH.get(style, FLUX_CONTROLNET_STRENGTH))
         resp = await client.post(f"{COMFYUI_URL}/prompt", json={"prompt": graph})
         resp.raise_for_status()
         prompt_id = resp.json()["prompt_id"]
