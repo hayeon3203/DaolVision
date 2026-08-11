@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next'
 import nvidiaLogo from '../../../nvidia_logo_icon.png'
 
 function HeroPill({ label, nvidia = false, technique = false }) {
@@ -14,8 +15,9 @@ function HeroPill({ label, nvidia = false, technique = false }) {
 }
 
 export default function GatewayHeroPills({ models = [], techniques = [] }) {
+  const { t } = useTranslation('gateway')
   return (
-    <div className="gateway-hero__pills" aria-label="사용 모델 및 기법">
+    <div className="gateway-hero__pills" aria-label={t('shared.pillsAriaLabel')}>
       {models.map((model) => (
         <HeroPill
           key={model.label}

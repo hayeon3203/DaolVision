@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import LoadingSpinner from '../components/LoadingSpinner'
 import GatewayPageShell, { GatewayPanels } from '../components/GatewayPageShell'
 import WaveformPlayer from '../components/audio/WaveformPlayer'
@@ -17,6 +18,7 @@ import { gatewayApi } from '../utils/api'
 // 지운 뒤 Record를 다시 누르면 재녹음되는 방식(clear-then-redo) — 별도
 // "확정" 버튼을 추가하지 않는다.
 export default function GatewayTTS() {
+  const { t } = useTranslation('gateway')
   const [text, setText] = useState('')
   const [reference, setReference] = useState(null) // { blob, dataUrl, mime, source, name } | null
   const [loading, setLoading] = useState(false)
@@ -43,23 +45,23 @@ export default function GatewayTTS() {
     <GatewayPageShell
       eyebrow="VOICE CLONING"
       title="TTS (Clone)"
-      description="내 목소리의 특징을 담은 자연스러운 음성 생성"
+      description={t('tts.description')}
       icon="fa-headphones"
       models={[{ label: 'Chatterbox Multilingual V3 · Resemble AI', company: 'Resemble AI' }]}
       techniques={['Zero-shot Voice Cloning']}
       facts={[
-        { icon: 'fa-microphone', title: '녹음 또는 업로드', description: '직접 녹음하거나 사용 권한이 있는 참조 음성을 올립니다.' },
-        { icon: 'fa-language', title: '한국어 텍스트', description: '읽게 할 문장을 입력해 음성 콘텐츠를 구성합니다.' },
-        { icon: 'fa-wave-square', title: '음성 클론', description: 'Chatterbox V3가 참조 화자의 특징을 음성에 반영합니다.' },
+        { icon: 'fa-microphone', title: t('tts.facts.record.title'), description: t('tts.facts.record.description') },
+        { icon: 'fa-language', title: t('tts.facts.text.title'), description: t('tts.facts.text.description') },
+        { icon: 'fa-wave-square', title: t('tts.facts.clone.title'), description: t('tts.facts.clone.description') },
       ]}
     >
-      <GatewayPanels inputDescription="참조 음성과 읽을 문장을 준비하세요." outputDescription="생성된 음성을 듣고 내려받으세요.">
+      <GatewayPanels inputDescription={t('tts.inputDescription')} outputDescription={t('tts.outputDescription')}>
         <div>
         <form onSubmit={handleGenerate}>
           <div className="form-group">
             <MediaInput
               mode="audio"
-              label="참조 음성 (본인 소유/사용 허가) — 업로드 또는 직접 녹음"
+              label={t('tts.referenceLabel')}
               value={reference}
               onChange={setReference}
               onError={(err) => setError(err.message)}
@@ -67,11 +69,11 @@ export default function GatewayTTS() {
             />
           </div>
           <div className="form-group">
-            <label className="form-label">텍스트</label>
-            <textarea className="textarea" value={text} onChange={(e) => setText(e.target.value)} rows={5} placeholder="한국어 텍스트를 입력하세요" />
+            <label className="form-label">{t('tts.textLabel')}</label>
+            <textarea className="textarea" value={text} onChange={(e) => setText(e.target.value)} rows={5} placeholder={t('tts.textPlaceholder')} />
           </div>
           <button type="submit" className="btn btn-primary btn-full" disabled={loading || !text.trim() || !reference?.blob}>
-            {loading ? <><LoadingSpinner size="sm" /> 생성 중...</> : <><i className="fas fa-headphones" /> 생성</>}
+            {loading ? <><LoadingSpinner size="sm" /> {t('tts.generating')}</> : <><i className="fas fa-headphones" /> {t('tts.generate')}</>}
           </button>
         </form>
         </div>

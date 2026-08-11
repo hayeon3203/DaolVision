@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import LoadingSpinner from '../components/LoadingSpinner'
 import { gatewayApi } from '../utils/api'
 import { apiUrl } from '../utils/basePath'
@@ -49,6 +50,7 @@ function HfChip({ icon, img, label, tone = 'muted' }) {
 // 단일 계열 line chart(크로스헤어+툴팁). 값 하나짜리 지표라 legend 없이 title이 정체성을
 // 대신한다(dataviz 스킬: "단일 계열은 legend 박스 불필요").
 function LineChart({ title, unit, data, valueKey, height = 90 }) {
+  const { i18n } = useTranslation('gateway')
   const width = 600
   const [hoverIdx, setHoverIdx] = useState(null)
   const n = data.length
@@ -93,13 +95,14 @@ function LineChart({ title, unit, data, valueKey, height = 90 }) {
       </svg>
       <div className="line-chart__tooltip">
         <strong>{shown ? `${shown[valueKey].toFixed(1)}${unit}` : '—'}</strong>
-        <span>{shown ? new Date(shown.t).toLocaleTimeString('ko-KR', { hour12: false }) : ''}</span>
+        <span>{shown ? new Date(shown.t).toLocaleTimeString(i18n.language, { hour12: false }) : ''}</span>
       </div>
     </div>
   )
 }
 
 export default function GatewayDashboard() {
+  const { t } = useTranslation('gateway')
   const [status, setStatus] = useState(null)
   const [history, setHistory] = useState([])
   const [error, setError] = useState(null)
@@ -136,23 +139,23 @@ export default function GatewayDashboard() {
         <div className="gateway-hero__copy">
           <span className="gateway-hero__eyebrow"><i className="fas fa-sparkles" /> SYSTEM MONITORING</span>
           <h1>Dashboard</h1>
-          <p>GB10 메모리·전력·온도와 실행 흐름을 실시간으로</p>
+          <p>{t('dashboard.subtitle')}</p>
           {!loading && !error && (
             <div className="dashboard-hero__pills">
               <HfChip
-                img={trace.some((t) => t.vendor === 'nvidia') ? apiUrl('/nvidia_logo_icon.svg') : null}
+                img={trace.some((tr) => tr.vendor === 'nvidia') ? apiUrl('/nvidia_logo_icon.svg') : null}
                 icon="fas fa-microchip"
-                label={trace.some((t) => t.vendor === 'nvidia') ? 'nvidia' : 'GPU'}
+                label={trace.some((tr) => tr.vendor === 'nvidia') ? 'nvidia' : 'GPU'}
               />
               <HfChip
                 icon={status.offline ? 'fas fa-circle-check' : 'fas fa-triangle-exclamation'}
                 tone={status.offline ? 'success' : 'warning'}
-                label={status.offline ? '오프라인' : '온라인'}
+                label={status.offline ? t('dashboard.offline') : t('dashboard.online')}
               />
               <HfChip
                 icon="fas fa-arrow-right-arrow-left"
                 tone={status.offline ? 'success' : 'warning'}
-                label={`External calls: ${status.external_calls}`}
+                label={t('dashboard.externalCalls', { count: status.external_calls })}
               />
             </div>
           )}
@@ -171,19 +174,19 @@ export default function GatewayDashboard() {
           {/* 최상단 스코어카드: 메모리 / 전력 / 온도 (grafana stat 패널 형식) */}
           <div className="score-card-row">
             <ScoreCard
-              label="GB10 메모리"
+              label={t('dashboard.memoryLabel')}
               value={`${status.gpu.used_gb.toFixed(1)} / ${status.gpu.total_gb.toFixed(1)}`}
               unit="GB"
               tone={scoreTone(memPercent, THRESHOLDS.mem)}
             />
             <ScoreCard
-              label="전력"
+              label={t('dashboard.powerLabel')}
               value={status.gpu.power_draw_w.toFixed(0)}
               unit="W"
               tone={scoreTone(status.gpu.power_draw_w, THRESHOLDS.power)}
             />
             <ScoreCard
-              label="온도"
+              label={t('dashboard.temperatureLabel')}
               value={status.gpu.temp_c.toFixed(0)}
               unit="°C"
               tone={scoreTone(status.gpu.temp_c, THRESHOLDS.temp)}
@@ -192,15 +195,15 @@ export default function GatewayDashboard() {
 
           {/* 실시간 추이 (5분 창, 5초 간격) — GPU 사용률/전력/온도 */}
           <div className="chart-row">
-            <LineChart title="GPU 사용률" unit="%" data={history} valueKey="util" />
-            <LineChart title="전력" unit="W" data={history} valueKey="power" />
-            <LineChart title="온도" unit="°C" data={history} valueKey="temp" />
+            <LineChart title={t('dashboard.chartUtil')} unit="%" data={history} valueKey="util" />
+            <LineChart title={t('dashboard.chartPower')} unit="W" data={history} valueKey="power" />
+            <LineChart title={t('dashboard.chartTemp')} unit="°C" data={history} valueKey="temp" />
           </div>
 
           {/* 실행트레이스 */}
           <div className="dashboard-trace">
             <div className="dashboard-section-heading">
-              <div><h2>실행트레이스</h2><p>현재 워크플로에서 호출된 모델과 공급자를 확인하세요.</p></div>
+              <div><h2>{t('dashboard.traceHeading')}</h2><p>{t('dashboard.traceDescription')}</p></div>
             </div>
             <table className="table">
               <thead>
@@ -224,7 +227,7 @@ export default function GatewayDashboard() {
                 ))}
               </tbody>
             </table>
-            <p className="form-field__hint">GPU util {status.gpu.util_percent.toFixed(0)}%</p>
+            <p className="form-field__hint">{t('dashboard.gpuUtilHint', { percent: status.gpu.util_percent.toFixed(0) })}</p>
           </div>
         </>
       )}

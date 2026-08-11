@@ -1,6 +1,8 @@
+import { useTranslation } from 'react-i18next'
 import GatewayHeroPills from './GatewayHeroPills'
 
 export default function GatewayPageShell({ eyebrow, title, description, icon, facts, models, techniques, children }) {
+  const { t } = useTranslation('gateway')
   return (
     <div className="gateway-workspace">
       <header className="gateway-hero">
@@ -13,7 +15,7 @@ export default function GatewayPageShell({ eyebrow, title, description, icon, fa
         <div className="gateway-hero__mark" aria-hidden="true"><i className={`fas ${icon}`} /></div>
       </header>
 
-      <section className="gateway-facts" aria-label={`${title} 주요 정보`}>
+      <section className="gateway-facts" aria-label={t('shared.infoAriaLabel', { title })}>
         {facts.map((fact, index) => (
           <article className="gateway-fact" key={fact.title}>
             <div className="gateway-fact__top">
@@ -32,14 +34,15 @@ export default function GatewayPageShell({ eyebrow, title, description, icon, fa
 }
 
 export function GatewayPanels({ inputDescription, outputDescription, children }) {
+  const { t } = useTranslation('gateway')
   return (
     <div className="media-layout gateway-media-layout">
       <div className="media-controls gateway-panel gateway-panel--controls">
-        <GatewayPanelHeading number="01" title="프로세스" description={inputDescription} />
+        <GatewayPanelHeading number="01" title={t('shared.process')} description={inputDescription} />
         {children[0]}
       </div>
       <div className="media-preview gateway-panel gateway-panel--result">
-        <GatewayPanelHeading number="02" title="결과물" description={outputDescription} />
+        <GatewayPanelHeading number="02" title={t('shared.result')} description={outputDescription} />
         {children[1]}
       </div>
     </div>

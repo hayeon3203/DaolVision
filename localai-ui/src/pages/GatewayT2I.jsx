@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import LoadingSpinner from '../components/LoadingSpinner'
 import GatewayPageShell, { GatewayPanels } from '../components/GatewayPageShell'
 import { gatewayApi } from '../utils/api'
@@ -6,6 +7,7 @@ import { gatewayApi } from '../utils/api'
 // Task 6.3: 독립 T2I 카테고리. anim-agent 게이트웨이(:8700) POST /t2i만 호출한다 —
 // LocalAI 자체 T2I 백엔드/모델 레지스트리는 쓰지 않는다.
 export default function GatewayT2I() {
+  const { t } = useTranslation('gateway')
   const [prompt, setPrompt] = useState('')
   const [width, setWidth] = useState(1024)
   const [height, setHeight] = useState(1024)
@@ -36,39 +38,39 @@ export default function GatewayT2I() {
     <GatewayPageShell
       eyebrow="TEXT TO IMAGE"
       title="Text to Image"
-      description="상상한 장면을 선명한 이미지 한 장으로"
+      description={t('t2i.description')}
       icon="fa-image"
       models={[{ label: 'FLUX.1 Schnell · Black Forest Labs', company: 'Black Forest Labs' }]}
       techniques={['Distilled Diffusion']}
       facts={[
-        { icon: 'fa-pen-nib', title: '자유로운 프롬프트', description: '원하는 피사체, 분위기, 조명을 자연어로 묘사합니다.' },
-        { icon: 'fa-expand', title: '맞춤 해상도', description: '가로와 세로 크기를 콘텐츠 용도에 맞게 설정합니다.' },
-        { icon: 'fa-bolt', title: '빠른 이미지 생성', description: 'Flux.1-schnell이 아이디어를 빠르게 시각화합니다.' },
+        { icon: 'fa-pen-nib', title: t('t2i.facts.prompt.title'), description: t('t2i.facts.prompt.description') },
+        { icon: 'fa-expand', title: t('t2i.facts.resolution.title'), description: t('t2i.facts.resolution.description') },
+        { icon: 'fa-bolt', title: t('t2i.facts.speed.title'), description: t('t2i.facts.speed.description') },
       ]}
     >
-      <GatewayPanels inputDescription="이미지 설명과 크기를 입력하세요." outputDescription="완성된 이미지를 확인하세요.">
+      <GatewayPanels inputDescription={t('t2i.inputDescription')} outputDescription={t('t2i.outputDescription')}>
         <div>
         <form onSubmit={handleGenerate}>
           <div className="form-group">
-            <label className="form-label">프롬프트</label>
+            <label className="form-label">{t('t2i.promptLabel')}</label>
             <textarea className="textarea" value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={3} placeholder="a cinematic shot of..." />
           </div>
           <div className="form-grid-2col">
             <div className="form-group">
-              <label className="form-label">가로</label>
+              <label className="form-label">{t('t2i.widthLabel')}</label>
               <input className="input" type="number" value={width} onChange={(e) => setWidth(parseInt(e.target.value, 10) || 1024)} />
             </div>
             <div className="form-group">
-              <label className="form-label">세로</label>
+              <label className="form-label">{t('t2i.heightLabel')}</label>
               <input className="input" type="number" value={height} onChange={(e) => setHeight(parseInt(e.target.value, 10) || 1024)} />
             </div>
           </div>
           <div className="form-group">
-            <label className="form-label">시드 (선택)</label>
-            <input className="input" type="number" value={seed} onChange={(e) => setSeed(e.target.value)} placeholder="랜덤" />
+            <label className="form-label">{t('t2i.seedLabel')}</label>
+            <input className="input" type="number" value={seed} onChange={(e) => setSeed(e.target.value)} placeholder={t('t2i.seedPlaceholder')} />
           </div>
           <button type="submit" className="btn btn-primary btn-full" disabled={loading || !prompt.trim()}>
-            {loading ? <><LoadingSpinner size="sm" /> 생성 중...</> : <><i className="fas fa-wand-magic-sparkles" /> 생성</>}
+            {loading ? <><LoadingSpinner size="sm" /> {t('t2i.generating')}</> : <><i className="fas fa-wand-magic-sparkles" /> {t('t2i.generate')}</>}
           </button>
         </form>
         </div>

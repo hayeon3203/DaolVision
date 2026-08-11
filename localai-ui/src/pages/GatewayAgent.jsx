@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import LoadingSpinner from '../components/LoadingSpinner'
 import AgentPhaseStepper from '../components/AgentPhaseStepper'
 import AgentScenePreview from '../components/AgentScenePreview'
@@ -14,15 +15,21 @@ import { gatewayApi, GATEWAY_BASE, fileToBase64 } from '../utils/api'
 // 추론 백엔드는 쓰지 않는다. phase→스텝 하이라이트는 AgentPhaseStepper(Task 6.4).
 const POLL_MS = 3000
 const JOB_STORAGE_KEY = 'gwAgentJobId'
-const AGENT_NODES = [
-  { key: 'planning', icon: 'fa-align-left', step: '01', title: '스토리 분석', description: '이야기의 흐름과 핵심 장면을 정리합니다.' },
-  { key: 'prompting', icon: 'fa-table-cells-large', step: '02', title: '씬 분할', description: '스토리를 영상에 맞는 씬 단위로 나눕니다.' },
-  { key: 'anchoring', icon: 'fa-user-check', step: '03', title: '캐릭터 앵커', description: '인물의 외형과 화풍을 장면마다 고정합니다.' },
-  { key: 'generating', icon: 'fa-clapperboard', step: '04', title: '영상 생성', description: '각 씬을 움직이는 영상 클립으로 만듭니다.' },
-  { key: 'done', icon: 'fa-wand-magic-sparkles', step: '05', title: '최종 합성', description: '클립과 나레이션을 하나의 영상으로 완성합니다.' },
+const AGENT_NODE_KEYS = [
+  { key: 'planning', icon: 'fa-align-left', step: '01' },
+  { key: 'prompting', icon: 'fa-table-cells-large', step: '02' },
+  { key: 'anchoring', icon: 'fa-user-check', step: '03' },
+  { key: 'generating', icon: 'fa-clapperboard', step: '04' },
+  { key: 'done', icon: 'fa-wand-magic-sparkles', step: '05' },
 ]
 
 export default function GatewayAgent() {
+  const { t } = useTranslation('gateway')
+  const AGENT_NODES = AGENT_NODE_KEYS.map((n) => ({
+    ...n,
+    title: t(`agent.nodes.${n.key}.title`),
+    description: t(`agent.nodes.${n.key}.description`),
+  }))
   // 'upload'=시나리오+인물사진 / 'describe'=이미지 설명으로 생성 후 시나리오 /
   // 'noref'=참조 없이 시나리오만. noref는 upload에 파일 0장과 페이로드가 같지만,
   // 결과가 다른 경로(캐릭터 시트로 인물 고정)라 사용자가 명시적으로 고르게 한다.
@@ -131,7 +138,7 @@ export default function GatewayAgent() {
         <div className="agent-hero__copy">
           <span className="agent-hero__eyebrow"><i className="fas fa-sparkles" /> AI VIDEO WORKFLOW</span>
           <h1>Agent</h1>
-          <p>스토리 <i className="fas fa-arrow-right" /> 씬 분할 <i className="fas fa-arrow-right" /> 캐릭터 일관 영상</p>
+          <p>{t('agent.taglineStory')} <i className="fas fa-arrow-right" /> {t('agent.taglineSplit')} <i className="fas fa-arrow-right" /> {t('agent.taglineVideo')}</p>
           <GatewayHeroPills
             models={[
               { label: 'Nemotron 3 Nano · NVIDIA', company: 'NVIDIA' },
@@ -145,7 +152,7 @@ export default function GatewayAgent() {
         <div className="agent-hero__mark" aria-hidden="true"><i className="fas fa-robot" /></div>
       </header>
 
-      <section className="agent-nodes" aria-label="Agent 작업 노드">
+      <section className="agent-nodes" aria-label={t('agent.nodesAriaLabel')}>
         {AGENT_NODES.map((node, index) => {
           const nodeState = activeNodeIndex < 0 ? '' : index < activeNodeIndex ? ' is-done' : index === activeNodeIndex ? ' is-active' : ''
           return (
@@ -156,7 +163,7 @@ export default function GatewayAgent() {
               </div>
               <h2>{node.title}</h2>
               <p>{node.description}</p>
-              <span className="agent-node__status">{nodeState === ' is-done' ? '완료' : nodeState === ' is-active' ? '진행 중' : '대기'}</span>
+              <span className="agent-node__status">{nodeState === ' is-done' ? t('agent.nodeStatus.done') : nodeState === ' is-active' ? t('agent.nodeStatus.active') : t('agent.nodeStatus.waiting')}</span>
             </article>
           )
         })}
@@ -166,44 +173,44 @@ export default function GatewayAgent() {
         <div className="media-controls agent-panel agent-panel--controls">
           <div className="agent-panel__heading">
             <span className="agent-panel__number">01</span>
-            <div><h2>프로세스</h2><p>스토리와 캐릭터 정보를 입력하세요.</p></div>
+            <div><h2>{t('shared.process')}</h2><p>{t('agent.processHeading')}</p></div>
           </div>
         {!jobId ? (
           <form onSubmit={handleStart}>
             <div className="segmented">
               <button type="button" className={`segmented__item${inputMode === 'upload' ? ' is-active' : ''}`} onClick={() => setInputMode('upload')}>
-                <i className="fas fa-paperclip" /> 사진 첨부
+                <i className="fas fa-paperclip" /> {t('agent.modeUpload')}
               </button>
               <button type="button" className={`segmented__item${inputMode === 'describe' ? ' is-active' : ''}`} onClick={() => setInputMode('describe')}>
-                <i className="fas fa-wand-magic-sparkles" /> 이미지 설명으로 생성
+                <i className="fas fa-wand-magic-sparkles" /> {t('agent.modeDescribe')}
               </button>
               <button type="button" className={`segmented__item${inputMode === 'noref' ? ' is-active' : ''}`} onClick={() => setInputMode('noref')}>
-                <i className="fas fa-pen-nib" /> 시나리오만
+                <i className="fas fa-pen-nib" /> {t('agent.modeNoref')}
               </button>
             </div>
             {inputMode === 'upload' ? (
               <>
                 <div className="form-group">
-                  <label className="form-label">스토리</label>
-                  <textarea className="textarea" value={scriptText} onChange={(e) => setScriptText(e.target.value)} rows={5} placeholder="한 우주비행사가 노을 지는 발사대에서 로켓을 타고 이륙한다..." />
+                  <label className="form-label">{t('agent.storyLabel')}</label>
+                  <textarea className="textarea" value={scriptText} onChange={(e) => setScriptText(e.target.value)} rows={5} placeholder={t('agent.storyPlaceholder')} />
                 </div>
                 <div className="form-group">
-                  <label className="form-label">캐릭터 참조 이미지 (I2I 카테고리에서 만든 우주비행사 등)</label>
+                  <label className="form-label">{t('agent.refImagesLabel')}</label>
                   <input className="input" type="file" accept="image/*" multiple onChange={(e) => setRefFiles(Array.from(e.target.files || []))} />
-                  {refFiles.length > 0 && <span className="form-field__hint">{refFiles.length}장 첨부됨</span>}
+                  {refFiles.length > 0 && <span className="form-field__hint">{t('agent.refImagesAttached', { count: refFiles.length })}</span>}
                 </div>
               </>
             ) : inputMode === 'describe' ? (
               <div className="form-group">
-                <label className="form-label">이미지 설명</label>
-                <textarea className="textarea" value={imageRequest} onChange={(e) => setImageRequest(e.target.value)} rows={5} placeholder="우주복을 입은 우주비행사가 노을 지는 발사대 앞에 서있는 모습, 시네마틱..." />
-                <span className="form-field__hint">참조 사진 없이 설명만으로 캐릭터 이미지를 생성합니다(T2I, FLUX.1-schnell). 승인하면 그 이미지로 시나리오를 이어서 입력합니다.</span>
+                <label className="form-label">{t('agent.imageDescriptionLabel')}</label>
+                <textarea className="textarea" value={imageRequest} onChange={(e) => setImageRequest(e.target.value)} rows={5} placeholder={t('agent.imageDescriptionPlaceholder')} />
+                <span className="form-field__hint">{t('agent.imageDescriptionHint')}</span>
               </div>
             ) : (
               <div className="form-group">
-                <label className="form-label">스토리</label>
-                <textarea className="textarea" value={scriptText} onChange={(e) => setScriptText(e.target.value)} rows={5} placeholder="한 우주비행사가 노을 지는 발사대에서 로켓을 타고 이륙한다..." />
-                <span className="form-field__hint">참조 이미지 없이 시나리오만으로 영상을 만듭니다. 인물이 등장하면 장면마다 같은 외형이 유지되도록 자동으로 설정합니다.</span>
+                <label className="form-label">{t('agent.storyLabel')}</label>
+                <textarea className="textarea" value={scriptText} onChange={(e) => setScriptText(e.target.value)} rows={5} placeholder={t('agent.storyPlaceholder')} />
+                <span className="form-field__hint">{t('agent.norefHint')}</span>
               </div>
             )}
             <button
@@ -211,23 +218,23 @@ export default function GatewayAgent() {
               className="btn btn-primary btn-full"
               disabled={starting || (inputMode === 'describe' ? !imageRequest.trim() : !scriptText.trim())}
             >
-              {starting ? <><LoadingSpinner size="sm" /> 시작 중...</> : <><i className="fas fa-play" /> 시작</>}
+              {starting ? <><LoadingSpinner size="sm" /> {t('agent.starting')}</> : <><i className="fas fa-play" /> {t('agent.start')}</>}
             </button>
           </form>
         ) : (
           <div>
             <AgentPhaseStepper phase={status?.phase} imageGenUsed={status?.image_gen_used} />
             <div className="agent-jobbar">
-              <p className="form-field__hint">job_id: {jobId}</p>
+              <p className="form-field__hint">{t('agent.jobId', { id: jobId })}</p>
               <button type="button" className="btn btn-secondary" onClick={handleReset}>
-                <i className="fas fa-rotate-left" /> 새로 시작
+                <i className="fas fa-rotate-left" /> {t('agent.startOver')}
               </button>
             </div>
             {status?.status === 'done' && (
               <div className="form-group">
-                <p className="form-field__hint"><i className="fas fa-circle-check" /> 완료됐습니다.</p>
+                <p className="form-field__hint"><i className="fas fa-circle-check" /> {t('agent.done')}</p>
                 <button type="button" className="btn btn-primary btn-full" onClick={handleReset}>
-                  <i className="fas fa-plus" /> 새 영상 만들기
+                  <i className="fas fa-plus" /> {t('agent.newVideo')}
                 </button>
               </div>
             )}
@@ -253,13 +260,13 @@ export default function GatewayAgent() {
               />
             ) : checkpoint && checkpoint.checkpoint?.startsWith('2-4') ? (
               <div className="form-group">
-                <p><strong>{checkpoint.message || '이미지가 승인되었습니다. 시나리오를 입력해주세요.'}</strong></p>
+                <p><strong>{checkpoint.message || t('agent.imageApprovedDefault')}</strong></p>
                 <textarea
                   className="textarea"
                   value={scenarioText}
                   onChange={(e) => setScenarioText(e.target.value)}
                   rows={5}
-                  placeholder="이 이미지로 만들 영상의 시나리오를 입력하세요..."
+                  placeholder={t('agent.scenarioPlaceholder')}
                 />
                 <button
                   type="button"
@@ -267,20 +274,20 @@ export default function GatewayAgent() {
                   disabled={!scenarioText.trim()}
                   onClick={() => { handleApprove({ script_text: scenarioText.trim() }); setScenarioText('') }}
                 >
-                  제출
+                  {t('agent.submit')}
                 </button>
               </div>
             ) : checkpoint && (
               <div className="form-group">
-                <p><strong>승인 대기: {checkpoint.checkpoint}</strong></p>
+                <p><strong>{t('agent.waitingForApproval', { checkpoint: checkpoint.checkpoint })}</strong></p>
                 {checkpoint.message && <p>{checkpoint.message}</p>}
                 <textarea className="textarea" value={manualPayload} onChange={(e) => setManualPayload(e.target.value)} rows={4} />
                 <button
                   type="button"
                   className="btn btn-primary btn-full"
-                  onClick={() => { try { handleApprove(JSON.parse(manualPayload)) } catch { setError('payload가 유효한 JSON이 아닙니다') } }}
+                  onClick={() => { try { handleApprove(JSON.parse(manualPayload)) } catch { setError(t('agent.invalidPayload')) } }}
                 >
-                  제출
+                  {t('agent.submit')}
                 </button>
               </div>
             )}
@@ -290,12 +297,12 @@ export default function GatewayAgent() {
         <div className="media-preview agent-panel agent-panel--result">
           <div className="agent-panel__heading">
             <span className="agent-panel__number">02</span>
-            <div><h2>결과물</h2><p>생성 중인 장면과 완성 영상을 확인하세요.</p></div>
+            <div><h2>{t('shared.result')}</h2><p>{t('agent.resultHeading')}</p></div>
           </div>
         <div className="media-result">
           {status?.input_message && (
             <div className="agent-result-prompt">
-              <span className="agent-result-prompt__label"><i className="fas fa-message" /> 입력 메시지</span>
+              <span className="agent-result-prompt__label"><i className="fas fa-message" /> {t('agent.inputMessageLabel')}</span>
               <p>{status.input_message}</p>
             </div>
           )}
@@ -312,13 +319,13 @@ export default function GatewayAgent() {
           ) : checkpoint && checkpoint.checkpoint?.startsWith('2-3') && (checkpoint.gen_image_urls || []).length > 0 ? (
             <img
               src={`${GATEWAY_BASE}${checkpoint.gen_image_urls[0]}${checkpoint.image_queries?.[0] ? `?v=${encodeURIComponent(checkpoint.image_queries[0])}` : ''}`}
-              alt="생성 이미지"
+              alt={t('agent.generatedImageAlt')}
               style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
             />
           ) : (
             <div style={{ width: '100%' }}>
               <p><LoadingSpinner size="sm" /> phase: {status.phase || status.status}</p>
-              {typeof status.clips_total === 'number' && <p>클립 {status.clips_done}/{status.clips_total}</p>}
+              {typeof status.clips_total === 'number' && <p>{t('agent.clipsProgress', { done: status.clips_done, total: status.clips_total })}</p>}
               {(status.clips || []).map(c => (
                 <video key={c.scene_id} controls className="media-result" style={{ minHeight: 0, marginBottom: 'var(--spacing-sm)' }} src={`${GATEWAY_BASE}${c.url}`} />
               ))}

@@ -88,5 +88,43 @@
     "browse": "Browse the API",
     "hide": "Hide endpoints",
     "dismiss": "Dismiss"
+  },
+  "landing": {
+    "headlineLine1": "상상에만 집중하세요.",
+    "headlineLine2": "나머지는 로컬 AI가.",
+    "intro": "이미지, 영상, 목소리와 스토리를 하나의 스튜디오에서 만드세요. 데이터는 내 환경 안에 머물고, 사용량과 토큰 제한 없이 계속 창작할 수 있습니다.",
+    "primaryCta": "지금 만들기",
+    "exploreCta": "도구 둘러보기",
+    "heroVisualAriaLabel": "격리된 로컬 AI 제작 환경",
+    "workspaceHead": "새로운 장면",
+    "workspaceSub": "안전한 환경에서 실행 중",
+    "promptExample": "노을이 지는 미래 도시를 걷는 여행자",
+    "shieldTitle": "완전히 격리됨",
+    "shieldDesc": "OpenShell sandbox",
+    "tokenTitle": "토큰 제한 없음",
+    "tokenDesc": "마음껏 생성하세요",
+    "trustAriaLabel": "DaolVision의 장점",
+    "trust1Title": "격리된 실행",
+    "trust1Desc": "작업마다 안전한 샌드박스",
+    "trust2Title": "토큰 걱정 없이",
+    "trust2Desc": "구독·사용량 제한 없는 로컬 생성",
+    "trust3Title": "내 데이터는 내 안에",
+    "trust3Desc": "외부 전송 없는 프라이빗 워크플로우",
+    "trust4Title": "한 곳에서 완성",
+    "trust4Desc": "이미지부터 영상·음성까지",
+    "studiosHeading": "무엇을 만들어 볼까요?",
+    "studiosSubheading": "목적에 맞는 스튜디오를 고르면 바로 시작할 수 있어요.",
+    "dashboardLink": "운영 현황 보기",
+    "studios": {
+      "story": { "title": "스토리 영상", "description": "아이디어 한 줄에서 장면과 영상까지. 완성된 이야기로 연결합니다." },
+      "video": { "title": "영상 만들기", "description": "텍스트로 장면을 설명하고 짧은 영상을 바로 생성하세요." },
+      "styling": { "title": "이미지 스타일링", "description": "인물의 특징은 살리고 원하는 무드와 스타일로 새롭게 바꿉니다." },
+      "voice": { "title": "목소리 만들기", "description": "짧은 음성 샘플로 자연스러운 한국어 내레이션을 만드세요." },
+      "image": { "title": "이미지 만들기", "description": "상상을 문장으로 적으면 고품질 이미지로 빠르게 시각화합니다." }
+    },
+    "runtimeStatus": "모든 생성 도구는 독립된 OpenShell 환경에서 준비됩니다.",
+    "bottomCtaLine1": "제한 없는 창작 환경을",
+    "bottomCtaLine2": "지금 시작하세요.",
+    "bottomCtaButton": "첫 작품 만들기"
   }
 }

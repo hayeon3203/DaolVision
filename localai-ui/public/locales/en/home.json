@@ -103,5 +103,43 @@
     "browse": "Browse the API",
     "hide": "Hide endpoints",
     "dismiss": "Dismiss"
+  },
+  "landing": {
+    "headlineLine1": "Just focus on the idea.",
+    "headlineLine2": "Local AI takes care of the rest.",
+    "intro": "Create images, videos, voices, and stories — all in one studio. Your data stays on your machine, so you can keep creating with no usage caps or token limits.",
+    "primaryCta": "Start creating",
+    "exploreCta": "Explore the tools",
+    "heroVisualAriaLabel": "Isolated local AI creation environment",
+    "workspaceHead": "New scene",
+    "workspaceSub": "Running in a secure sandbox",
+    "promptExample": "A traveler walking through a futuristic city at sunset",
+    "shieldTitle": "Fully isolated",
+    "shieldDesc": "OpenShell sandbox",
+    "tokenTitle": "No token limits",
+    "tokenDesc": "Create as much as you want",
+    "trustAriaLabel": "Why DaolVision",
+    "trust1Title": "Isolated execution",
+    "trust1Desc": "A secure sandbox for every job",
+    "trust2Title": "No token anxiety",
+    "trust2Desc": "Local generation with no subscriptions or usage caps",
+    "trust3Title": "Your data stays yours",
+    "trust3Desc": "A private workflow — nothing leaves your machine",
+    "trust4Title": "Everything in one place",
+    "trust4Desc": "From images to video and voice",
+    "studiosHeading": "What do you want to make?",
+    "studiosSubheading": "Pick the studio that fits your goal and jump right in.",
+    "dashboardLink": "View system status",
+    "studios": {
+      "story": { "title": "Story Video", "description": "From a single idea to scenes and video — a complete story, start to finish." },
+      "video": { "title": "Make a Video", "description": "Describe a scene in text and generate a short video instantly." },
+      "styling": { "title": "Image Styling", "description": "Keep the person's likeness and reimagine them in any mood or style." },
+      "voice": { "title": "Make a Voice", "description": "Turn a short voice sample into natural-sounding narration." },
+      "image": { "title": "Make an Image", "description": "Write what you imagine and see it visualized as a high-quality image in seconds." }
+    },
+    "runtimeStatus": "Every creation tool spins up in its own isolated OpenShell environment.",
+    "bottomCtaLine1": "A creative environment without limits.",
+    "bottomCtaLine2": "Start now.",
+    "bottomCtaButton": "Create your first piece"
   }
 }

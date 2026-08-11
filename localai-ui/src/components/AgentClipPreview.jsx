@@ -1,10 +1,12 @@
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { GATEWAY_BASE } from '../utils/api'
 
 // checkpoint 3-5_clip_approval 리뷰 UI. 전에는 autoDecisionFor가 {action:'approve_all'}로
 // 원클릭 승인해버려 생성된 클립을 한 번도 보여주지 않았다 — 백엔드(node_checkpoint_clip_approval)는
 // {action:'regenerate', scene_ids:[...]}로 씬별 재생성도 지원하므로 그걸 그대로 노출한다.
 export default function AgentClipPreview({ scenes, onApprove, onRegenerate }) {
+  const { t } = useTranslation('gateway')
   const [selected, setSelected] = useState(() => new Set())
 
   const toggle = (id) => {
@@ -17,7 +19,7 @@ export default function AgentClipPreview({ scenes, onApprove, onRegenerate }) {
 
   return (
     <div className="scene-preview">
-      <p className="form-field__hint">클립 {scenes.length}개 생성됨 — 확인 후 승인하거나, low_quality 씬을 골라 재생성하세요.</p>
+      <p className="form-field__hint">{t('clipPreview.hint', { count: scenes.length })}</p>
       <ol className="scene-preview__list">
         {scenes.map((s) => (
           <li key={s.id} className="scene-preview__card">
@@ -26,7 +28,7 @@ export default function AgentClipPreview({ scenes, onApprove, onRegenerate }) {
                 type="checkbox"
                 checked={selected.has(s.id)}
                 onChange={() => toggle(s.id)}
-                aria-label={`씬 ${s.id} 재생성 대상으로 선택`}
+                aria-label={t('clipPreview.selectAria', { id: s.id })}
               />
             </div>
             {s.clip_url ? (
@@ -49,7 +51,7 @@ export default function AgentClipPreview({ scenes, onApprove, onRegenerate }) {
 
       <div className="scene-preview__actions">
         <button type="button" className="btn btn-primary btn-full" onClick={onApprove}>
-          <i className="fas fa-check" /> 전체 승인
+          <i className="fas fa-check" /> {t('clipPreview.approveAll')}
         </button>
         <button
           type="button"
@@ -57,7 +59,7 @@ export default function AgentClipPreview({ scenes, onApprove, onRegenerate }) {
           disabled={selected.size === 0}
           onClick={() => onRegenerate([...selected])}
         >
-          <i className="fas fa-rotate" /> 선택한 {selected.size}개 씬 재생성
+          <i className="fas fa-rotate" /> {t('clipPreview.regenerateSelected', { count: selected.size })}
         </button>
       </div>
     </div>

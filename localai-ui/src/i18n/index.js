@@ -32,6 +32,7 @@ export const NAMESPACES = [
   'admin',
   'usage',
   'explorer',
+  'gateway',
 ]
 
 i18n

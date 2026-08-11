@@ -637,6 +637,13 @@
   margin: 0;
   padding: 4px;
   z-index: 1000;
+  /* This popup sits on a normal elevated surface, not the navy rail — but
+     .sidebar redefines the text and primary color tokens for rail contrast
+     (white text, mint/navy accents), which this menu would otherwise
+     inherit and render illegibly. Reset to unshadowed base-theme tokens. */
+  --color-text-primary: var(--color-text-tertiary);
+  --color-text-secondary: var(--color-text-tertiary);
+  --color-primary: var(--color-accent);
 }
 .sidebar.collapsed .language-switcher-menu {
   left: calc(100% + 8px);
