@@ -7,11 +7,11 @@
 ## 절차
 
 1. **localai-ui 개발 서버 기동 확인**
-   - 터미널에서 `cd /home/admin/DaolVision/localai-ui && npm run dev` 실행 (또는 이미 실행 중이면 `http://localhost:5173`이 응답하는지 확인).
+   - 터미널에서 `cd /home/admin/DaolVision/localai-ui && npm run dev` 실행 (또는 이미 실행 중이면 `http://localhost:5199`이 응답하는지 확인).
    - GatewayAgent 엔드포인트 확인: `curl http://localhost:8700/health` → `{"status":"ok","graph_loaded":true}` 응답 수신.
 
 2. **로컬 브라우저에서 GatewayAgent 대화 창 이동**
-   - `http://localhost:5173/app/gw-agent` 접속 (또는 localai-ui 홈에서 GatewayAgent 채팅 메뉴 클릭).
+   - `http://localhost:5199/app/gw-agent` 접속 (또는 localai-ui 홈에서 GatewayAgent 채팅 메뉴 클릭).
 
 3. **참조 이미지 첨부**
    - 채팅창 하단 이미지 업로드 버튼을 클릭해 다음 파일 첨부:
