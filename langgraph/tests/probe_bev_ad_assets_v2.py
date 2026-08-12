@@ -7,9 +7,11 @@
 실행: cd langgraph && ./.venv/bin/python tests/probe_bev_ad_assets_v2.py
 결과: jobs/probe_bev_ad/assets/{bottle_raw.png, bottle_canonical.png, bottle_flat.png}
 """
+from collections import deque
 from pathlib import Path
 
 import httpx
+import numpy as np
 from PIL import Image, ImageDraw
 
 ASSETS = Path(__file__).resolve().parent.parent / "jobs" / "probe_bev_ad" / "assets"
@@ -74,7 +76,40 @@ def cutout(src: Path, flood_thresh: int = 12, border_step: int = 20) -> Image.Im
         for x in range(w):
             if px[x, y] == marker:
                 px[x, y] = (0, 0, 0, 0)
+    img = _keep_largest_opaque_island(img)
     return img.crop(img.getbbox())
+
+
+def _keep_largest_opaque_island(img: Image.Image) -> Image.Image:
+    """배경 제거 후에도 남는 미세한 고립 반점(테두리 시드에서 안 닿은 실 배경
+    조각, 실측 215개·최대 275px vs 병 본체 141781px)을 지운다 — 불투명 픽셀의
+    연결요소 중 가장 큰 덩어리(병 본체)만 남기고 나머지는 투명화."""
+    arr = np.array(img)
+    opaque = arr[:, :, 3] > 0
+    h, w = opaque.shape
+    visited = np.zeros_like(opaque, dtype=bool)
+    best: list[tuple[int, int]] = []
+    for y in range(h):
+        for x in range(w):
+            if opaque[y, x] and not visited[y, x]:
+                comp = []
+                q = deque([(y, x)])
+                visited[y, x] = True
+                while q:
+                    cy, cx = q.popleft()
+                    comp.append((cy, cx))
+                    for dy, dx in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                        ny, nx = cy + dy, cx + dx
+                        if 0 <= ny < h and 0 <= nx < w and opaque[ny, nx] and not visited[ny, nx]:
+                            visited[ny, nx] = True
+                            q.append((ny, nx))
+                if len(comp) > len(best):
+                    best = comp
+    keep = np.zeros_like(opaque, dtype=bool)
+    for y, x in best:
+        keep[y, x] = True
+    arr[~keep, 3] = 0
+    return Image.fromarray(arr, "RGBA")
 
 
 def main() -> int:
