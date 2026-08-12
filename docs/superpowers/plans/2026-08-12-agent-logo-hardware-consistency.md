@@ -77,12 +77,20 @@ def compose(
     badge_logo_path: Path,
     out_path: Path,
     *,
-    main_logo_width_ratio: float = 0.30,
-    main_logo_center_x_ratio: float = 0.5,
-    main_logo_center_y_ratio: float = 0.35,
-    badge_width_ratio: float = 0.14,
-    badge_margin_ratio: float = 0.04,
+    main_logo_width_ratio: float = 0.14,
+    main_logo_center_x_ratio: float = 0.43,
+    main_logo_center_y_ratio: float = 0.60,
+    badge_width_ratio: float = 0.06,
+    badge_center_x_ratio: float = 0.875,
+    badge_center_y_ratio: float = 0.44,
 ) -> Path:
+    """위치 기본값은 `nvidia-blackwell-products-gb10-update.png`(2500x2000,
+    투명 배경 + 대각선 앵글의 박스 하나) 기준으로 실측 조정됨:
+    - main_logo: 정면 그릴(허니콤) 패널 중앙 — 원래 있던 "DELL" 워드마크를
+      DaolFusion 로고로 덮어서 가린다.
+    - badge: 오른쪽 위로 기울어진 광택 측면 패널 위 — 캔버스 우하단 모서리가
+      아니라(투명 여백이 넓어 거기 두면 장비에서 붕 뜬다) 장비 몸체 위의 좌표.
+    다른 사진으로 바꾸면 이 네 값을 그 사진에 맞게 다시 잡아야 한다."""
     device = Image.open(device_path).convert("RGBA")
     dw, dh = device.size
 
@@ -98,9 +106,8 @@ def compose(
     badge_w = int(dw * badge_width_ratio)
     badge_h = int(badge.height * (badge_w / badge.width))
     badge = badge.resize((badge_w, badge_h), Image.LANCZOS)
-    margin = int(dw * badge_margin_ratio)
-    badge_x = dw - badge_w - margin
-    badge_y = dh - badge_h - margin
+    badge_x = int(dw * badge_center_x_ratio - badge_w / 2)
+    badge_y = int(dh * badge_center_y_ratio - badge_h / 2)
     device.alpha_composite(badge, (badge_x, badge_y))
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -129,25 +136,25 @@ if __name__ == "__main__":
 Run: `cd /home/admin/DaolVision/langgraph && ./.venv/bin/python tests/probe_logo_hw_compose.py`
 Expected: `합성 완료: .../ref_composite.png` 출력, 파일 생성됨.
 
-`ref_composite.png`를 열어 확인: DaolFusion 로고가 장비 중앙 상단부에 자연스러운
-크기로, NVIDIA 배지가 우하단 모서리에 작게 겹치지 않고 보이는지. 위치/크기가
-사진 구도와 안 맞으면 Step 2의 `*_ratio` 파라미터를 조정하고 재실행(반복
-허용 — 이 단계는 결정론적이라 몇 번을 돌려도 결과가 같은 파라미터에선 항상
-동일).
+`ref_composite.png`를 Read 도구로 열어 확인: (1) 원본 사진의 "DELL" 워드마크가
+DaolFusion 로고에 완전히 가려졌는지 — 글자 일부라도 로고 밖으로 삐져나오면
+`main_logo_width_ratio`를 키우거나 `main_logo_center_*_ratio`를 그릴 중앙(글자
+있던 자리)에 더 정확히 맞춘다. (2) NVIDIA 배지가 장비 몸체(오른쪽 광택 패널) 위에
+자연스럽게 얹혀 있고 캔버스 여백(검정/투명 영역)에 붕 떠 있지 않은지. 안 맞으면
+Step 2의 `*_ratio` 파라미터를 조정하고 재실행(결정론적이라 같은 파라미터면 항상
+같은 결과 — 반복 조정 허용).
 
 - [ ] **Step 4: 커밋**
 
 ```bash
 cd /home/admin/DaolVision
 git add langgraph/tests/probe_logo_hw_compose.py
-git add langgraph/jobs/probe_logo_hw/assets/logo_daolfusion.png
-git add langgraph/jobs/probe_logo_hw/assets/logo_nvidia.png
-git add langgraph/jobs/probe_logo_hw/assets/ref_composite.png
 git commit -m "test: 듀얼 로고 GB10 워크스테이션 합성 프로브 스크립트 추가"
 ```
 
-(`device_gb10.*` 원본 사진은 커밋할지 사용자와 확인 — 저작권/용량 이슈 있으면
-`.gitignore`에 추가하고 `ref_composite.png`만 커밋.)
+`langgraph/jobs/`는 저장소 `.gitignore`에 이미 잡혀 있다(job 산출물 전반이
+비커밋 대상) — `assets/*.png`(로고 원본·합성 참조 이미지)도 자동으로 이 규칙을
+따르므로 강제 추가하지 않는다. 스크립트만 커밋하고, 에셋은 로컬에 그대로 둔다.
 
 ---
 
