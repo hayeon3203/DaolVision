@@ -340,16 +340,16 @@ def _normalise_scene_count(items: list, target: int = 4) -> list:
 # 캡션(gemma 영어)에서 사람/비인간을 결정론적으로 판정한다. qwen2.5:7b가 씬 분할 시
 # subject_type 필드를 자주 누락(→ None)해 마스코트·제품이 얼굴(STANDIN) 경로로 오라우팅되던
 # 문제(job 1fddc76: 4씬 전부 subject_type None)를 캡션 진실원천으로 막는다.
-# ponytail: 리스크 — computer/machine/equipment/server 등은 "a man at his computer"류
-# 사람 캡션에도 걸려 human을 nonhuman으로 오분류할 수 있다(기존 device/box/vehicle도
-# 동급 리스크 보유, 이번에 새로 생긴 문제는 아님). 회귀 발견 시
-# tests/test_subject_caption_classification.py가 잡는다 — 후속 검토 필요, 지금 막을 사유는 아님.
+# 컴퓨팅 하드웨어 어휘 중 computer/server/workstation/machine/equipment는 "a man at
+# his computer"류 사람 캡션에도 흔히 걸려 human을 nonhuman으로 오분류한다(실측:
+# tests/test_subject_caption_classification.py가 회귀로 잡음). hardware/appliance/
+# accelerator/processor/electronics/computing은 사람 캡션의 주어로 잘 안 쓰여
+# 충돌 리스크가 낮다 — 그 쪽만 남긴다.
 _NONHUMAN_HINTS = re.compile(
     r"\b(mascot|robot|android|product|logo|animal|creature|monster|toy|plush|doll|figurine|"
     r"cartoon|cartoonish|emoji|blob|gadget|device|bottle|package|parcel|box|carton|"
     r"food|snack|fruit|plant|flower|vehicle|car|truck|drone|cat|dog|bird|fish|dragon|"
-    r"workstation|server|computer|hardware|appliance|accelerator|processor|electronics|"
-    r"computing|equipment|machine)\b|"
+    r"hardware|appliance|accelerator|processor|electronics|computing)\b|"
     r"(animated|cartoon|stylized|cute|character)\s+character|character\s+illustration", re.I)
 _HUMAN_HINTS = re.compile(
     r"\b(man|woman|men|women|person|people|boy|girl|lady|guy|male|female|worker|portrait|human|"
