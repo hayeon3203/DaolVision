@@ -343,7 +343,9 @@ def _normalise_scene_count(items: list, target: int = 4) -> list:
 _NONHUMAN_HINTS = re.compile(
     r"\b(mascot|robot|android|product|logo|animal|creature|monster|toy|plush|doll|figurine|"
     r"cartoon|cartoonish|emoji|blob|gadget|device|bottle|package|parcel|box|carton|"
-    r"food|snack|fruit|plant|flower|vehicle|car|truck|drone|cat|dog|bird|fish|dragon)\b|"
+    r"food|snack|fruit|plant|flower|vehicle|car|truck|drone|cat|dog|bird|fish|dragon|"
+    r"workstation|server|computer|hardware|appliance|accelerator|processor|electronics|"
+    r"computing|equipment|machine)\b|"
     r"(animated|cartoon|stylized|cute|character)\s+character|character\s+illustration", re.I)
 _HUMAN_HINTS = re.compile(
     r"\b(man|woman|men|women|person|people|boy|girl|lady|guy|male|female|worker|portrait|human|"
