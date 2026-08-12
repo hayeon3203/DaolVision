@@ -45,15 +45,31 @@ def generate_bottle() -> Path:
     return out
 
 
-def cutout(src: Path, flood_thresh: int = 60) -> Image.Image:
-    """흰 배경을 네 모서리 floodfill로 제거해 RGBA 컷아웃 반환 (Task 1
-    product_canonical 컷아웃과 동일 로직 재사용)."""
+def cutout(src: Path, flood_thresh: int = 12, border_step: int = 20) -> Image.Image:
+    """흰 배경을 제거해 RGBA 컷아웃 반환. 패트병처럼 투명한 소재는 병 내부의
+    밝은 하이라이트 줄무늬가 배경색과 색상 거리가 가까워(실측 9~27, 배경 자체
+    변동폭 최대 14와 겹침) 모서리 4점 + 관대한 threshold(60) 조합은 floodfill이
+    병 안쪽까지 새어 들어가 구멍을 남긴다(사용자 발견, clip2v3_12에서 패트
+    부분이 어색하게 비치는 현상의 원인 — 실측: red 배경에 합성해 확인하니 실제
+    투명 구멍이었음, 모폴로지 closing으로도 안 메워질 만큼 큼).
+    해결: threshold를 배경 내부 변동폭보다 약간 낮게(12) 잡아 하이라이트로
+    새는 걸 원천 차단하고, 시드를 모서리 4점 대신 테두리 전체(20px 간격)에서
+    출발시켜 배경의 국소적 색 변동(그림자/바닥 반사)도 짧은 경로로 모두
+    커버한다 — 물체를 갉아먹지 않으면서 배경은 깨끗이 지워짐(실측 확인됨)."""
     img = Image.open(src).convert("RGBA")
     w, h = img.size
     marker = (255, 0, 255, 255)
-    for corner in [(0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)]:
-        ImageDraw.floodfill(img, corner, marker, thresh=flood_thresh)
+    seeds = set()
+    for x in range(0, w, border_step):
+        seeds.add((x, 0))
+        seeds.add((x, h - 1))
+    for y in range(0, h, border_step):
+        seeds.add((0, y))
+        seeds.add((w - 1, y))
     px = img.load()
+    for sx, sy in seeds:
+        if px[sx, sy] != marker:
+            ImageDraw.floodfill(img, (sx, sy), marker, thresh=flood_thresh)
     for y in range(h):
         for x in range(w):
             if px[x, y] == marker:
