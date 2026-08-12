@@ -69,8 +69,17 @@ POLICY_DIR="${REPO_ROOT}/docker/policies"
 # 만 마운트하면 서버는 뜨고 /api/tags 도 200 을 돌려주는데 실제 추론은 전부
 # 죽는다: "error starting llama-server: llama-server binary not found". 모델
 # 목록만 보고 판정하면 못 잡는 실패다 — 반드시 generate/embeddings 로 확인할 것.
+#
+# comfyui 의 models/{vae,diffusion_models,...} 밑에는 HF 캐시로 심볼릭 링크된
+# 체크포인트가 섞여 있다(subject_ref/Face-ID 경로가 쓰는 Kijai/WanVideo_comfy,
+# BowenXue/Stand-In). ComfyUI의 object_info(모델 목록 스캔)는 심볼릭 링크
+# "이름"만 보고 뜨므로 마운트 안 돼 있어도 정상으로 보이지만, 실제 로드 시점의
+# folder_paths.get_full_path_or_raise 가 링크 타깃을 못 찾아
+# FileNotFoundError 로 죽는다(2026-08-12, 로고+GB10 일관성 스파이크 Task 2에서
+# 최초 재현 — subject_ref 경로가 OpenShell 전환(Task 8.2.1) 이후 처음
+# 실행됐다는 뜻이기도 하다). 두 HF_HUB 경로를 마운트해서 해소.
 read -r -d '' SERVICES <<EOF || true
-comfyui|8188|yes|/home/admin/video_generator/ComfyUI|/home/admin/.venv/bin/python main.py --cache-classic --highvram --listen 0.0.0.0|-|rw:/home/admin/video_generator/ComfyUI /home/admin/.venv
+comfyui|8188|yes|/home/admin/video_generator/ComfyUI|/home/admin/.venv/bin/python main.py --cache-classic --highvram --listen 0.0.0.0|-|rw:/home/admin/video_generator/ComfyUI /home/admin/.venv ${HF_HUB}/models--Kijai--WanVideo_comfy ${HF_HUB}/models--BowenXue--Stand-In
 t2i|8501|yes|/home/admin/DaolVision/inference_server|/home/admin/huyuan-env/bin/python flux_server.py|HYV_HOST=0.0.0.0 HYV_PORT=8501 FLUX_KEEP_RESIDENT=1 HF_HOME=/home/admin/.cache/huggingface HF_HUB_OFFLINE=1|/home/admin/DaolVision/inference_server rw:/home/admin/DaolVision/inference_server/outputs /home/admin/huyuan-env ${HF_HUB}/models--black-forest-labs--FLUX.1-schnell
 kokoro|8503|no|/home/admin/DaolVision|/home/admin/DaolVision/.venv-kokoro/bin/python tts/kokoro/server.py|KOKORO_HOST=0.0.0.0 KOKORO_PORT=8503|/home/admin/DaolVision/tts/kokoro /home/admin/DaolVision/.venv-kokoro ${HF_HUB}/models--onnx-community--Kokoro-82M-v1.0-ONNX-timestamped
 chatterbox|8504|yes|/home/admin/DaolVision|/home/admin/DaolVision/.venv-chatterbox/bin/python tts/chatterbox/server.py|CHATTERBOX_HOST=0.0.0.0 CHATTERBOX_PORT=8504 NUMBA_CACHE_DIR=/tmp|/home/admin/DaolVision/tts/chatterbox /home/admin/DaolVision/.venv-chatterbox /home/admin/.local/share/uv/python ${HF_HUB}/models--ResembleAI--chatterbox
