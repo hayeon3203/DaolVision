@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- 새 모델·새 ComfyUI 그래프·새 의존성 도입 금지 (설계문서 "범위 밖"). 기존 `tools.py` 함수와 `_build_flux_kontext_graph` 직호출만 사용.
+- 새 모델·새 ComfyUI 그래프·새 의존성 도입 금지 (설계문서 "범위 밖"). 영상 생성은 기존 `tools.py` 함수(`generate_ltx_faceid_batch`/`generate_i2v_fallback_clip`)와 `_build_flux_kontext_graph` 직호출만 사용. 단, 단독 T2I(:8501 FLUX)는 프로브 스크립트에서 httpx 직접 호출 허용 — `generate_t2i_anchor` 경유 시 LLM 백엔드 의존(`_ensure_english_prompt`)이 추가돼 프로브 격리성이 깨지고, FLUX 서버는 매 요청 언로드 정책이라 oom 게이팅 실익 없음(Task 1 리뷰 판정, 기존 probe HTTP 직호출 관례와 동일 — `probe_logo_hw_recompose.py`의 ComfyUI 폴링도 직호출).
 - 실행은 전부 `cd /home/admin/DaolVision/langgraph && ./.venv/bin/python ...` 기준.
 - 시작 전 서비스 확인: `curl -sf http://127.0.0.1:8188/system_stats`(ComfyUI), `curl -sf http://127.0.0.1:8501/health`(FLUX). FLUX가 죽어 있으면 `systemctl --user restart flux.service`.
 - job_id는 전 태스크 공통 `probe_bev_ad` — 산출물은 `langgraph/jobs/probe_bev_ad/`(gitignored, 스크립트만 커밋).
