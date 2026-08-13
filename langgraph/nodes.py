@@ -367,6 +367,27 @@ def _subject_type_from_caption(caption: str) -> str | None:
     return None
 
 
+# 2026-08-12 음료 광고 스파이크 실측: 병 제품을 손으로 들어 마시는 동작을 I2V에
+# 시키면 LTX가 와인병/유리병 쪽으로 강하게 드리프트(강도=1.0 최대여도 발생, 스파이크
+# probe_bev_ad_scene3a_v5.py에서 negative prompt로 억제 성공). "지금 이 시나리오"
+# 한정 대응 — 캡션에 bottle이 잡히는 I2V 씬에만 결정적으로 적용, 다른 제품군
+# 일반화는 하지 않는다(요청 범위 밖).
+_BOTTLE_CAPTION_RE = re.compile(r"\bbottle\b", re.I)
+_BOTTLE_DRIFT_NEGATIVE = (
+    tools.LTX13B_DEFAULT_NEGATIVE + ", wine bottle, beer bottle, glass bottle, "
+    "dark green glass, dark bottle, wine, alcohol, champagne, opaque bottle, "
+    "different object, morphing shape"
+)
+
+
+def _negative_prompt_for_i2v_scene(caption: str) -> str | None:
+    """I2V 씬의 ref 캡션에 병이 잡히면 와인병 드리프트 억제용 negative를 채운다.
+    안 잡히면 None(호출부가 tools 기본 negative로 폴백)."""
+    if _BOTTLE_CAPTION_RE.search(caption or ""):
+        return _BOTTLE_DRIFT_NEGATIVE
+    return None
+
+
 # 씬 텍스트(한/영)에서 피사체 종류 판정 — 캡션(gemma) 불필요. M3-6 이전 결정론적 경로 복원.
 # 비인간 명사가 있으면 nonhuman을 우선(마스코트/로봇/제품 씬), 아니면 사람 명사로 human.
 _NONHUMAN_TEXT = re.compile(
@@ -929,6 +950,7 @@ async def node_generate_prompts(state: GraphState) -> dict:
             await tools.call_llm(_scene_prompt_system(standin or subject_ref, bool(wardrobe), has_human_subject),
                                  _scene_prompt_user(scene, bible, wardrobe, cue))), bible)
 
+        negative_prompt = None  # I2V 씬만 채움(984행) — 다른 모드는 이 필드를 안 씀
         if subject_ref:
             mode = "SUBJECT_REF"
             desc = captions.get(img, "")
@@ -955,6 +977,7 @@ async def node_generate_prompts(state: GraphState) -> dict:
             full_prompt = f"{wardrobe_lock}\n{raw_prompt}, {bible}" if wardrobe_lock else f"{raw_prompt}, {bible}"
         elif img and role == "start":        # Stand-In off일 때만 I2V 폴백
             mode = "I2V"
+            negative_prompt = _negative_prompt_for_i2v_scene(captions.get(img, ""))
             full_prompt = f"{raw_prompt}, {bible}"
         elif img:                           # ref이지만 Stand-In off → T2V + 캐릭터록 텍스트
             mode = "T2V"
@@ -974,7 +997,10 @@ async def node_generate_prompts(state: GraphState) -> dict:
         # M3-7: 씬 재조명 큐를 결정적으로 프롬프트 끝에 못박는다 — rewrite LLM이 조명을
         # 약하게 반영해도 어두운 씬은 실제로 저조도 지시가 남는다(참조 밝기 상속 방지).
         full_prompt = f"{full_prompt} Scene lighting and atmosphere: {cue}."
-        updated_scenes.append({**scene, "prompt": full_prompt, "mode": mode, "lighting": cue})
+        updated_scenes.append({
+            **scene, "prompt": full_prompt, "mode": mode, "lighting": cue,
+            "negative_prompt": negative_prompt,
+        })
 
     return {"scenes": updated_scenes, "style_bible": bible,
             "character_sheet": character_sheet, "phase": "prompting"}
