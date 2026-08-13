@@ -20,6 +20,10 @@ class Scene(TypedDict, total=False):
     subject_type: Optional[Literal["human", "nonhuman", "none"]]  # 라우팅 진실원천(캡션 기반 보정)
     setting: str                   # 이 씬의 장소/배경. 추출 누락 시 해당 씬 원문으로 폴백
     prompt: str                    # Phase 2에서 생성된 최종 프롬프트
+    negative_prompt: Optional[str] # I2V 폴백(mode=I2V) 전용 커스텀 negative — 없으면 tools의
+                                    # 기본 negative(worst quality 등) 사용. 제품 identity 보호처럼
+                                    # 씬별로 특정 방향(예: "wine bottle")을 밀어내야 할 때만 채움
+                                    # (2026-08-12 음료 광고 스파이크, 씬3a 와인병 드리프트 대응).
     face_id_ref: Optional[str]     # LTX Face-ID에 별도 첨부할 사람 identity 참조 파일명
     mode: Literal["I2V", "T2V", "STANDIN", "SUBJECT_REF", "LTX_FACEID"]
     clip_path: Optional[str]       # Phase 3 생성 결과

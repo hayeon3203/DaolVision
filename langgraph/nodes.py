@@ -1239,6 +1239,7 @@ async def node_generate_one_clip(payload: dict) -> dict:
                     duration=scene.get("duration", 2.0),
                     seed=payload.get("seed"),
                     force_new=payload.get("force_new", False),
+                    negative_prompt=scene.get("negative_prompt"),
                 )
             else:                            # T2V
                 clip_path = await tools.generate_t2v_clip(

@@ -645,12 +645,20 @@ def _normalize_i2v_input(image_bytes: bytes) -> tuple[bytes, int, int]:
     return out.getvalue(), image.width, image.height
 
 
+LTX13B_DEFAULT_NEGATIVE = "worst quality, blurry, jittery, distorted, low resolution"
+
+
 def _build_ltx13b_graph(
     *, prompt: str, image_name: str, width: int, height: int, seed: int,
+    negative: str = LTX13B_DEFAULT_NEGATIVE,
 ) -> dict:
     """docs/spikes/3.8 산출물(tests/probe_ltx13b_i2v.py)과 동일한 API-format 그래프.
     LTX-2.3 Face-ID 워크플로와 달리 SetNode/GetNode pseudo-node가 없어 UI 변환 없이
-    직접 구성한다. ComfyUI 코어 내장 LTX 노드만 사용, Face-ID LoRA 없음."""
+    직접 구성한다. ComfyUI 코어 내장 LTX 노드만 사용, Face-ID LoRA 없음.
+    negative: 기본값은 화질 전용. 씬별로 특정 오브젝트 드리프트를 밀어내야 하면
+    (예: 2026-08-12 음료 광고 스파이크의 "wine bottle" 드리프트) 호출부가 커스텀
+    negative를 넘긴다 — 기본 화질 negative에 이어붙이지 않고 완전히 교체(호출부가
+    필요하면 직접 이어붙여서 넘긴다)."""
     return {
         "1": {"class_type": "CheckpointLoaderSimple",
               "inputs": {"ckpt_name": LTX13B_CHECKPOINT}},
@@ -658,7 +666,7 @@ def _build_ltx13b_graph(
               "inputs": {"clip_name": LTX13B_CLIP, "type": "ltxv"}},
         "3": {"class_type": "CLIPTextEncode", "inputs": {"text": prompt, "clip": ["2", 0]}},
         "4": {"class_type": "CLIPTextEncode", "inputs": {
-            "text": "worst quality, blurry, jittery, distorted, low resolution",
+            "text": negative,
             "clip": ["2", 0],
         }},
         "5": {"class_type": "LoadImage", "inputs": {"image": image_name}},
@@ -751,11 +759,13 @@ def _t2v_request_key(scene_id: int, prompt: str, duration: float, seed: int | No
 
 def _i2v_fallback_request_key(
     scene_id: int, prompt: str, matched_image: str, duration: float, seed: int | None,
+    negative: str = LTX13B_DEFAULT_NEGATIVE,
 ) -> str:
     return hashlib.sha256(json.dumps({
         "scene_id": scene_id, "prompt": prompt, "matched_image": matched_image,
         "duration": duration, "seed": seed, "steps": LTX13B_STEPS, "fps": LTX13B_FPS,
-        "width": WIDTH, "height": HEIGHT, "workflow": "ltx13b_i2v_fallback_v1",
+        "width": WIDTH, "height": HEIGHT, "negative": negative,
+        "workflow": "ltx13b_i2v_fallback_v1",
     }, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
@@ -908,11 +918,16 @@ async def generate_t2v_clip(
 async def generate_i2v_fallback_clip(
     job_id: str, scene_id: int, prompt: str, matched_image: str,
     duration: float = 2.0, seed: int | None = None, force_new: bool = False,
+    negative_prompt: str | None = None,
 ) -> str:
     """USE_STANDIN=0일 때만 타는 드문 폴백(mode=I2V, 이미지 있음) — Wan call_video가
     맡던 것 중 I2V 절반. 기존 4.6 _build_ltx13b_graph(image-conditioned)를 그대로
-    재사용, 신규 그래프 불필요."""
+    재사용, 신규 그래프 불필요.
+    negative_prompt: None이면 기본 화질 negative(LTX13B_DEFAULT_NEGATIVE). 씬이
+    특정 방향의 identity 드리프트를 밀어내야 하면(2026-08-12 음료 광고 스파이크,
+    씬3a "wine bottle" 드리프트) 호출부(Scene.negative_prompt)가 채워 넘긴다."""
     resolved_seed = seed if seed is not None else int(time.time())
+    negative = negative_prompt if negative_prompt is not None else LTX13B_DEFAULT_NEGATIVE
     async with (
         oom.phase("i2v"),
         httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=60.0, write=60.0, pool=None)) as client,
@@ -930,9 +945,10 @@ async def generate_i2v_fallback_clip(
 
     length = to_ltx_len(duration * LTX13B_FPS)
     graph = _build_ltx13b_graph(
-        prompt=prompt, image_name=image_name, width=WIDTH, height=HEIGHT, seed=resolved_seed)
+        prompt=prompt, image_name=image_name, width=WIDTH, height=HEIGHT,
+        seed=resolved_seed, negative=negative)
     graph["7"]["inputs"]["length"] = length  # 4.6 오네샷은 LTX13B_FRAMES 고정, 여긴 씬 duration 반영
-    request_key = _i2v_fallback_request_key(scene_id, prompt, matched_image, duration, seed)
+    request_key = _i2v_fallback_request_key(scene_id, prompt, matched_image, duration, seed, negative)
     return await _generate_ltx_job_clip(job_id, scene_id, graph, request_key, force_new)
 
 

@@ -75,6 +75,7 @@ def test_new_wrapper_signatures():
     i2v_params = list(inspect.signature(tools.generate_i2v_fallback_clip).parameters)
     assert i2v_params == [
         "job_id", "scene_id", "prompt", "matched_image", "duration", "seed", "force_new",
+        "negative_prompt",
     ], i2v_params
     print("ok: generate_t2v_clip/generate_i2v_fallback_clip 시그니처 확정")
 
