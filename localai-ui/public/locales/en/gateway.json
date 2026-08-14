@@ -41,7 +41,12 @@
     "feedbackLabel": "Revision request",
     "feedbackPlaceholder": "e.g. Make the background brighter, make the person look younger",
     "regenerate": "Request regeneration",
-    "cancel": "Cancel"
+    "cancel": "Cancel",
+    "previousAttempts": "{{count}} earlier attempt(s)",
+    "attemptLabel": "#{{n}}",
+    "attemptCurrent": "#{{n}} (current)",
+    "attemptAlt": "generated image #{{n}}",
+    "approveAppliesToCurrent": "Approving applies to the current (latest) image. To pick an earlier one, ask for a revision in that direction and regenerate."
   },
   "clipPreview": {
     "hint": "{{count}} clip(s) generated — approve them, or pick any low-quality scenes to regenerate.",
@@ -52,9 +57,18 @@
   "t2v": {
     "description": "One line of an idea, turned into a moving scene",
     "facts": {
-      "prompt": { "title": "Text Prompt", "description": "Describe the scene and motion you want in plain language." },
-      "seed": { "title": "Reproducible Seed", "description": "Lock the seed to reproduce the same result under the same conditions." },
-      "clip": { "title": "Single Video Clip", "description": "Cosmos3-Nano renders a ready-to-play video clip." }
+      "prompt": {
+        "title": "Text Prompt",
+        "description": "Describe the scene and motion you want in plain language."
+      },
+      "seed": {
+        "title": "Reproducible Seed",
+        "description": "Lock the seed to reproduce the same result under the same conditions."
+      },
+      "clip": {
+        "title": "Single Video Clip",
+        "description": "Cosmos3-Nano renders a ready-to-play video clip."
+      }
     },
     "inputDescription": "Describe the scene and set the generation options.",
     "outputDescription": "Review your finished video clip.",
@@ -68,9 +82,18 @@
   "t2i": {
     "description": "Turn what you imagine into a single vivid image",
     "facts": {
-      "prompt": { "title": "Freeform Prompt", "description": "Describe your subject, mood, and lighting in plain language." },
-      "resolution": { "title": "Custom Resolution", "description": "Set width and height to match how you'll use the image." },
-      "speed": { "title": "Fast Generation", "description": "Flux.1 Schnell visualizes your idea in seconds." }
+      "prompt": {
+        "title": "Freeform Prompt",
+        "description": "Describe your subject, mood, and lighting in plain language."
+      },
+      "resolution": {
+        "title": "Custom Resolution",
+        "description": "Set width and height to match how you'll use the image."
+      },
+      "speed": {
+        "title": "Fast Generation",
+        "description": "Flux.1 Schnell visualizes your idea in seconds."
+      }
     },
     "inputDescription": "Describe the image and set its size.",
     "outputDescription": "Review your finished image.",
@@ -91,9 +114,18 @@
     },
     "description": "Turn a single portrait into a character in a new style",
     "facts": {
-      "photo": { "title": "Photo or Webcam", "description": "Upload an image or capture one directly with your camera." },
-      "styles": { "title": "6 Styles", "description": "Choose anything from cinematic to watercolor." },
-      "character": { "title": "Character Continuity", "description": "Use the finished image as a consistent character in Agent videos." }
+      "photo": {
+        "title": "Photo or Webcam",
+        "description": "Upload an image or capture one directly with your camera."
+      },
+      "styles": {
+        "title": "6 Styles",
+        "description": "Choose anything from cinematic to watercolor."
+      },
+      "character": {
+        "title": "Character Continuity",
+        "description": "Use the finished image as a consistent character in Agent videos."
+      }
     },
     "inputDescription": "Choose a source photo and a style to apply.",
     "outputDescription": "Review your newly styled character.",
@@ -108,9 +140,18 @@
   "tts": {
     "description": "Natural-sounding speech that captures the character of your voice",
     "facts": {
-      "record": { "title": "Record or Upload", "description": "Record directly, or upload a reference voice you have permission to use." },
-      "text": { "title": "Korean Text", "description": "Type the sentence you want spoken to build your audio." },
-      "clone": { "title": "Voice Cloning", "description": "Chatterbox V3 carries the reference speaker's characteristics into the output." }
+      "record": {
+        "title": "Record or Upload",
+        "description": "Record directly, or upload a reference voice you have permission to use."
+      },
+      "text": {
+        "title": "Korean Text",
+        "description": "Type the sentence you want spoken to build your audio."
+      },
+      "clone": {
+        "title": "Voice Cloning",
+        "description": "Chatterbox V3 carries the reference speaker's characteristics into the output."
+      }
     },
     "inputDescription": "Prepare a reference voice and the sentence to read.",
     "outputDescription": "Listen to and download the generated audio.",
@@ -122,29 +163,48 @@
   },
   "agent": {
     "nodes": {
-      "planning": { "title": "Story Analysis", "description": "Breaks the story down into its flow and key scenes." },
-      "prompting": { "title": "Scene Split", "description": "Divides the story into video-ready scenes." },
-      "anchoring": { "title": "Character Anchor", "description": "Locks the character's look and art style across every scene." },
-      "generating": { "title": "Video Generation", "description": "Renders each scene into a moving video clip." },
-      "done": { "title": "Final Composite", "description": "Combines the clips and narration into one finished video." }
+      "planning": {
+        "title": "Story Analysis",
+        "description": "Breaks the story down into its flow and key scenes."
+      },
+      "prompting": {
+        "title": "Scene Split",
+        "description": "Divides the story into video-ready scenes."
+      },
+      "anchoring": {
+        "title": "Character Anchor",
+        "description": "Locks the character's look and art style across every scene."
+      },
+      "generating": {
+        "title": "Video Generation",
+        "description": "Renders each scene into a moving video clip."
+      },
+      "done": {
+        "title": "Final Composite",
+        "description": "Combines the clips and narration into one finished video."
+      }
     },
     "nodesAriaLabel": "Agent workflow nodes",
-    "nodeStatus": { "done": "Done", "active": "In Progress", "waiting": "Waiting" },
+    "nodeStatus": {
+      "done": "Done",
+      "active": "In Progress",
+      "waiting": "Waiting"
+    },
     "taglineStory": "Story",
     "taglineSplit": "Scene Split",
     "taglineVideo": "Consistent-Character Video",
-    "processHeading": "Enter your story and character details.",
+    "processHeading": "Describe the person to generate and attach the product to advertise.",
     "resultHeading": "Watch scenes generate and view the finished video.",
-    "modeUpload": "Attach Photos",
-    "modeDescribe": "Generate from Description",
+    "modeDescribe": "Generate Person + Attach Product",
     "modeNoref": "Script Only",
     "storyLabel": "Story",
     "storyPlaceholder": "An astronaut launches aboard a rocket from a sunset launch pad...",
-    "refImagesLabel": "Character Reference Images (e.g. an astronaut made in Image to Image)",
     "refImagesAttached": "{{count}} file(s) attached",
-    "imageDescriptionLabel": "Image Description",
-    "imageDescriptionPlaceholder": "An astronaut in a spacesuit standing before a sunset launch pad, cinematic...",
-    "imageDescriptionHint": "Generates a character image from your description alone, with no reference photo (T2I, FLUX.1 Schnell). Once approved, you'll continue by writing the script around that image.",
+    "personLabel": "Person to Generate",
+    "personPlaceholder": "A Korean man in his 20s, short black hair, white short-sleeve t-shirt, facing the camera, photorealistic",
+    "personHint": "Generates a portrait from your description (T2I, FLUX.1 Schnell). The more you specify about looks, clothing and age, the more consistent the person stays across scenes. You write the script after approving it.",
+    "productLabel": "Product Photo (transparent PNG)",
+    "productHint": "Attach the product you want to advertise. It must be a cutout with a transparent background — a photo on white gets composited with the white box.",
     "norefHint": "Creates a video from the script alone, with no reference image. If a person appears, their look is kept consistent across scenes automatically.",
     "starting": "Starting…",
     "start": "Start",
