@@ -10016,38 +10016,3 @@ button.collapsible-header:focus-visible {
   .variant-row__info,
   .variant-row__action { transition: none; }
 }
-
-/* 참조 이미지 첨부 미리보기 + 생성 이미지 시도 비교 스트립.
-   가로 스크롤로 두는 이유: 시도가 늘어나도 패널 폭이 밀리지 않게 하기 위함. */
-.agent-attempt-strip {
-  display: flex;
-  gap: 0.5rem;
-  overflow-x: auto;
-  padding: 0.25rem 0;
-}
-.agent-attempt {
-  margin: 0;
-  flex: 0 0 auto;
-  width: 96px;
-  text-align: center;
-}
-.agent-attempt img {
-  width: 96px;
-  height: 64px;
-  object-fit: cover;
-  border-radius: 6px;
-  border: 1px solid var(--border-color, rgba(128, 128, 128, 0.35));
-  display: block;
-}
-.agent-attempt figcaption {
-  font-size: 0.7rem;
-  opacity: 0.75;
-  margin-top: 0.2rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.agent-attempt.is-current img {
-  border-color: var(--accent-color, #4c8bf5);
-  border-width: 2px;
-}

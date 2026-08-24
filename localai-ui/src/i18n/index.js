@@ -6,6 +6,11 @@ import { apiUrl } from '../utils/basePath'
 
 export const SUPPORTED_LANGUAGES = [
   { code: 'en', name: 'English', flag: 'EN' },
+  { code: 'it', name: 'Italiano', flag: 'IT' },
+  { code: 'es', name: 'Español', flag: 'ES' },
+  { code: 'de', name: 'Deutsch', flag: 'DE' },
+  { code: 'zh-CN', name: '简体中文', flag: 'ZH' },
+  { code: 'id', name: 'Bahasa Indonesia', flag: 'ID' },
   { code: 'ko', name: '한국어', flag: 'KO' },
 ]
 

@@ -28,3 +28,15 @@ localai-ui/coverage/
 
 # start_studio.sh 가 서비스별로 생성하는 landlock 정책 (런타임 산출물)
 docker/policies/
+
+# 빌드/런타임 산출물 (localai-ui/dist/ 와 같은 성격 — 소스 아님)
+localai-ui/dist-preview/
+localai-ui/test-results/
+*.log
+
+# Claude Code 런타임 상태 (settings.json 은 권한 허용목록이라 추적함)
+.claude/scheduled_tasks.lock
+.claude/state/
+
+# 개인 인물 사진 (git 히스토리에 넣지 않음)
+건호군.jpg

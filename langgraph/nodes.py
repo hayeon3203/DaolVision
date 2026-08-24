@@ -7,6 +7,7 @@ Phase 1~5 노드 구현
 import asyncio
 import hashlib
 import json
+import os
 import re
 import shutil
 import time
@@ -61,6 +62,53 @@ _IMG_QUERY_SYSTEM = (
 )
 
 
+# 인물/제품 전용 규칙 — 이 파이프라인에서 생성 이미지의 용도는 사실상 둘뿐이고, 둘 다
+# 위의 범용(와이드샷 강조) 규칙과 정면으로 충돌한다.
+#
+# 실측(2026-08-13 E2E job f11798c7): "20대 한국인 남자, 짧은 검은 머리, 흰 반팔 티셔츠,
+# 정면 얼굴" 요청에 범용 규칙이 걸려 "standing small within the frame several meters
+# from camera ... vast dim space stretching far into the background"가 나왔다. 캡션이
+# "dark indoor corridor"였고 얼굴은 Face-ID 참조로 못 쓸 크기였다. "흰 반팔 티셔츠"가
+# 상반신을 암시해 "tight close-up이 아니다"로 분류되고, 그 다음 _strip_face_emphasis_if_wide가
+# 설계대로 "정면 얼굴" 요구를 지운 결과다.
+#
+# 두 프롬프트는 음료 광고 스파이크에서 실제로 쓸 만한 자산을 만들어낸 문구를 옮긴 것이다
+# (tests/probe_bev_ad_assets.py PERSON_PROMPT, assets_v2.py BOTTLE_PROMPT).
+_IMG_QUERY_PERSON_SYSTEM = (
+    "You rewrite a user's free-form request for an image of a PERSON (any language) into a "
+    "single prompt for a text-to-image generator (FLUX.1-schnell). The resulting image is used "
+    "as a face identity reference for video generation, so it must be a portrait: head and "
+    "shoulders, the face large and sharp in the frame, subject facing the camera directly, "
+    "neutral friendly expression, plain uncluttered background, natural soft even lighting, "
+    "photorealistic. Keep every appearance detail the user gave (age, gender, hair, clothing). "
+    # 2026-08-13 실측: "흰 반팔 티셔츠"(short-sleeve)를 "white sleeveless T-shirt"로 뒤집어
+    # 번역했다. 소매 길이는 이후 전 씬의 의상 일관성 기준이 되므로 한 번 틀리면 광고
+    # 전체가 어긋난다. 대표적인 오역 쌍을 직접 못박는다.
+    "Translate garment terms literally and exactly: Korean 반팔 means short-sleeve (it does "
+    "NOT mean sleeveless), 긴팔 means long-sleeve, 민소매/나시 means sleeveless. Keep the "
+    "sleeve length the user asked for. "
+    "Never place the subject far from the camera, never describe a full-body or wide shot, and "
+    "never describe an elaborate environment — those shrink the face until it is useless as an "
+    "identity reference. Write ONE well-formed, properly punctuated sentence. "
+    "Output a JSON array with exactly one object: [{\"query\": \"<prompt>\"}]. "
+    "Output only the JSON array — no preamble, quotes, or markdown."
+)
+_IMG_QUERY_PRODUCT_SYSTEM = (
+    "You rewrite a user's free-form request for an image of an OBJECT or PRODUCT (any language) "
+    "into a single prompt for a text-to-image generator (FLUX.1-schnell). The resulting image is "
+    "cut out and composited into video frames, so it must be a studio product photograph: one "
+    "single object, standing upright, centered, filling most of the frame, on a pure white "
+    "seamless background, flat even omnidirectional studio lighting with no strong directional "
+    "key light and no heavy highlight or shadow favouring either side, photorealistic. "
+    "Keep every design detail the user gave (colors, shape, label, material). Invent a brand name "
+    "and mark if the user asks for one, but never reproduce a real-world brand name or logo. "
+    "Never describe a scene, an environment, hands holding the object, or people. "
+    "Write ONE well-formed, properly punctuated sentence. "
+    "Output a JSON array with exactly one object: [{\"query\": \"<prompt>\"}]. "
+    "Output only the JSON array — no preamble, quotes, or markdown."
+)
+
+
 _WIDE_SHOT_SIGNAL = re.compile(
     r"\b(full[- ]body|head[- ]to[- ](boots|toe|feet)|wide[- ]angle|wide shot|establishing shot)\b",
     re.I,
@@ -85,6 +133,33 @@ def _strip_face_emphasis_if_wide(text: str) -> str:
     return text
 
 
+# 생성 이미지 프롬프트에서 의상 구절만 뽑는다. 비전 캡션은 소매 길이 같은 세부를
+# 흘린다("white sleeveless T-shirt" → 캡션은 "wearing a white t-shirt") — 그 캡션만
+# 조립 배경에 넘기면 씬마다 소매가 제각각이 된다(2026-08-13 사용자 지적).
+_WEARING_RE = re.compile(r"\bwearing\s+([^,.;]+)", re.I)
+
+
+def _wardrobe_from_query(image_query: str) -> str:
+    match = _WEARING_RE.search(image_query or "")
+    return match.group(1).strip() if match else ""
+
+
+def _image_query_system(request: str) -> tuple[str, bool]:
+    """요청 텍스트로 생성 이미지의 역할을 가려 규칙을 고른다(LLM 호출 없음).
+    반환: (system 프롬프트, 와이드샷 얼굴강조 제거를 적용할지).
+
+    비인간을 먼저 본다 — _subject_type_from_text와 같은 우선순위다. "마스코트 캐릭터"
+    처럼 사람 단어가 섞여도 제품/캐릭터 규칙이 이겨야 한다.
+    """
+    text = request or ""
+    if _NONHUMAN_TEXT.search(text) or _PRODUCT_TEXT.search(text):
+        return _IMG_QUERY_PRODUCT_SYSTEM, False
+    if _HUMAN_TEXT.search(text):
+        return _IMG_QUERY_PERSON_SYSTEM, False
+    # 둘 다 아니면 기존 범용 규칙 — 와이드샷 강조와 얼굴강조 제거가 여기서만 유효하다.
+    return _IMG_QUERY_SYSTEM, True
+
+
 async def node_rewrite_image_query(state: GraphState) -> dict:
     """M2-1: 사용자 자연어 이미지 요청 → 이미지 생성용 영어 프롬프트 1개.
     node_generate_prompts와 동일한 call_llm + clean_llm_prompt 패턴 재사용.
@@ -95,7 +170,8 @@ async def node_rewrite_image_query(state: GraphState) -> dict:
     request = (state.get("image_request") or "").strip()
     if not request:
         return {"image_queries": [], "image_query": ""}
-    raw = await tools.call_llm(_IMG_QUERY_SYSTEM, request)
+    system_prompt, strip_face_emphasis = _image_query_system(request)
+    raw = await tools.call_llm(system_prompt, request)
     try:
         items = tools.parse_json_lenient(raw)
     except ValueError:
@@ -106,7 +182,10 @@ async def node_rewrite_image_query(state: GraphState) -> dict:
     for item in items if isinstance(items, list) else []:
         q = item.get("query") if isinstance(item, dict) else item if isinstance(item, str) else None
         q = tools.clean_llm_prompt(q or "")
-        q = _strip_face_emphasis_if_wide(q)
+        if strip_face_emphasis:
+            # 인물 규칙에서는 절대 적용하면 안 된다 — 얼굴 강조를 지우는 게 목적인 함수라
+            # Face-ID 참조로 쓸 포트레이트에서 정확히 필요한 문구를 없앤다.
+            q = _strip_face_emphasis_if_wide(q)
         if q:
             queries.append(q)
     queries = queries[:1]
@@ -114,7 +193,10 @@ async def node_rewrite_image_query(state: GraphState) -> dict:
         raise ValueError("이미지 생성 요청을 이해하지 못했습니다. 표현을 조금 바꿔서 다시 시도해주세요.")
     # M2 전용 phase — 기존 5단계 스테퍼(planning/prompting/anchoring/generating/done)
     # 앞에 오는 별도 단계라 AgentPhaseStepper가 image_gen_used일 때만 조건부로 그린다.
-    return {"image_queries": queries, "image_query": queries[0] if queries else "", "phase": "image_generating"}
+    return {"image_queries": queries, "image_query": queries[0] if queries else "",
+            # 제품 규칙이 선택됐다 = 이 생성 이미지는 제품이다. 라우팅이 이걸 쓴다.
+            "generated_ref_is_product": system_prompt is _IMG_QUERY_PRODUCT_SYSTEM,
+            "phase": "image_generating"}
 
 
 async def node_generate_image(state: GraphState) -> dict:
@@ -128,12 +210,17 @@ async def node_generate_image(state: GraphState) -> dict:
         return {"gen_image_paths": [], "gen_image_path": ""}
     job_id = state["job_id"]
     seed = int(hashlib.sha1(job_id.encode()).hexdigest()[:8], 16) % (2 ** 31)
+    # index를 시도 횟수로 쓴다 — 0 고정이면 재생성이 gen_img_0.png를 덮어써서 이전
+    # 시도가 사라지고, 승인 게이트에서 "1차와 2차를 비교"할 수가 없다.
+    history = list(state.get("gen_image_history") or [])
+    attempt = len(history)
     paths = await asyncio.gather(*[
-        tools.generate_t2i_image(job_id, q, seed=seed, index=i)
+        tools.generate_t2i_image(job_id, q, seed=seed, index=attempt + i)
         for i, q in enumerate(queries)
     ])
     paths = list(paths)
-    return {"gen_image_paths": paths, "gen_image_path": paths[0], "phase": "image_generating"}
+    return {"gen_image_paths": paths, "gen_image_path": paths[0],
+            "gen_image_history": history + paths, "phase": "image_generating"}
 
 
 def node_checkpoint_image_approval(state: GraphState) -> Command:
@@ -149,16 +236,25 @@ def node_checkpoint_image_approval(state: GraphState) -> Command:
         "gen_image_path": paths[0] if paths else None,
         "image_queries": queries,
         "image_query": queries[0] if queries else None,
+        # 이전 시도까지 함께 넘겨 프론트가 1차/2차를 나란히 비교하게 한다.
+        "gen_image_history": state.get("gen_image_history") or paths,
     })
     # decision 예시: {"approved": True} / {"feedback": "더 파랗게"}
     if decision.get("approved"):
         # 승인 이미지들을 참조 이미지로 주입 → 기존 caption_image·스마트 라우팅이 그대로 받음.
         # ref_captions에 생성 시 쓴 프롬프트를 그대로 채워 넣어 — 별도 vision 캡션 호출 없이 —
         # node_split_scenes가 어떤 이미지가 어떤 씬에 어울리는지 내용 기반으로 매칭하게 한다.
+        #
+        # 2026-08-13(6.22): 기존 ref_images를 덮어쓰지 않고 **병합**한다. 사용자가
+        # 제품 사진을 첨부하고 얼굴만 생성하는 조합에서, 덮어쓰면 첨부한 제품이 조용히
+        # 사라져 단일 참조 job으로 퇴화했다. 파일명도 `img_{i}.png`에서 `gen_{i}.png`로
+        # 바꾼다 — 업로드분을 api._save_ref_images가 같은 `img_{i}.png`로 저장하므로
+        # 그대로 두면 디스크에서 제품 파일을 덮어쓴다.
         job_id = state["job_id"]
-        ref_names, ref_captions = [], {}
+        ref_names = list(state.get("ref_images") or [])
+        ref_captions = dict(state.get("ref_captions") or {})
         for i, p in enumerate(paths):
-            name = f"img_{i}.png"
+            name = f"gen_{i}.png"
             shutil.copyfile(p, str(tools.refs_dir(job_id) / name))
             ref_names.append(name)
             if i < len(queries):
@@ -208,9 +304,12 @@ def extract_wardrobe_locks(script_text: str, ref_images: list[str]) -> dict[str,
     valid, current_ref, locks = set(ref_images), None, {}
     for raw_line in script_text.splitlines():
         line = raw_line.strip()
-        mentions = re.findall(r"img[_\s]?(\d+)(?:\.[a-z0-9]+)?", line, re.I)
+        # 업로드분은 img_N(api._save_ref_images), 생성분은 gen_N
+        # (node_checkpoint_image_approval, 6.22) — 둘 다 이름으로 지목할 수 있어야 한다.
+        mentions = re.findall(r"\b(img|gen)[_\s]?(\d+)(?:\.[a-z0-9]+)?", line, re.I)
         if mentions:
-            candidate = f"img_{int(mentions[-1])}.png"
+            prefix, number = mentions[-1]
+            candidate = f"{prefix.lower()}_{int(number)}.png"
             if candidate in valid:
                 current_ref = candidate
         match = re.search(
@@ -238,8 +337,15 @@ async def node_parse_input(state: GraphState) -> dict:
         for fn in refs:
             try:
                 captions[fn] = await tools.caption_image(str(tools.refs_dir(state["job_id"]) / fn))
-            except Exception:
+            except Exception as exc:
                 captions[fn] = ""   # 캡션 실패해도 파일명 기반으로 계속 진행
+                # 조용히 삼키면 안 된다 — 캡션이 비는 순간 node_split_scenes의 결정론
+                # 배정(인물 1장 + 제품 1장)이 통째로 탈락하고 LLM 매칭으로 강등돼
+                # 전 씬에서 face_id_ref가 사라진다(2026-08-13 job f7c7b356 실측:
+                # 5씬 전부 얼굴 참조 없이 제품 사진이 인물 씬 참조로 붙었다).
+                # 로그가 없으면 결과물을 눈으로 보기 전까지 알 방법이 없다.
+                print(f"[caption] {fn} 캡션 실패({type(exc).__name__}: {exc}) — "
+                      f"씬↔참조 결정론 배정이 꺼진다")
         out["ref_captions"] = captions
     return out
 
@@ -247,6 +353,23 @@ async def node_parse_input(state: GraphState) -> dict:
 # mood는 트랜지션 규칙(node_edit_concat: calm/sad → crossfade)과 영어로 비교된다.
 # LLM이 중국어/한국어 mood를 뱉으면 규칙이 영원히 미발동 → 영어 enum으로 강제 + 가드.
 MOODS = ("calm", "sad", "neutral", "happy", "tense", "excited", "surprised")
+
+# ── 1단계 결정론 상수 (2026-08-13) ────────────────────────────────────────
+# 스파이크가 확정한 그림은 프롬프트·시드·길이·조명이 전부 상수였기 때문에 나온 것이다.
+# 프로덕션은 이것들을 LLM/job_id에 넘겨서 매번 다른 결과를 냈다. 스파이크 값을 기본으로
+# 되돌린다(환경변수로 실험 가능).
+#
+# duration: LLM이 2~3초 사이를 씬마다 다르게 정했다. 2.0초는 49프레임(24fps)이라 인물이
+# 이동할 시간 자체가 부족해 "슬로우모션"으로 보인다(job e9059c29 씬2·4 실측).
+# 스파이크는 전 씬 3.0초(73프레임)였다.
+SCENE_DURATION_SECONDS = float(os.environ.get("AGENT_SCENE_DURATION", "3.0"))
+
+# 조명: 기존엔 mood에서 파생돼 씬마다 톤이 튀었다(excited→high-key/deep shadows,
+# happy→cool cast, neutral→dusk). 한 광고의 조명은 하나여야 한다. 빈 문자열로 두면
+# 기존 mood 파생 경로를 그대로 쓴다.
+SCENE_LIGHTING_LOCK = os.environ.get(
+    "AGENT_SCENE_LIGHTING",
+    "warm golden late-afternoon backlight, bright clear exposure, soft long shadows")
 
 # M3-7 재조명 폴백: LLM 씬별 조명 큐 생성 실패/누락 시 mood만으로 구체적 조명 언어를 준다.
 # 핵심 목적 — 어두운 mood(sad/tense)는 참조 이미지 밝기를 상속하지 않고 실제로 저조도로 간다.
@@ -314,7 +437,17 @@ def _split_scene_text_safely(text: str) -> tuple:
     return text, text
 
 
-def _normalise_scene_count(items: list, target: int = 4) -> list:
+# 씬 개수. 4가 기본이지만 광고 마무리 히어로컷(제품 단독)을 붙이려면 5가 필요하다.
+# LLM 프롬프트·교정 재요청·정규화가 전부 이 값을 공유해야 한다 — 한 곳만 바꾸면
+# "정확히 4개로 나눠라"를 받은 LLM 출력이 정규화 단계에서 억지로 쪼개지거나 합쳐진다.
+SCENE_COUNT = int(os.environ.get("AGENT_SCENE_COUNT", "4"))
+
+# 한 job에서 LTX 2.3 22B Face-ID를 태울 수 있는 씬 수 상한. 2개부터 GGUF 재양자화
+# 정체가 난다(node_classify_faceid_scenes 주석). 22B가 여유로운 장비로 옮기면 올린다.
+FACEID_MAX_SCENES = int(os.environ.get("AGENT_FACEID_MAX_SCENES", "1"))
+
+
+def _normalise_scene_count(items: list, target: int = SCENE_COUNT) -> list:
     """LLM의 3/5씬 변동을 원문 순서를 유지한 채 목표 개수로 정규화한다."""
     scenes = [dict(item) for item in items if isinstance(item, dict) and item.get("text")]
     while len(scenes) > target:
@@ -348,6 +481,9 @@ def _normalise_scene_count(items: list, target: int = 4) -> list:
 _NONHUMAN_HINTS = re.compile(
     r"\b(mascot|robot|android|product|logo|animal|creature|monster|toy|plush|doll|figurine|"
     r"cartoon|cartoonish|emoji|blob|gadget|device|bottle|package|parcel|box|carton|"
+    # lamp/light: 조명 제품 광고. 없으면 캡션이 nonhuman으로 안 잡혀 단일참조 job이
+    # 전 씬 human으로 굳고 마무리 히어로컷에 사람이 그려진다.
+    r"lamp|lantern|luminaire|"
     r"food|snack|fruit|plant|flower|vehicle|car|truck|drone|cat|dog|bird|fish|dragon|"
     r"hardware|appliance|accelerator|processor|electronics|computing)\b|"
     r"(animated|cartoon|stylized|cute|character)\s+character|character\s+illustration", re.I)
@@ -399,6 +535,75 @@ _HUMAN_TEXT = re.compile(
     r"\b(woman|man|person|people|boy|girl|worker|human|lady|male|female)\b", re.I)
 
 
+# 씬 텍스트에 제품이 등장하는지 — 인물 참조와 제품 참조가 함께 있는 job에서 어느 씬이
+# 제품 조립 경로를 타야 하는지 결정론적으로 가른다. LLM의 씬↔이미지 매칭은 신뢰하지
+# 않는다(2026-08-13 E2E job f11798c7 실측: 4씬 중 2씬을 틀리게 매칭 — "고개를 들고
+# 들이켰다" 씬에 제품 사진을 사람 얼굴 참조(role=ref)로 붙여 Face-ID에 병 사진이
+# 들어갈 뻔했다. 6.17에서 단일 참조에 내린 결론 — "씬↔참조 매칭을 LLM이 판단하는
+# 구조 자체가 문제" — 가 2참조에서도 그대로 재현됨).
+# _NONHUMAN_TEXT와 분리한 이유: 그쪽은 "이 씬의 주인공이 비인간인가"를 묻는 반면
+# 여기는 "인물이 다루는 소품으로 제품이 등장하는가"라 주인공 판정과 독립이다.
+# `water`가 목록에 있는 이유: 4B가 "음료수"를 "cool water"로 번역해 뱉는 게 실측돼 있고
+# (job 911ebd9c), 그때 bottle/drink 어느 것도 안 걸린다. 광고 시나리오 문맥에서 water는
+# 사실상 항상 제품이라 오탐보다 미탐 비용이 크다.
+_PRODUCT_TEXT = re.compile(
+    r"음료수|음료|드링크|생수|물병|페트|패트|병|캔|제품|상품|무드등|무드 ?램프|램프|"
+    r"\b(bottle|drink|beverage|can|product|soda|juice|water|lamp|lamps)\b", re.I)
+
+
+# 인물이 제품을 **손에 쥐는** 씬인지 — 조립 경로에서 배경 전략과 배치 비율이 갈린다.
+# 쥐는 씬은 배경에 빈 그립 손을 미리 그려야 하고(안 그리면 LTX가 손과 제품을 같이
+# 발명하며 라벨이 날아간다, clip13/16 실측), 제품이 가슴 높이에 크게 놓인다.
+# 놓인 씬은 벤치·바닥 전경에 작게 놓이고 인물은 배경에 멀리 있다.
+_HAND_ACTION_TEXT = re.compile(
+    r"집어|집는|들어\s*올|들고|쥐고|쥔|마시|들이켜|들이키|한\s*모금|입에\s*대|"
+    r"\b(pick(s|ing)?\s*up|grab(s|bing)?|hold(s|ing)?|drink(s|ing)?|sip(s|ping)?|"
+    r"raise(s|d)?\s+the|lifts?)\b", re.I)
+
+
+# 인물 참조가 없는 job("시나리오만" 모드)에서 씬마다 뽑는 인물 정본 포트레이트.
+#
+# 의상 지시 두 개는 미관이 아니라 **locate_grip 때문**이다. 그립 검출은 인물 마스크 안의
+# 살색을 연결요소로 쪼개 "얼굴과 분리된 덩어리 = 팔·손"으로 보는데, 노출이 늘어날수록
+# 그 가정이 깨진다(2026-08-14 probe_person_ref 씬1 연속 실측):
+#   - V넥/가슴 노출 → 얼굴·목·가슴이 한 덩어리 → 얼굴 bbox가 파편으로 잡힘
+#   - 민소매 → 팔·어깨가 한 덩어리 → "팔 상단 40% = 손"이 어깨까지 먹어 병이 주먹 옆에 뜸
+# 긴팔 + 하이 크루넥이면 드러난 살색이 **얼굴과 손뿐**이라 그 가정이 그대로 성립한다.
+# 포즈 검출기(SDPoseKeypointExtractor 등)로 바꾸는 게 정공법이지만 MODEL+VAE를 더 올려야
+# 해서 이 머신의 메모리 여유가 없다(docs/spikes/2026-08-14-product-only-various-people.md §2.6).
+PERSON_REF_PORTRAIT_PROMPT = (
+    "A photorealistic head-and-shoulders portrait photograph of {description}, "
+    "facing the camera, calm neutral expression, plain uncluttered background, "
+    "soft even lighting, sharp focus. They wear a plain high crew-neck long-sleeve "
+    "top that fully covers the chest, shoulders and both arms down to the wrists, "
+    "no V-neck, no exposed chest, no bare shoulders, no bare forearms"
+)
+
+
+def _person_on_screen_flags(scenes: list[Scene]) -> list[bool]:
+    """씬별 "사람이 화면에 있는가". 인물 참조가 붙은 job과 제품만 첨부한 job이 공유한다.
+
+    인물 명사만 보면 안 된다 — 한국어는 주어를 생략한다("벤치 앞에 멈춰 음료수를 집어
+    든다"에는 사람 단어가 하나도 없다). 손동작 신호를 같이 보면 그런 문장도 인물 씬으로
+    잡히고, 실제 히어로컷 문장("제품이 벤치 위에 놓여 빛난다")은 둘 다 없어 구분된다.
+
+    신호가 아예 없으면 **직전 씬에서 물려받는다**(forward-fill). 동사 목록을 늘리는 건
+    한국어에서 끝이 없고, 광고 한 편에서 주인공은 중간에 사라지지 않는다. 다만 제품이
+    문장의 주인공인 씬(제품 명사만 있고 인물 신호가 전혀 없음)은 상속을 끊어 히어로컷으로
+    인정한다 — 안 그러면 마무리 히어로컷에 사람이 그려진다.
+    """
+    flags, carried = [], False
+    for sc in scenes:
+        text = sc.get("text") or ""
+        explicit = bool(_HUMAN_TEXT.search(text) or _HAND_ACTION_TEXT.search(text))
+        if explicit:
+            carried = True
+        elif _PRODUCT_TEXT.search(text):     # 제품만 있는 씬 = 히어로컷 → 상속 끊음
+            carried = False
+        flags.append(explicit or carried)
+    return flags
+
+
 def _subject_type_from_text(text: str) -> str | None:
     """씬 텍스트 키워드로 human/nonhuman 판정. 애매하면 None."""
     t = text or ""
@@ -422,6 +627,15 @@ def _normalise_image_role(matched: str | None, role: str | None,
     if subject_type == "nonhuman":
         return "character_ref"
     if subject_type == "human":
+        # 이미 character_ref면 뒤집지 않는다. 인물+제품 광고에서 제품 씬은
+        # subject_type=human(주인공은 사람) + role=character_ref(참조는 제품)라는
+        # 조합을 쓴다(6.23 결정론 배정). 여기서 role을 ref로 되돌리면
+        # node_classify_faceid_scenes가 **제품 사진을 얼굴 참조로** 잡아 Face-ID가
+        # 무작위 인물을 그린다 — 2026-08-13 UI E2E job 1a0d85b1에서 실제로 발생했다
+        # (씬2·3이 양복 입은 다른 사람으로 나옴). 승인 게이트를 통과할 때만 재정규화가
+        # 돌아서 split 단독 테스트로는 안 잡혔다.
+        if role == "character_ref":
+            return role
         return role if role in ("start", "ref") else "ref"
     return role if role in ("start", "ref", "character_ref") else None
 
@@ -455,8 +669,8 @@ async def node_split_scenes(state: GraphState) -> dict:
     ref_info = [{"file": fn, "shows": captions.get(fn, "")} for fn in (state.get("ref_images") or [])]
 
     system_prompt = (
-        "너는 애니메이션 스토리보드 작가다. 주어진 시나리오를 정확히 4개 씬으로 분할하라. "
-        "반드시 4개의 객체만 반환하고, 시나리오의 시작부터 끝까지 시간 순서대로 고르게 배분하라. "
+        f"너는 애니메이션 스토리보드 작가다. 주어진 시나리오를 정확히 {SCENE_COUNT}개 씬으로 분할하라. "
+        f"반드시 {SCENE_COUNT}개의 객체만 반환하고, 시나리오의 시작부터 끝까지 시간 순서대로 고르게 배분하라. "
         "text는 반드시 입력 시나리오와 '같은 언어'로 써라 — 다른 언어(특히 중국어/영어)로 "
         "번역하지 마라. 시나리오 문장을 임의로 요약·창작하지 말고 원문의 내용과 순서를 보존하라. "
         "한 문장(주어+목적어+동사)을 문법 단위 중간에서 두 씬으로 쪼개지 마라. "
@@ -469,8 +683,8 @@ async def node_split_scenes(state: GraphState) -> dict:
         "무슨 장면인지 알 수 없다). 좋은 예: 씬 text='학생이 책을 책상에 내려놓는다.' "
         "그대로 한 씬에 담고, 부족한 씬 개수는 다른 씬에서 다른 각도·디테일로 채운다. "
         "각 씬의 text는 그 자체로 '누가/무엇이 무엇을 하는지' 완결되게 읽혀야 한다. 문장 수가 "
-        "4개보다 적으면 한 문장을 다른 각도·디테일로 확장해 채우고, 많으면 의미가 이어지는 "
-        "문장끼리 묶어서 4개로 만들어라 — 절대 문장을 반으로 자르지 마라. "
+        f"{SCENE_COUNT}개보다 적으면 한 문장을 다른 각도·디테일로 확장해 채우고, 많으면 의미가 이어지는 "
+        f"문장끼리 묶어서 {SCENE_COUNT}개로 만들어라 — 절대 문장을 반으로 자르지 마라. "
         "각 씬은 다음 키를 가진 객체다: text(씬 설명, 입력과 동일 언어), "
         "duration(초, 숫자, 2~3 사이 — 3초를 넘기지 마라, 긴 장면은 여러 씬으로 쪼개라), "
         f"mood(반드시 다음 영어 단어 중 하나: {', '.join(MOODS)}), "
@@ -506,12 +720,14 @@ async def node_split_scenes(state: GraphState) -> dict:
     # 잘못된 결과를 그대로 승인 게이트에 보내지 말고, 결과를 보존한 교정 요청을 한 번 수행한다.
     # 개수 오류·JSON 파싱 실패뿐 아니라 문장 중간 절단(목적어/동사 분리)도 같은 경로를 탄다.
     fractured = isinstance(scenes_raw, list) and _scenes_look_fractured(scenes_raw, state["script_text"])
-    if scenes_raw is None or not isinstance(scenes_raw, list) or len(scenes_raw) != 4 or fractured:
+    if (scenes_raw is None or not isinstance(scenes_raw, list)
+            or len(scenes_raw) != SCENE_COUNT or fractured):
         if scenes_raw is None:
             instruction = (
                 "이전 응답은 문법이 깨진 JSON이었다(배열이나 객체의 괄호가 안 맞았다). "
                 "같은 내용을 반복해서 출력하지 말고, 배열은 반드시 '['로 열어 ']'로 정확히 "
-                "닫고 각 객체도 '{'...'}' 한 쌍으로 정확히 닫아라. 정확히 4개 씬으로 나누고 "
+                "닫고 각 객체도 '{'...'}' 한 쌍으로 정확히 닫아라. 정확히 "
+                f"{SCENE_COUNT}개 씬으로 나누고 "
                 "JSON 배열 외에는 아무것도 출력하지 마라."
             )
         elif fractured:
@@ -519,13 +735,15 @@ async def node_split_scenes(state: GraphState) -> dict:
                 "이전 결과는 원문의 한 문장(주어+목적어+동사)을 씬 경계에서 중간에 잘랐다 "
                 "— 예: '학생이 책을' / '책상에 내려놓는다'처럼 목적어와 동사가 다른 씬으로 "
                 "분리됐다. 문장을 자르지 말고 각 씬 text가 완결된 문장(또는 완결된 절)이 "
-                "되도록 다시 나눠라. 내용과 시간 순서는 보존하되, 문장 수가 4개보다 적으면 "
+                "되도록 다시 나눠라. 내용과 시간 순서는 보존하되, 문장 수가 "
+                f"{SCENE_COUNT}개보다 적으면 "
                 "같은 문장을 다른 각도·디테일로 확장해 채워라. JSON 배열 외에는 아무것도 "
                 "출력하지 마라."
             )
         else:
             instruction = (
-                "이전 결과의 내용과 시간 순서를 보존하면서 정확히 4개 씬으로 다시 나눠라. "
+                "이전 결과의 내용과 시간 순서를 보존하면서 정확히 "
+                f"{SCENE_COUNT}개 씬으로 다시 나눠라. "
                 "JSON 배열 외에는 아무것도 출력하지 마라."
             )
         correction_prompt = json.dumps({
@@ -586,16 +804,14 @@ async def node_split_scenes(state: GraphState) -> dict:
         if subject_type in ("human", "nonhuman"):
             carried_subject_type = subject_type
         role = _normalise_image_role(matched, s.get("image_role"), subject_type)
-        # duration clamp: 스텝시간이 프레임 수에 초선형이라 긴 씬이 속도를 지배한다.
-        # LLM 출력만 제한하고, 사람이 1-4 게이트에서 고친 값은 그대로 존중한다.
-        try:
-            dur = float(s.get("duration") or 3.0)
-        except (TypeError, ValueError):
-            dur = 3.0
+        # duration은 LLM 값을 쓰지 않고 상수로 고정한다(SCENE_DURATION_SECONDS).
+        # 씬마다 2~3초를 오가면 프레임 수가 49~73으로 흔들리는데, 49프레임 씬은 인물이
+        # 이동할 시간이 부족해 움직임이 거의 없는 컷이 된다(job e9059c29 씬2·4 실측).
+        # 사람이 1-4 게이트에서 고친 값은 그대로 존중된다(이 노드는 재분할 때만 돈다).
         scenes.append({
             "id": i + 1,
             "text": s["text"],
-            "duration": min(max(dur, 2.0), 3.0),
+            "duration": SCENE_DURATION_SECONDS,
             "mood": s.get("mood") if s.get("mood") in MOODS else "neutral",
             "matched_image": matched,
             "image_role": role,
@@ -614,15 +830,69 @@ async def node_split_scenes(state: GraphState) -> dict:
         only_ref = next(iter(ref_set))
         st = _subject_type_from_caption(captions.get(only_ref, "")) or "human"
         role = "character_ref" if st == "nonhuman" else "ref"
-        for sc in scenes:
+        # 참조가 제품 1장뿐인 job = "인물 생성 없이 제품만 첨부"(UI 시나리오만 모드).
+        # subject_type을 전 씬 nonhuman으로 굳히면 안 된다 — 그러면 사람이 제품을 쓰는
+        # 씬도 무인물 씬으로 취급돼 SUBJECT_REF(Wan 참조 경로)로 가고, 참조에 없는
+        # 인물·손·동작을 못 그린다. 씬 텍스트의 인물 신호로 씬별로 가른다: 사람이 나오는
+        # 씬은 human(→ 제품 조립 경로), 제품 단독 씬은 nonhuman(→ 히어로컷).
+        # 인물 사진 1장짜리 job(st="human")은 기존대로 전 씬 동일하다.
+        person_flags = (_person_on_screen_flags(scenes) if st == "nonhuman"
+                        else [True] * len(scenes))
+        for sc, has_person in zip(scenes, person_flags):
             sc["matched_image"] = only_ref
-            sc["subject_type"] = st
+            sc["subject_type"] = "human" if (st == "human" or has_person) else "nonhuman"
             sc["image_role"] = role
     elif len(ref_set) > 1:
+        ref_types = {fn: _subject_type_from_caption(captions.get(fn, "")) for fn in ref_set}
+        humans = [fn for fn, t in ref_types.items() if t == "human"]
+        nonhumans = [fn for fn, t in ref_types.items() if t == "nonhuman"]
+        if len(ref_set) == 2 and len(humans) == 1 and len(nonhumans) == 1:
+            # 인물 1장 + 제품 1장 결정론적 배정 — "얼굴 생성 + 제품 첨부" 조합(6.22)의
+            # 표준 형태다. 단일 참조에서와 같은 이유로 LLM 매칭을 통째로 무시한다:
+            # 어느 씬에 무엇이 필요한지가 참조 종류만으로 이미 정해져 있기 때문이다.
+            #   - 주인공(인물)은 전 씬에 등장하므로 face_id_ref로 항상 붙인다.
+            #   - 제품이 텍스트에 등장하는 씬만 matched_image=제품(character_ref)으로 둔다.
+            #     그 씬도 subject_type은 human이다 — 제품은 인물이 다루는 소품이지
+            #     주인공이 아니다. nonhuman으로 두면 _scene_prompt_system이 "사람을
+            #     만들지 마라"를 걸어 주인공이 지워진다(6.9에서 잡았던 버그).
+            #
+            # 제품 등장 판정은 씬별 키워드 매칭이 아니라 **등장 이후 forward-fill**이다.
+            # 광고 시나리오에서 제품은 한 번 나오면 끝까지 남는다. 씬별로 키워드를 찾으면
+            # 씬분할 LLM이 문장을 영어로 번역해버리는 순간 놓친다(2026-08-13 E2E job
+            # 911ebd9c 실측: "고개를 들고 시원하게 음료수를 들이켰다"를 "heads up, he
+            # takes a sip of cool water"로 번역해 "음료수"도 bottle/drink도 안 걸렸다.
+            # 씬분할 시스템 프롬프트가 "입력과 같은 언어로 써라"를 명시하는데도 4B가
+            # 무시하는 기존 비결정성). setting·subject_type이 이미 쓰는 forward-fill과
+            # 같은 처방이다 — 첫 등장 지점만 맞히면 되므로 번역에 훨씬 덜 취약하다.
+            human_ref, product_ref = humans[0], nonhumans[0]
+            product_on_screen = False
+            # 인물 신호가 없는 제품 씬 = 히어로컷(제품 단독 클로즈업). 이런 씬에 얼굴
+            # 참조를 붙이면 조립 경로가 인물 배경을 그려 제품 단독 컷이 안 된다.
+            # 판정 규칙은 _person_on_screen_flags 참조(제품 단독 job과 공유).
+            for sc, has_person in zip(scenes, _person_on_screen_flags(scenes)):
+                text = sc.get("text") or ""
+                sc["face_id_ref"] = human_ref if has_person else None
+                sc["subject_type"] = "human" if has_person else "nonhuman"
+                # 제품도 인물처럼 **끊긴다**. 무한 forward-fill이면 제품이 손을 떠난
+                # 뒤의 씬까지 조립 경로로 가서 병이 뜬금없이 합성된다(2026-08-13 UI E2E
+                # job 3ded2f29 씬4 실측: "다시 코트로 돌아가 공을 잡고 달려나간다"에
+                # 페트병이 바닥에 붙어 나옴). 인물 명사가 있고 손동작이 없는 씬 =
+                # 제품이 화면 밖이므로 상속을 끊는다. 손동작이 있으면(번역돼 제품 명사가
+                # 사라진 "takes a sip" 같은 문장) 그대로 유지한다.
+                if _PRODUCT_TEXT.search(text):
+                    product_on_screen = True
+                elif _HUMAN_TEXT.search(text) and not _HAND_ACTION_TEXT.search(text):
+                    product_on_screen = False
+                if product_on_screen:
+                    sc["matched_image"] = product_ref
+                    sc["image_role"] = "character_ref"
+                else:
+                    sc["matched_image"] = human_ref
+                    sc["image_role"] = "ref"
+            return {"scenes": scenes, "phase": "planning"}
         # 매칭 누락 결정론적 보정: 9b가 씬↔이미지 matched_image를 랜덤 누락(여자 씬이 None으로
         # 새 사람 생성 → 얼굴 일관성 붕괴)하던 문제를 캡션 기반 per-ref 종류로 메운다. 씬의
         # subject_type과 같은 종류의 참조가 정확히 하나면 그 참조로 매칭한다(모호하면 건드리지 않음).
-        ref_types = {fn: _subject_type_from_caption(captions.get(fn, "")) for fn in ref_set}
         for sc in scenes:
             if sc.get("matched_image"):
                 continue
@@ -843,25 +1113,110 @@ _LIGHTING_SYSTEM = (
     "neutral scenes MUST have balanced natural exposure with readable midtones and no deep shadows; "
     "calm scenes should use soft even light at normal exposure, not default to dimness. Never inherit "
     "a bright reference image's brightness. No character appearance/clothing/pose — lighting only. "
-    "(2) setting — the scene's physical LOCATION/background in the script's own language. If this "
+    # setting은 반드시 영어. 조립 경로가 이 값을 Flux Kontext/T2I 배경 프롬프트에 그대로
+    # 넣는데, 한국어면 영어 전용 모델에 노이즈로 들어가 장소 지시가 통째로 증발한다
+    # (2026-08-13 job e9059c29 실측: setting="코트 한쪽 벤치" → 배경이 인물 정본의 회색
+    # 스튜디오 그대로 나옴). 씬 텍스트는 원문 언어를 유지하되 setting만 영어로 뽑는다.
+    "(2) setting — the scene's physical LOCATION/background, ALWAYS written in English "
+    "regardless of the script's language, concrete and photographable "
+    "(e.g. 'an outdoor asphalt basketball court', not '농구장'). If this "
     "scene continues in the SAME place as the previous scene, output an empty string \"\" for setting "
     "(it inherits the previous location). Only fill setting when the location changes. When in doubt, "
     "fill it in rather than leaving it empty — scenes that name a different physical environment "
     # 도메인 중립 예시 — 위 split 프롬프트와 같은 이유로 우주 소재를 걷어냈다.
     "(e.g. a hotel lobby vs. a rooftop terrace vs. a subway platform vs. a riverside path) "
     "are almost always DIFFERENT settings, even if no location word is repeated. "
-    'Output ONLY a JSON object mapping each scene id (string) to {"lighting": "...", "setting": "..."}, '
-    'e.g. {"1": {"lighting": "low-key dim, deep shadows, cool cast", "setting": "어두운 사무실"}, '
-    '"2": {"lighting": "sudden bright key light", "setting": ""}}. No preamble, no markdown.'
+    # person은 인물 참조가 없는 job(제품만 첨부하는 "시나리오만" 모드)에서만 쓰인다.
+    # 그 모드의 조립 배경은 T2I로 사람을 처음부터 그리는데, 씬 문장을 그대로 넣으면
+    # 동작까지 그려져 첫 프레임이 망가진다(빈 손이어야 할 자리에 T2I가 우유잔을 그린
+    # 실측, 2026-08-14 job 8820932b 씬1). 그래서 동작을 뺀 **외형만** 여기서 뽑는다.
+    "(3) person — who is visible in this scene, as a short English noun phrase: approximate age, "
+    "gender, and role or context (e.g. 'a woman in her 20s who has just finished a workout', "
+    "'a construction worker in his 40s wearing a yellow hard hat'). NO action, NO pose, NO "
+    "location, NO objects they hold. "
+    # 상의를 묘사하면 안 되는 이유는 미관이 아니라 그립 검출이다 — 인물 정본 프롬프트가
+    # 긴팔·하이 크루넥을 강제하는데(PERSON_REF_PORTRAIT_PROMPT), 여기서 "pink sports bra"
+    # 같은 걸 같이 넣으면 diffusion이 둘을 섞어 파인 목선을 그린다. 그러면 가슴 살이
+    # 얼굴·목과 한 덩어리가 돼 얼굴 bbox 아래끝이 턱이 아니라 가슴이 되고, 그 값에서
+    # 파생되는 그립 밴드가 통째로 아래로 밀려 병이 손 아래에 붙는다(2026-08-14
+    # probe_person_ref 씬1 실측: 턱 300px인데 얼굴 bbox가 460px까지, 밴드 515~970).
+    "Do NOT describe the top, shirt, dress or any torso garment — wardrobe is fixed elsewhere. "
+    "Hats, glasses and other head/face accessories are fine. "
+    "Empty string \"\" if no person appears in the scene. "
+    "Different scenes may show different people — describe each scene's own person, do not copy. "
+    'Output ONLY a JSON object mapping each scene id (string) to '
+    '{"lighting": "...", "setting": "...", "person": "..."}, '
+    'e.g. {"1": {"lighting": "low-key dim, deep shadows, cool cast", "setting": "a dim open-plan office", '
+    '"person": "a man in his 30s in a navy shirt"}, '
+    '"2": {"lighting": "sudden bright key light", "setting": "", "person": ""}}. No preamble, no markdown.'
 )
 
 
-async def _make_scene_context(state: GraphState) -> tuple[dict[int, str], dict[int, str]]:
-    """M3-7 + 배경 연속성: 씬별 재조명 큐 + 장소(setting)를 한 번의 focused LLM 호출로 생성.
-    bible(불변 화풍)과 분리. setting 추출이 비었거나 실패하면 직전 씬을
-    추측해 상속하지 않고 해당 씬 원문으로 폴백해 사용자 내용을 보존한다.
+# 씬 텍스트에 장소가 **명시돼 있으면** LLM 추출값보다 우선한다.
+# _make_scene_context의 focused LLM(gemma3:4b)이 장소를 환각한다: 2026-08-23 job
+# 8402186d 씬2는 원문이 "어두운 서재 책상 앞에 앉은 20대 남자가 노트북을 덮고
+# 기지개를 켜며 창밖을 본다"인데 setting을 'an indoor basketball court with a large
+# window'로 뱉었고, 결과 영상이 체육관에서 상반신 탈의 남자가 만세하는 컷이 됐다
+# (프롬프트에 "the player"까지 박혔다). 같은 job 씬3은 "은은한 주황빛이 감도는
+# 거실"이 'bright and airy living room'으로 뒤집혀 어두운 무드와 정면 충돌했다.
+# 원문에 장소 단어가 있는 씬만 덮어쓴다 — 없으면 LLM 값을 그대로 둔다.
+_SETTING_KEYWORDS = (
+    ("서재", "a home study with a wooden desk and bookshelves"),
+    ("사무실", "a quiet office interior with a desk"),
+    ("책상", "an indoor room with a wooden desk"),
+    ("거실", "a home living room with a sofa"),
+    ("소파", "a home living room with a sofa"),
+    ("아이 방", "a child's bedroom"),
+    ("아이방", "a child's bedroom"),
+    ("침실", "a bedroom with a bed and a bedside table"),
+    ("침대", "a bedroom with a bed and a bedside table"),
+    ("원룸", "a small one-room apartment interior"),
+    ("주방", "a home kitchen"),
+    ("부엌", "a home kitchen"),
+    ("욕실", "a home bathroom"),
+    ("현관", "an apartment entryway"),
+    ("카페", "a cafe interior"),
+    ("농구장", "an outdoor basketball court"),
+    ("코트", "an outdoor basketball court"),
+    ("체육관", "an indoor gymnasium"),
+)
+
+
+def _script_sentence_for_scene(state: GraphState, index: int) -> str:
+    """씬분할 LLM이 잘라낸 사용자 원문 문장을 되찾는다.
+
+    2026-08-23 job 1fd34d0a 실측: 사용자가 친 "어두운 서재 책상 앞에 앉은 20대 남자가
+    노트북을 덮고 기지개를 켜며 창밖을 본다"에서 씬분할이 **"어두운 서재 책상 앞에
+    앉은"을 통째로 잘라냈다**. 장소 단어가 사라지니 _setting_from_text가 볼 게 없었고
+    setting LLM의 농구장 환각이 그대로 영상이 됐다.
+
+    문장 수와 씬 수가 같을 때만 index로 짝짓는다 — 다르면 짝이 틀릴 수 있어 포기한다.
+    """
+    sentences = [x.strip() for x in re.split(r"(?<=[.!?。])\s+|\n+",
+                                             state.get("script_text") or "") if x.strip()]
+    if len(sentences) == len(state.get("scenes") or []) and 0 <= index < len(sentences):
+        return sentences[index]
+    return ""
+
+
+def _setting_from_text(text: str) -> str | None:
+    """씬 원문에서 장소를 직접 읽는다. 못 찾으면 None(= LLM 값 유지)."""
+    t = text or ""
+    for keyword, place in _SETTING_KEYWORDS:
+        if keyword in t:
+            return place
+    return None
+
+
+async def _make_scene_context(
+    state: GraphState,
+) -> tuple[dict[int, str], dict[int, str], dict[int, str]]:
+    """M3-7 + 배경 연속성: 씬별 재조명 큐 + 장소(setting) + 인물 외형(person)을 한 번의
+    focused LLM 호출로 생성. bible(불변 화풍)과 분리. setting 추출이 비었거나 실패하면
+    직전 씬을 추측해 상속하지 않고 해당 씬 원문으로 폴백해 사용자 내용을 보존한다.
     이전엔 setting을 giant split 호출에 얹었는데 9b가 run마다 누락 → focused 호출로 이관해 안정화.
-    반환: (lighting_map, setting_map). 실패/누락 씬은 호출부에서 폴백."""
+    반환: (lighting_map, setting_map, person_map). 실패/누락 씬은 호출부에서 폴백.
+    person은 인물 참조가 없는 job에서만 쓰이므로 누락돼도 폴백 없이 빈 값으로 둔다."""
     scenes = state.get("scenes") or []
     user_prompt = json.dumps({
         "script": state.get("script_text", ""),
@@ -870,6 +1225,7 @@ async def _make_scene_context(state: GraphState) -> tuple[dict[int, str], dict[i
     }, ensure_ascii=False)
     lighting: dict[int, str] = {}
     setting: dict[int, str] = {}
+    person: dict[int, str] = {}
     # 9b는 setting 필드를 run마다 통째로 누락하기도 한다(3런 중 1런). 또한 값을 일부만
     # 채우고 나머지를 전부 ""(=이어짐)로 반환하는 경우도 실측됨(job fbd7c4a5, 4씬 스토리에서
     # 씬1만 채우고 2~4가 전부 이전 장소를 계속 상속 — 명백히 다른 장소인데도). "하나라도 얻으면
@@ -882,28 +1238,47 @@ async def _make_scene_context(state: GraphState) -> tuple[dict[int, str], dict[i
             break
         lit_map: dict[int, str] = {}
         set_map: dict[int, str] = {}
+        person_map: dict[int, str] = {}
         for k, v in (raw or {}).items():
             if isinstance(v, dict):
                 lit = (v.get("lighting") or "").strip() if isinstance(v.get("lighting"), str) else ""
                 setg = (v.get("setting") or "").strip() if isinstance(v.get("setting"), str) else ""
+                per = (v.get("person") or "").strip() if isinstance(v.get("person"), str) else ""
             else:  # 구형/축약 응답: 문자열이면 lighting으로만 취급
-                lit, setg = ((v or "").strip() if isinstance(v, str) else ""), ""
+                lit, setg, per = ((v or "").strip() if isinstance(v, str) else ""), "", ""
             if lit:
                 lit_map[int(k)] = lit
             if setg:
                 set_map[int(k)] = setg
+            if per:
+                person_map[int(k)] = per
         lighting = lighting or lit_map   # 첫 시도의 조명은 보존
+        person = person or person_map
         setting = set_map
         if len(setting) >= min_filled:    # 최소 절반 이상 장소를 얻으면 종료
             break
-    # 빈 setting은 "같은 장소"와 "LLM 추출 실패"를 구분할 수 없다. 추출
-    # 실패를 연속으로 오판하면 첫 씬의 배경이 전체 스토리를 덮으므로, 해당
-    # 씬 원문을 결정적 폴백으로 쓴다. 명시적 연속성 필드는 후속 설계 사항.
-    for s in scenes:
-        sid = s.get("id")
-        if not setting.get(sid):
-            setting[sid] = (s.get("text") or "").strip()
-    return lighting, setting
+    # 누락 씬은 **가장 가까운 유효 장소를 상속**한다(forward-fill, 선두 공백은 첫 유효값).
+    #
+    # 이전에는 해당 씬의 한국어 원문을 폴백으로 넣었다. 사용자 내용을 보존한다는
+    # 취지였지만 실측 결과 정반대로 작동했다(2026-08-13 A/B, Nemotron 4B·exaone 32b
+    # 공통): 4씬 중 씬1만 장소 추출에 성공하고 2~4는 "그는 코트 한쪽 벤치에 있는
+    # 음료수 병을 향해 달려간다." 같은 원문이 setting에 그대로 들어갔다. 장소 정보가
+    # 사실상 없으니 프롬프트 LLM이 장소를 자유 창작해 같은 광고 안에서 농구장이
+    # 광장·공원·테니스장으로 튀었다(테니스 라켓까지 등장).
+    #
+    # 광고 한 편의 장소는 하나이거나 몇 개뿐이라 상속이 훨씬 안전하다. "첫 씬 배경이
+    # 전체를 덮는다"는 원래 우려는 실재하지만, 장소가 통째로 사라지는 쪽이 확실히 더
+    # 나쁘다는 게 확인됐다. 장소가 실제로 바뀌는 스토리는 LLM이 그 씬의 setting을
+    # 채우면 그 지점부터 새 장소로 갈아탄다.
+    ordered = [s.get("id") for s in scenes]
+    first_valid = next((setting[sid] for sid in ordered if setting.get(sid)), "")
+    carried = first_valid
+    for sid in ordered:
+        if setting.get(sid):
+            carried = setting[sid]
+        else:
+            setting[sid] = carried
+    return lighting, setting, person
 
 
 async def node_generate_prompts(state: GraphState) -> dict:
@@ -915,7 +1290,23 @@ async def node_generate_prompts(state: GraphState) -> dict:
     - 이미지 없음      → T2V.
     """
     captions = state.get("ref_captions") or {}
-    wardrobe_locks = state.get("wardrobe_locks") or {}
+    wardrobe_locks = dict(state.get("wardrobe_locks") or {})
+    # 생성 인물의 의상을 전 씬 wardrobe lock으로 승격한다.
+    #
+    # 지금까지 wardrobe_locks는 사용자가 시나리오에 "img_0 의상: ..."처럼 **직접 선언**한
+    # 경우에만 채워졌다. 그래서 이미지를 생성해 쓰는 M2 플로우에서는 Face-ID 씬에 의상
+    # 지시가 하나도 없었고, `_scene_prompt_system`의 standin 분기는 "의상을 지어내지
+    # 마라"만 걸어서 모델이 매 씬 아무거나 입혔다(2026-08-13 job 953eeea2 clip1: 인물
+    # 정본은 흰 반팔인데 검은 바시티 재킷이 나옴).
+    #
+    # 이미지 생성 프롬프트에는 사용자가 요구한 의상이 그대로 들어 있으므로(`wearing
+    # white short-sleeve t-shirt`) 그걸 뽑아 인물 참조의 lock으로 쓴다. 사용자가 직접
+    # 선언한 값이 있으면 그쪽이 우선이다(setdefault).
+    generated_wardrobe = _wardrobe_from_query(state.get("image_query") or "")
+    if generated_wardrobe:
+        for ref_name, caption in captions.items():
+            if _subject_type_from_caption(caption) == "human":
+                wardrobe_locks.setdefault(ref_name, generated_wardrobe)
     # 재생성(regen)이면 이미 state에 있는 값을 그대로 쓴다 — 씬만 다시 만들 때 인물이
     # 바뀌면 안 되므로 시트도 bible과 같이 보존한다.
     if state.get("style_bible"):
@@ -926,19 +1317,89 @@ async def node_generate_prompts(state: GraphState) -> dict:
     # M3-7 재조명 + 배경 연속성: 씬별 조명 큐 + 장소(setting)를 한 번의 focused 호출로 생성
     # (추가 LLM 호출 없음 — 기존 조명 호출에 fold). 이미 둘 다 있으면(재생성) 재호출 생략.
     have_ctx = all(s.get("lighting") and s.get("setting") for s in state["scenes"])
-    lighting_map, setting_map = (({}, {}) if have_ctx else await _make_scene_context(state))
+    lighting_map, setting_map, person_map = (
+        ({}, {}, {}) if have_ctx else await _make_scene_context(state))
+
+    # job에 인물 참조가 함께 있으면(=인물+제품 광고) 제품 씬은 전부 조립 경로로 보낸다.
+    # 히어로컷(제품 단독 클로즈업)은 face_id_ref가 없지만 여전히 조립이 맞다 — 제품 픽셀을
+    # diffusion에 통과시키지 않는 게 이 경로의 요지다. 캡션만 보면 되므로 루프 밖에서 1회 계산.
+    job_has_human_ref = any(
+        _subject_type_from_caption(cap) == "human" for cap in captions.values())
+    # 인물 참조가 없어도 **씬에 사람이 나오면** 조립 경로다(제품만 첨부하는 "시나리오만"
+    # 모드). SUBJECT_REF(Wan 참조 경로)는 참조에 없는 인물·손·동작을 못 그리므로 사람이
+    # 제품을 쓰는 광고에는 못 쓴다. 사람이 한 씬도 안 나오는 job(마스코트·제품 단독
+    # 영상)은 그대로 SUBJECT_REF로 남는다.
+    job_has_person_scene = any(s.get("subject_type") == "human" for s in state["scenes"])
+    job_wants_assembly = job_has_human_ref or job_has_person_scene
+
+    query_wardrobe = _wardrobe_from_query(state.get("image_query") or "")
+
+    async def _ensure_scene_person_ref(scene: Scene, description: str) -> str | None:
+        """인물 참조가 없는 job("시나리오만" 모드)의 인물 씬에 **씬 전용 인물 정본**을 만든다.
+
+        조립 경로의 쥔 씬 배경은 인물 정본을 Kontext로 재렌더해 만드는데, 그 재렌더가
+        "빈 원통형 그립 손"이라는 까다로운 포즈를 실제로 그려내는 유일한 경로다. 정본
+        없이 T2I로 처음부터 그리면 손이 활짝 펴진 채 나오고(2026-08-14 job 872beeee 씬1
+        실측: 손가락 5개를 편 손에 병이 합성됨), 살색 연결요소가 뭉쳐 그립 검출도
+        `clamped`로 빠져 병이 어깨에 붙는다.
+
+        그래서 씬마다 포트레이트 1장을 뽑아 face_ref로 준다 — 그 뒤는 베이스라인이
+        검증한 Kontext 경로 그대로다. 인물 일관성은 **씬 안에서만** 유지되고 씬끼리는
+        다른 사람이 나온다(이 모드의 의도).
+        """
+        name = f"person_{scene.get('id')}.png"
+        dest = tools.refs_dir(state["job_id"]) / name
+        if dest.exists():                      # 재생성 시 같은 사람을 유지
+            return name
+        query = PERSON_REF_PORTRAIT_PROMPT.format(description=description)
+        try:
+            path = await tools.generate_t2i_image(
+                state["job_id"], query, seed=scene_seed(state["job_id"], scene.get("id") or 0),
+                index=2000 + (scene.get("id") or 0))
+        except Exception as exc:               # 실패해도 생성 전체를 막지 않는다
+            print(f"[person_ref] 씬{scene.get('id')} 인물 정본 생성 실패({exc}) — T2I 배경 경로 사용")
+            return None
+        shutil.copyfile(path, dest)
+        print(f"[person_ref] 씬{scene.get('id')} 인물 정본 {name}: {description}")
+        return name
+
+    def _person_appearance(scene: Scene) -> str:
+        """조립 경로 배경(T2I/Kontext)에 넣을 인물 외형. 배경을 새로 그리므로 지시가
+        없으면 의상이 자유롭게 나와 Face-ID 씬과 어긋난다(job 00a21ee8: 인물 정본은
+        흰 티인데 베이지 티+청바지).
+
+        인물 참조가 없는 job("시나리오만" 모드)은 물려받을 캡션이 없다 — 그 씬의 인물
+        외형을 _make_scene_context가 뽑아둔 값으로 대신한다. 이게 없으면 배경 T2I에
+        사람 정보가 하나도 안 들어가 씬마다 아무나 나온다."""
+        appearance = (captions.get(scene.get("face_id_ref") or "", "")
+                      or person_map.get(scene.get("id"), ""))
+        if query_wardrobe:
+            return (f"{appearance}, wearing {query_wardrobe}" if appearance
+                    else f"wearing {query_wardrobe}")
+        return appearance
 
     updated_scenes = []
-    for scene in state["scenes"]:
+    for scene_index, scene in enumerate(state["scenes"]):
         # 이 씬의 장소를 주입(빈값이면 기존/직전 상속값 유지) → _scene_prompt_user가 배경으로 씀.
-        scene = {**scene, "setting": setting_map.get(scene.get("id")) or scene.get("setting", "")}
+        # 원문에 장소가 있으면 그걸 쓴다(_setting_from_text 주석의 환각 실측 참고).
+        # 씬 텍스트에 없으면 사용자 원문 문장까지 되짚는다 — 씬분할이 장소 수식구를
+        # 잘라내는 실측 사례가 있다(_script_sentence_for_scene 주석 참고).
+        scene = {**scene, "setting": (
+            _setting_from_text(scene.get("text", ""))
+            or _setting_from_text(_script_sentence_for_scene(state, scene_index))
+            or setting_map.get(scene.get("id"))
+            or scene.get("setting", ""))}
         img = scene.get("matched_image")
         role = scene.get("image_role")
         subject_ref = bool(img) and role == "character_ref" and tools.USE_STANDIN
         standin = bool(img) and role in ("start", "ref") and tools.USE_STANDIN
         wardrobe = wardrobe_locks.get(img, "") if standin else ""
         # 보존(identity·화풍)과 분리된 '적응' 축: 이 씬의 재조명 큐.
-        cue = _enforce_mood_exposure(
+        # 조명은 job 전체에 하나로 고정한다. mood 파생 경로를 쓰면 한 광고 안에서
+        # 씬마다 톤이 바뀐다(excited→deep shadows, happy→cool cast, neutral→dusk가
+        # 한 시나리오에서 동시에 나온 실측: job e9059c29). SCENE_LIGHTING_LOCK을 빈
+        # 문자열로 두면 기존 mood 파생 경로로 돌아간다.
+        cue = SCENE_LIGHTING_LOCK or _enforce_mood_exposure(
             scene.get("mood", "neutral"),
             (lighting_map.get(scene.get("id"))
              or scene.get("lighting")
@@ -946,12 +1407,44 @@ async def node_generate_prompts(state: GraphState) -> dict:
         )
 
         has_human_subject = bool(standin or subject_ref or scene.get("subject_type") == "human")
+        # 와이드샷 강제는 Stand-In(Wan) 경로 전용이다. 이 씬이 LTX Face-ID나 제품 조립으로
+        # 갈 예정이면 끈다 — 그 경로들엔 정반대로 작용해 인물이 늘 멀리 잡힌다.
+        will_be_faceid = bool(img) and scene.get("subject_type") == "human" and role in ("start", "ref")
+        will_be_assembly = bool(subject_ref and (scene.get("face_id_ref") or job_wants_assembly))
+        # 인물 참조가 없는 인물 씬 → 씬 전용 인물 정본을 만들어 Kontext 경로로 보낸다.
+        # B노선으로 갈 씬은 **건너뛴다**. 이 정본은 A노선이 Kontext 배경을 재렌더할 때만
+        # 쓰이는데 B노선은 배경을 T2V가 통째로 그리므로 한 장도 안 본다. 2026-08-23
+        # job 032e1827 실측: 씬 4개분(person_1~4.png) 생성에 12:23~12:35, **12분**을
+        # 쓰고 전부 버렸다 — job 전체 시간의 약 40%다.
+        if (will_be_assembly and not job_has_human_ref and not scene.get("face_id_ref")
+                and scene.get("subject_type") == "human"
+                and not _scene_takes_overlay_route(state, scene)):
+            desc = (person_map.get(scene.get("id")) or "").strip()
+            ref = await _ensure_scene_person_ref(scene, desc) if desc else None
+            if ref:
+                scene = {**scene, "face_id_ref": ref}
         raw_prompt = _strip_echoed_bible(tools.clean_llm_prompt(
-            await tools.call_llm(_scene_prompt_system(standin or subject_ref, bool(wardrobe), has_human_subject),
+            await tools.call_llm(_scene_prompt_system(standin or subject_ref, bool(wardrobe),
+                                                      has_human_subject,
+                                                      force_wide=not (will_be_faceid or will_be_assembly)),
                                  _scene_prompt_user(scene, bible, wardrobe, cue))), bible)
 
         negative_prompt = None  # I2V 씬만 채움(984행) — 다른 모드는 이 필드를 안 씀
-        if subject_ref:
+        if will_be_assembly:
+            # 제품 참조가 붙은 씬 → A노선 조립(6.23).
+            # subject_ref(Wan i2v_14b)로 보내면 참조에 없는 인물·손·동작을 못 그린다.
+            mode = "PRODUCT_ASSEMBLY"
+            negative_prompt = _negative_prompt_for_i2v_scene(captions.get(img, ""))
+            full_prompt = f"{raw_prompt}, {bible}"
+            # 조립 씬 배경은 T2I/Kontext가 새로 그리므로 인물 외형을 명시하지 않으면
+            # 의상이 자유롭게 나와 Face-ID 씬과 어긋난다. 인물 참조 캡션을 그대로 넘긴다.
+            scene = {**scene,
+                     # 제품을 드는 씬만 hand_held(음료는 아무 손동작, 놓는 제품은
+                     # 목적어가 제품일 때만 — "노트북을 들고"는 제외).
+                     "product_hand_held": _scene_holds_product(
+                         scene.get("text") or "", beverage=_product_is_beverage(state)),
+                     "person_appearance": _person_appearance(scene)}
+        elif subject_ref:
             mode = "SUBJECT_REF"
             desc = captions.get(img, "")
             desc_suffix = f" ({desc})" if desc else ""
@@ -975,6 +1468,10 @@ async def node_generate_prompts(state: GraphState) -> dict:
             wardrobe_lock = (WARDROBE_LOCK_TEMPLATE.format(
                 wardrobe_description=wardrobe) if wardrobe else "")
             full_prompt = f"{wardrobe_lock}\n{raw_prompt}, {bible}" if wardrobe_lock else f"{raw_prompt}, {bible}"
+            # 이 씬은 뒤에서 LTX_FACEID로 올라가고, Face-ID 정원(FACEID_MAX_SCENES)을
+            # 넘으면 PERSON_ASSEMBLY로 내려간다(node_classify_faceid_scenes). 그 경로도
+            # 배경을 새로 그리므로 인물 외형을 미리 실어둔다.
+            scene = {**scene, "person_appearance": _person_appearance(scene)}
         elif img and role == "start":        # Stand-In off일 때만 I2V 폴백
             mode = "I2V"
             negative_prompt = _negative_prompt_for_i2v_scene(captions.get(img, ""))
@@ -994,9 +1491,18 @@ async def node_generate_prompts(state: GraphState) -> dict:
                     if character_sheet and has_human_subject else "")
             full_prompt = f"{raw_prompt}.{lock} {bible}"
 
-        # M3-7: 씬 재조명 큐를 결정적으로 프롬프트 끝에 못박는다 — rewrite LLM이 조명을
-        # 약하게 반영해도 어두운 씬은 실제로 저조도 지시가 남는다(참조 밝기 상속 방지).
-        full_prompt = f"{full_prompt} Scene lighting and atmosphere: {cue}."
+        # B노선(제품 오버레이)은 style_bible도 조명 큐도 붙이지 않는다.
+        #  - bible: 제품 이미지에서 뽑은 디자인 사양서라 영상 화풍을 3D 만화로 만든다
+        #    (job 032e1827 실측, tools.PRODUCT_OVERLAY_STYLE 주석 참고). 대신 고정
+        #    실사 화풍을 tools 쪽에서 프롬프트 맨 앞에 붙인다.
+        #  - 조명 큐: 서버 전역 AGENT_SCENE_LIGHTING에 "soft amber lamp glow"가 들어
+        #    있어 그 단어가 T2V에 램프를 소환한다. B노선은 창밖 광원으로 대체한다.
+        if _scene_takes_overlay_route(state, scene):
+            full_prompt = raw_prompt
+        else:
+            # M3-7: 씬 재조명 큐를 결정적으로 프롬프트 끝에 못박는다 — rewrite LLM이 조명을
+            # 약하게 반영해도 어두운 씬은 실제로 저조도 지시가 남는다(참조 밝기 상속 방지).
+            full_prompt = f"{full_prompt} Scene lighting and atmosphere: {cue}."
         updated_scenes.append({
             **scene, "prompt": full_prompt, "mode": mode, "lighting": cue,
             "negative_prompt": negative_prompt,
@@ -1004,6 +1510,83 @@ async def node_generate_prompts(state: GraphState) -> dict:
 
     return {"scenes": updated_scenes, "style_bible": bible,
             "character_sheet": character_sheet, "phase": "prompting"}
+
+
+# 손동작이 **제품을 대상으로** 하는가. hand_held 배제는 "이 씬에서 제품이 손에 들려
+# 함께 움직이는가"를 물어야 하는데, _HAND_ACTION_TEXT는 목적어를 안 봐서 "노트북을
+# 들고"(2026-08-23 job f967a473 씬분할이 지어낸 문장)에도 걸려 놓는 제품 씬을 옛 조립
+# 경로로 튕겼다. 손동작 동사 앞 목적어가 제품 지시어면 제품을 든 것, 다른 물건
+# (노트북·책·가방)이면 제품은 그대로 놓여 있는 것이다.
+_PRODUCT_REF_WORDS = ("제품", "그것", "이것", "음료", "병", "캔", "컵", "잔",
+                      "무드등", "램프", "product", "lamp", "bottle", "can", "cup", "drink")
+_PRODUCT_HELD_RE = re.compile(
+    r"(?:" + "|".join(_PRODUCT_REF_WORDS) + r")\s*(?:을|를|its|the)?\s*"
+    r"[^.]{0,8}?(?:집어|집는|들어|들고|쥐고|쥔|마시|들이켜|들이키|한\s*모금|입에\s*대|"
+    r"pick|grab|hold|drink|sip|lift|rais)", re.I)
+
+
+# 이 job의 제품이 손에 드는 유형(음료 등)인가. 음료는 씬 자체가 "그걸 마시는" 이야기라
+# 손동작=제품 듦이 맞다("holds it", "음료수를 마신다"). 놓는 제품(램프)은 반대로 손동작이
+# 다른 물건("노트북을 들고")을 향하는 게 보통이라 목적어가 제품일 때만 든 것으로 본다.
+_BEVERAGE_PRODUCT_RE = re.compile(
+    r"음료|보틀|beverage|bottle|soda|juice|coffee|tea|콜라|주스|커피|" 
+    r"\b(?:can|cup|drink)\b|캔|컵|잔|병", re.I)
+
+
+def _product_is_beverage(state: GraphState) -> bool:
+    text = state.get("image_request") or ""
+    if not text:
+        text = " ".join((state.get("ref_captions") or {}).values())
+    return bool(_BEVERAGE_PRODUCT_RE.search(text))
+
+
+def _scene_holds_product(text: str, *, beverage: bool = False) -> bool:
+    """이 씬에서 **제품이** 손에 들리는가.
+    beverage=True(음료 제품): 아무 손동작이나 제품 듦으로 본다(씬이 그걸 마시는 이야기다).
+    beverage=False(놓는 제품): 손동작 목적어가 제품일 때만. "노트북을 들고"는 제외.
+    """
+    if beverage:
+        return bool(_HAND_ACTION_TEXT.search(text or ""))
+    return bool(_PRODUCT_HELD_RE.search(text or ""))
+
+
+def _product_overlay_ref(state: GraphState) -> str | None:
+    """오버레이할 제품 참조를 고른다. 없으면 None(= B노선 안 탐).
+
+    생성 참조(describe 모드)는 `generated_ref_is_product`를 **먼저** 본다. 비전 캡션의
+    human/nonhuman 판정은 같은 시나리오를 실행마다 다르게 갈랐다 — 2026-08-23 무드등
+    E2E에서 job dd16ef56은 램프를 nonhuman(→character_ref→조립)으로, job c87912d8은
+    human(→ref→Face-ID)으로 분류해 노선이 통째로 바뀌었다. 이미지 요청 시점의 규칙
+    선택은 흔들리지 않으므로 그걸 우선한다. 업로드 참조는 캡션 판정으로 폴백한다.
+    """
+    refs = state.get("ref_images") or []
+    if not refs:
+        return None
+    if state.get("generated_ref_is_product"):
+        return refs[0]                      # describe 모드는 생성 이미지 1장 고정
+    caps = state.get("ref_captions") or {}
+    for ref in refs:
+        if _subject_type_from_caption(caps.get(ref, "")) == "nonhuman":
+            return ref
+    return None
+
+
+def _scene_takes_overlay_route(state: GraphState, scene: Scene) -> bool:
+    """이 씬이 B노선(제품 오버레이)으로 갈 예정인가.
+
+    node_classify_faceid_scenes의 판정과 **같은 규칙**이어야 한다. 여기서만 쓰이는
+    목적은 A노선 전용 준비작업(씬별 인물 정본 T2I)을 미리 건너뛰는 것이다.
+    """
+    overlay_ref = _product_overlay_ref(state) if tools.PRODUCT_OVERLAY_ENABLED else None
+    # 제품이 화면에 없는 인물 씬(matched_image가 인물 참조)까지 B노선으로 끌고 가면 그
+    # 씬에 제품을 억지로 얹게 되고 의상 lock도 날아간다(test_generated_wardrobe_lock).
+    if not overlay_ref or scene.get("matched_image") != overlay_ref:
+        return False
+    # 제품 **자체를** 드는 씬만 A노선에 남긴다. 무관한 손동작("노트북을 들고")은 제품이
+    # 그대로 놓여 있으니 오버레이 유지.
+    return not (scene.get("product_hand_held")
+                or _scene_holds_product(scene.get("text") or "",
+                                        beverage=_product_is_beverage(state)))
 
 
 def node_classify_faceid_scenes(state: GraphState) -> dict:
@@ -1027,17 +1610,69 @@ def node_classify_faceid_scenes(state: GraphState) -> dict:
             and scene.get("image_role") in ("start", "ref")
             else None
         )
+        # 인물+제품 2참조 job(node_split_scenes의 결정론 배정)에서는 제품 씬도 주인공
+        # 얼굴을 유지해야 하므로 face_id_ref가 미리 채워져 있다. matched_image는 제품을
+        # 가리키므로 위 식은 None을 내놓는데, 그걸 그대로 쓰면 주인공 identity가 날아간다.
+        # 미리 설정된 값은 보존한다. 다만 mode는 LTX_FACEID로 올리지 않는다 — 그 씬은
+        # 제품 픽셀 조립 경로(6.23)가 담당하고, Face-ID 배치는 제품이 없는 씬 전용이다.
+        preset_face_ref = scene.get("face_id_ref")
+        if face_id_ref is None and preset_face_ref:
+            return {**scene, "face_id_ref": preset_face_ref,
+                    "mode": scene.get("mode", "T2V")}
         return {
             **scene,
             "face_id_ref": face_id_ref,
             "mode": "LTX_FACEID" if face_id_ref else scene.get("mode", "T2V"),
         }
 
-    classified = [classify(scene) for scene in scenes]
+    # LTX 2.3 22B(GGUF Q6_K) Face-ID 씬은 **최대 FACEID_MAX_SCENES개**로 자른다.
+    # 2개가 되는 순간 VAE 디코드가 free_memory를 부르고 ComfyUI-GGUF가 파이썬 단일
+    # 스레드로 재양자화하면서 GPU 1%·CPU 1코어 100%로 10~40분 정체한다(py-spy로 확정,
+    # docs/spikes/2026-08-13-scene5-e2e-handoff.md §2, 3.3-ltx-bottleneck-profile.md).
+    # fp8 교체는 불가(22B 배포판은 bf16 46GB / GGUF Q6_K 17.8GB뿐).
+    # 넘치는 씬은 조립 경로(제품 없는 변형)로 내린다 — 얼굴 identity는 씬2·3과 같은
+    # 캡션·의상 lock 텍스트 수준으로만 유지된다. 사용자 결정(2026-08-14).
+    # B노선(제품 오버레이)이 켜져 있고 이 job에 제품 참조가 있으면 Face-ID 승격을
+    # **하지 않는다**. Face-ID는 씬 사이 얼굴 identity를 지키려고 존재하는데, 이 모드는
+    # 인물 일관성을 요구하지 않는다(사용자 결정 2026-08-23) — 씬마다 다른 사람이어도
+    # 된다. 대신 22B GGUF 축출 정체(10~40분)와 Kontext 조립을 통째로 건너뛴다.
+    overlay_ref = _product_overlay_ref(state) if tools.PRODUCT_OVERLAY_ENABLED else None
+    _bev = _product_is_beverage(state)
+    # 히어로컷(사람 없는 제품 단독 컷) 판정은 씬 텍스트로 **결정론적으로** 한다.
+    # subject_type은 씬분할 LLM이 붙이는 값이라 흔들린다 — 같은 시나리오 5번째 문장
+    # ("빈 침실 협탁 위에 놓인 제품에 카메라가 다가간다")이 job 032e1827에서는
+    # nonhuman, job 8402186d에서는 human으로 찍혔다. 후자에서는 히어로 비율도 무인
+    # 강제도 안 걸려 마무리 컷이 인물 씬과 똑같은 크기로 나왔다.
+    on_screen = _person_on_screen_flags(scenes)
+
+    classified = []
+    faceid_used = 0
+    for idx, scene in enumerate(classify(s) for s in scenes):
+        # 손에 쥔 씬은 제품이 손과 함께 움직여야 하므로 정적 오버레이가 물리적으로
+        # 틀리다 — A노선에 남긴다. product_hand_held는 node_generate_prompts가
+        # 조립 씬에만 채우므로 여기서 씬 텍스트로 직접 판정한다.
+        # 제품을 드는 씬만 hand_held(음료=아무 손동작, 놓는 제품=제품 목적어일 때만).
+        hand_held = bool(scene.get("product_hand_held")
+                         or _scene_holds_product(scene.get("text") or "", beverage=_bev))
+
+        if (overlay_ref and not hand_held
+                and scene.get("matched_image") == overlay_ref):
+            classified.append({**scene, "mode": "PRODUCT_OVERLAY",
+                               "product_hand_held": False,
+                               "product_hero": not on_screen[idx]})
+            continue
+        if scene.get("mode") == "LTX_FACEID":
+            faceid_used += 1
+            if faceid_used > FACEID_MAX_SCENES:
+                scene = {**scene, "mode": "PERSON_ASSEMBLY"}
+        classified.append(scene)
+    print("[route] 씬 mode: " + ", ".join(
+        f"{s.get('id')}={s.get('mode')}" for s in classified))
     return {"scenes": classified, "phase": "anchoring"}
 
 
-def _scene_prompt_system(standin: bool, has_wardrobe: bool = False, has_human_subject: bool = True) -> str:
+def _scene_prompt_system(standin: bool, has_wardrobe: bool = False, has_human_subject: bool = True,
+                         force_wide: bool = True) -> str:
     """씬 프롬프트 생성용 system 프롬프트. 구도/자세/표정/카메라를 '맥락에 맞게' 요구.
 
     핵심: 표정(facial expression)과 감정, 그리고 '정적이지 않은' 동적 동작을 명시적으로
@@ -1073,6 +1708,18 @@ def _scene_prompt_system(standin: bool, has_wardrobe: bool = False, has_human_su
         "not several competing events. This scene is part of one continuous short film — "
         "write it as the next moment following on from the previous scene, not an "
         "isolated standalone image. "
+        # 광고 컷에 군중이 끼면 주인공이 묻힌다. LLM이 스스로 "players casually milling
+        # about", "a moderately busy court"를 넣던 실측(job 00a21ee8) 대응. 부정문("no
+        # spectators")으로 쓰게 두면 그 문구가 diffusion 프롬프트에 그대로 들어가 오히려
+        # 사람을 그리므로, 긍정 서술로 쓰라고 못박는다.
+        # 지어낸 인명은 T5 텍스트 인코더에 인종·외모 편향을 태운다. 조립 씬 배경은 T2I가
+        # 인물을 새로 그리므로 그 편향이 그대로 화면에 남는다(2026-08-13 job 3ded2f29
+        # 씬3 프롬프트에 없던 이름 `Elias`가 등장).
+        + "Never invent or use a personal name for anyone; refer to people only by generic "
+        "noun phrases such as 'the man', 'the woman', 'the player'. "
+        + "The location holds only the main subject: describe it as quiet and deserted, with "
+        "no crowd, spectators, bystanders or other players present. Phrase this positively in "
+        "your prompt (e.g. 'an empty court in the late afternoon'), never as a negation. "
         + "CRITICAL: keep every specific named subject, object, or place mentioned in the "
         "scene text explicit in your English prompt — if the scene names something concrete "
         "(e.g. Earth, a spaceship, a specific landmark), your prompt must name that exact "
@@ -1088,13 +1735,21 @@ def _scene_prompt_system(standin: bool, has_wardrobe: bool = False, has_human_su
             "image, so do NOT invent their appearance, age, gender, ethnicity or hair. "
             + ("A user-provided WARDROBE LOCK follows. Translate it faithfully into English, state the exact garments and colors, and keep them unchanged. " if has_wardrobe else "Do not invent or describe clothing. ")
             + "Describe what they DO and FEEL — expression, gaze, gesture, movement — and the shot composition. "
-            # Task 3.2 눈판정으로 확정된 기본값(STATE.md Task 3.2/5.2 재설계): 클로즈업은
-            # identity 전이 신뢰도와 배경 퀄리티 둘 다 떨어뜨린다 — wide shot으로 고정.
-            "OVERRIDE the shot-size instruction above for this character: ALWAYS use a wide "
-            "or establishing shot with the character small within an expansive, detailed "
-            "background — never a close-up or medium close-up. Keep the camera static or "
-            "slow-panning, not pushing in. "
         )
+        if force_wide:
+            # Task 3.2 눈판정으로 확정된 기본값(STATE.md Task 3.2/5.2 재설계): Stand-In(Wan)
+            # 경로에서는 클로즈업이 identity 전이 신뢰도와 배경 퀄리티를 둘 다 떨어뜨린다.
+            #
+            # 2026-08-13: LTX Face-ID와 제품 조립 경로에는 적용하지 않는다. 그 두 경로에는
+            # 이 규칙이 정반대로 작용해 4씬 전부 "character small within this frame"이 나왔고
+            # 인물이 멀어 얼굴이 뭉개졌다(job 00a21ee8, 사용자 지적). 스파이크 확정본은
+            # medium-close(clip22)로 성공했다.
+            base += (
+                "OVERRIDE the shot-size instruction above for this character: ALWAYS use a wide "
+                "or establishing shot with the character small within an expansive, detailed "
+                "background — never a close-up or medium close-up. Keep the camera static or "
+                "slow-panning, not pushing in. "
+            )
     return base + "Output ONLY the prompt text — no preamble, no quotes, no explanation, no markdown."
 
 
@@ -1133,8 +1788,15 @@ def scene_seed(job_id: str, scene_id: int) -> int:
     의도: 그림체 흔들림 방지) 참조 이미지 전체를 첫 프레임 latent로 쓰는 STANDIN_STEPS=4
     같은 저스텝 조합에서 프롬프트 차이가 트레젝토리를 거의 못 갈라놓아 씬마다 다른
     텍스트를 줘도 모션이 수렴해버리는 사례 실측(2026-07-10, job
-    f1be24f6-aaf7-4e39-bc0c-49ac3ca64e5c — 씬 1/2 프레임이 사실상 동일)."""
-    return int(hashlib.sha1(f"{job_id}:{scene_id}".encode()).hexdigest()[:8], 16) % (2 ** 31)
+    f1be24f6-aaf7-4e39-bc0c-49ac3ca64e5c — 씬 1/2 프레임이 사실상 동일).
+
+    2026-08-13: 시드 기반을 job_id에서 **고정 상수**로 바꿨다. job마다 UUID가 달라
+    같은 입력이 매번 다른 추첨을 받았고, 스파이크가 확정한 그림을 재현할 방법이
+    없었다(스파이크는 전 단계 seed=20260813 고정). 씬별 변화는 scene_id로 유지한다.
+    AGENT_SCENE_SEED_BASE로 덮어쓰면 다른 추첨을 시도할 수 있다.
+    """
+    base = os.environ.get("AGENT_SCENE_SEED_BASE", "20260813").strip() or "20260813"
+    return int(hashlib.sha1(f"{base}:{scene_id}".encode()).hexdigest()[:8], 16) % (2 ** 31)
 
 
 def _generation_cache_key(scene: Scene) -> tuple:
@@ -1237,7 +1899,50 @@ async def node_generate_one_clip(payload: dict) -> dict:
     # 모든 백엔드가 이 단일 길목을 통과하므로 여기 하나만 걸면 :8188 합산 동시성이 잡힌다.
     relight = _needs_relight(scene.get("mood", "neutral"))  # M3-8: mood 괴리 씬만 재조명 노브
     async with tools._gen_semaphore:
-        if scene["mode"] == "SUBJECT_REF":
+        # PERSON_ASSEMBLY = 제품이 화면에 없는 인물 씬. 같은 조립 경로를 제품 없이
+        # 탄다(배경 T2I → I2V). Face-ID 정원을 넘겨 22B에서 내려온 씬이다.
+        # B노선(제품 오버레이): T2V로 사람 장면을 먼저 끝내고 제품을 그 위에 얹는다.
+        # A노선(조립+I2V)은 제품을 첫 프레임에 박아 LTX에 넘기는데, LTX가 조건 이미지를
+        # 첫 8프레임에만 쓰고 나머지를 새로 그려 제품을 지운다(job dd16ef56 실측).
+        # 손에 쥔 씬은 제품이 손과 같이 움직여야 하므로 정적 오버레이가 물리적으로
+        # 틀리다 — A노선에 남긴다. AGENT_PRODUCT_OVERLAY=0으로 전체를 A노선에 되돌린다
+        # (음료 광고 baseline은 A노선에서 확정된 값이라 그때 필요하다).
+        _hand_held = bool(scene.get("product_hand_held"))
+        if scene["mode"] == "PRODUCT_OVERLAY" or (
+                tools.PRODUCT_OVERLAY_ENABLED
+                and scene["mode"] == "PRODUCT_ASSEMBLY" and not _hand_held):
+            clip_path = await tools.generate_product_overlay_clip(
+                job_id=job_id, scene_id=scene["id"], prompt=scene["prompt"],
+                product_ref=scene["matched_image"],
+                # product_hero는 classify가 씬 텍스트로 결정론적으로 채운다.
+                # subject_type 폴백은 A노선에서 넘어온 씬(PRODUCT_ASSEMBLY)용이다.
+                hero=bool(scene.get("product_hero",
+                                    scene.get("subject_type") != "human")),
+                duration=scene.get("duration", 2.0), seed=payload.get("seed"),
+                force_new=payload.get("force_new", False),
+                scene_context=scene.get("setting") or "",
+            )
+        elif scene["mode"] in ("PRODUCT_ASSEMBLY", "PERSON_ASSEMBLY"):
+            clip_path = await tools.generate_product_scene_clip(
+                job_id=job_id, scene_id=scene["id"], prompt=scene["prompt"],
+                product_ref=(scene["matched_image"]
+                             if scene["mode"] == "PRODUCT_ASSEMBLY" else None),
+                face_ref=scene.get("face_id_ref"),
+                # 히어로컷 = 사람이 안 나오는 제품 씬. face_ref 유무로 추론하면 안 된다 —
+                # 인물 참조가 없는 job("시나리오만" 모드)은 전 씬이 face_ref=None이라
+                # 사람이 나오는 씬까지 히어로컷으로 처리된다.
+                hero=(scene.get("subject_type") != "human"),
+                hand_held=bool(scene.get("product_hand_held")),
+                duration=scene.get("duration", 2.0), seed=payload.get("seed"),
+                negative_prompt=scene.get("negative_prompt"),
+                # 배경에는 장소·조명만 넘긴다(동작 서술을 넣으면 Kontext가 그 동작을
+                # 그려버려 첫 프레임이 '동작 직전'이 아니게 된다).
+                scene_context=", ".join(
+                    v for v in (scene.get("setting"), scene.get("lighting")) if v),
+                person_appearance=scene.get("person_appearance") or "",
+                force_new=payload.get("force_new", False),
+            )
+        elif scene["mode"] == "SUBJECT_REF":
             clip_path = await tools.generate_subject_ref_clip(
                 job_id=job_id, scene_id=scene["id"], prompt=scene["prompt"],
                 ref_image=scene["matched_image"], duration=scene.get("duration", 2.0),

@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(nvidia-smi)",
+      "Bash(nvidia-smi *)",
+      "Bash(ss -tlnp*)",
+      "Bash(free -h*)",
+      "Bash(ps -o *)",
+      "Bash(curl -sf -m 3 http://127.0.0.1:8188/system_stats*)",
+      "Bash(curl -sf -m 5 http://127.0.0.1:8188/system_stats*)",
+      "Bash(curl -sf -m 3 http://127.0.0.1:8188/queue*)",
+      "Bash(curl -sf -m 5 http://127.0.0.1:8188/queue*)",
+      "Bash(curl -sf -m 3 http://127.0.0.1:8188/history*)",
+      "Bash(curl -sf -m 5 http://127.0.0.1:8188/history*)",
+      "Bash(curl -sf -m 3 http://localhost:8700/health)",
+      "Bash(curl -sf -m 5 http://localhost:8700/health)",
+      "Bash(curl -sf -m 3 http://127.0.0.1:8700/health)",
+      "Bash(curl -sf -m 5 http://127.0.0.1:8700/health)",
+      "Bash(curl -sf -m 3 http://localhost:8701/health)",
+      "Bash(curl -sf -m 5 http://localhost:8701/health)",
+      "Bash(curl -sf -m 3 http://127.0.0.1:8701/health)",
+      "Bash(curl -sf -m 5 http://127.0.0.1:8701/health)"
+    ]
+  }
+}

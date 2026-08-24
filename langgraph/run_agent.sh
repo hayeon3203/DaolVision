@@ -5,8 +5,33 @@ cd "$(dirname "$0")"
 export AGENT_API_HOST="${AGENT_API_HOST:-0.0.0.0}"
 export AGENT_API_PORT="${AGENT_API_PORT:-8700}"
 export AGENT_OLLAMA_URL="${AGENT_OLLAMA_URL:-http://127.0.0.1:11434/api/chat}"
-export AGENT_LLM_MODEL="${AGENT_LLM_MODEL:-hf.co/nvidia/NVIDIA-Nemotron-3-Nano-4B-GGUF:Q4_K_M}"
+export AGENT_LLM_MODEL="${AGENT_LLM_MODEL:-gemma3:4b}"
+  # 2026-08-13 최종: gemma3:4b(Google, 3.3GB, 비중국 원산).
+  # A/B(tests/probe_llm_ab_scene_split.py) 실측 — 같은 시나리오 4씬 기준:
+  #   Nemotron 4B  : setting 1/4만 추출, 나머지는 "어두운 사무실"·"버스 스테이션" 환각.
+  #                  "코트"를 coat(외투)로 오역, 농구장→soccer field/football pitch.
+  #   exaone3.5:32b: 오역 없음, setting은 씬1만 추출(나머지 폴백). 전체 소요 수 분 +
+  #                  21.6GB 상주가 FLUX 콜드로드를 압박해 T2I 서버가 내려감(job a817cfc4).
+  #   gemma4:latest: setting 4/4 전부 빈 값, 장소가 실내 체육관·공원으로 표류.
+  #   gemma3:4b    : setting 4/4 추출 성공, 오역 없음, 전체 71초. 채택.
+  # 아래는 교체 이력(참고):
+  # 2026-08-13: Nemotron 3 Nano 4B → exaone3.5:32b(LG AI, 한국어 특화, 비중국 원산).
+  # 4B가 한국어 원문을 지키지 못하는 게 배경 불일치의 직접 원인이었다(UI E2E job
+  # 1a0d85b1 실측): "코트"를 coat(외투)로 오역해 "one side of the coat"를 쓰고,
+  # 농구장을 soccer field/football pitch로 바꾸고, 음료수를 a glass of water로 바꿨다.
+  # 장소 추출은 더 나빠서 시나리오에 없는 "어두운 사무실"·"버스 스테이션"을 환각했다.
+  # exaone은 같은 시나리오에서 4씬 전부 setting=농구장을 뽑았고 오역이 없었다
+  # (tests/probe_llm_ab_scene_split.py A/B). 19.3GB로 ComfyUI와 동거 가능.
 export AGENT_LLM_KEEP_RESIDENT="${AGENT_LLM_KEEP_RESIDENT:-1}"
+  # gemma3:4b는 3.3GB라 상주해도 FLUX/ComfyUI를 압박하지 않는다(원래 이 정책이 전제한
+  # 크기). 상주를 켜면 LLM 호출 7~8회의 재로드 비용이 사라진다. 아래는 32B를 쓰던
+  # 동안 껐던 이력(참고):
+  # 2026-08-13: 1 → 0. 상주 정책은 씬분할 LLM이 Nemotron 4B(2.8GB)일 때 세운 것인데
+  # exaone3.5:32b는 21.6GB를 영구 점유한다(ollama /api/ps 실측). 그 상태에서 FLUX
+  # 콜드 로드가 157초까지 늘어졌고 응답 직후 T2I 서버가 내려가 다음 호출이 연결
+  # 거부를 맞았다(job a817cfc4, flux.service restart counter 2). LLM은 씬분할·프롬프트
+  # 단계에서만 쓰이고 그 뒤로는 이미지·영상 생성이 이어지므로 상주 이득보다 점유
+  # 손해가 크다. 대신 LLM 호출마다 재로드 비용이 붙는다.
   # 2026-08-02: gemma4:latest로 잠깐 바꿨다가 롤백 — matched_image/subject_type을
   # LLM 판단에 맡기지 않고 단일 참조 시 node_split_scenes가 결정론적으로 강제하도록
   # 고쳐서(nodes.py "단일 참조 결정론적 매칭") 씬분할 LLM 자체의 이 약점은 더는 문제 아님.
@@ -26,9 +51,16 @@ export AGENT_STANDIN_FPS="${AGENT_STANDIN_FPS:-16}"    # Wan2.1 네이티브 16f
 export AGENT_STANDIN_EXEC_TIMEOUT="${AGENT_STANDIN_EXEC_TIMEOUT:-1800}"
 export AGENT_STANDIN_QUEUE_TIMEOUT="${AGENT_STANDIN_QUEUE_TIMEOUT:-86400}"
 export AGENT_MAX_CONCURRENT_CLIPS="${AGENT_MAX_CONCURRENT_CLIPS:-1}"  # 씬 클립 동시 생성 상한. 1=순차(OOM안전), 2=백엔드당 하나
+# 씬 개수. 씬분할 LLM 프롬프트·교정 재요청·정규화가 모두 이 값을 공유한다.
+# 5 = 인물 4씬 + 마무리 히어로컷(제품 단독) 1씬. 클립당 8~10분이라 job 시간이 그만큼 는다.
+export AGENT_SCENE_COUNT="${AGENT_SCENE_COUNT:-5}"
 # fast=832x480, quality=1280x704 (해상도만 바뀜 — VIDEO_PRESETS의 steps 필드는 죽은 코드,
 # tools.py 어디서도 안 읽힘). AGENT_WIDTH/AGENT_HEIGHT로 개별 덮어쓰기 가능.
-export AGENT_VIDEO_PRESET="${AGENT_VIDEO_PRESET:-fast}"
+export AGENT_VIDEO_PRESET="${AGENT_VIDEO_PRESET:-quality}"
+  # 2026-08-13: fast(832x480) → quality(1280x704). Face-ID 경로는 자체 상수
+  # (LTX_FACEID_WIDTH/HEIGHT=1280x704)를 쓰는데 조립·I2V 경로만 이 프리셋을 따르므로,
+  # fast로 두면 한 광고 안에서 씬마다 해상도가 달라진다(UI E2E job 00a21ee8 실측:
+  # clip1=1280x704, clip2=832x480). 스파이크 확정본도 전부 quality로 만들었다.
 export AGENT_FPS="${AGENT_FPS:-24}"          # Wan2.2-TI2V-5B 네이티브 24fps
 # T2V/I2V-폴백/I2V-단발샷(전부 LTX-13B-distilled)의 실제 diffusion step 수 — 프리셋과
 # 무관한 별도 변수. distilled 체크포인트의 원 학습 레짐(4~8) 상단인

@@ -33,7 +33,7 @@ def test_missing_settings_fall_back_to_each_scene_text():
             {"id": 3, "text": "여름 숲에 소나기와 무지개가 나타난다", "mood": "neutral"},
             {"id": 4, "text": "가을 호수에 붉은 낙엽이 내려앉는다", "mood": "sad"},
         ]
-        _, settings = asyncio.run(nodes._make_scene_context({
+        _, settings, _person = asyncio.run(nodes._make_scene_context({
             "script_text": " ".join(scene["text"] for scene in scenes),
             "scenes": scenes,
         }))

@@ -78,11 +78,17 @@ POLICY_DIR="${REPO_ROOT}/docker/policies"
 # FileNotFoundError 로 죽는다(2026-08-12, 로고+GB10 일관성 스파이크 Task 2에서
 # 최초 재현 — subject_ref 경로가 OpenShell 전환(Task 8.2.1) 이후 처음
 # 실행됐다는 뜻이기도 하다). 두 HF_HUB 경로를 마운트해서 해소.
+# 2026-08-13: comfyui에서 `--highvram` 제거. GB10은 통합메모리라 "VRAM이 남으니
+# 안 내린다"는 전제가 성립하지 않는다 — 모델을 계속 상주시키면 CUDA가 보는 여유가
+# 말라 VAE 디코드 시점에 축출이 터지고, 하필 축출 대상이 GGUF 양자화 모델이라
+# 텐서 4400개를 CPU에서 하나씩 역양자화한다(py-spy 실측: free_memory →
+# partially_unload → _quantized_apply, GPU 1%로 40분 정체, job 92a9a76b 씬1).
+# 재로드 +50~80초(docs/spikes/3.6)가 그 축출보다 압도적으로 싸다.
 read -r -d '' SERVICES <<EOF || true
-comfyui|8188|yes|/home/admin/video_generator/ComfyUI|/home/admin/.venv/bin/python main.py --cache-classic --highvram --listen 0.0.0.0|-|rw:/home/admin/video_generator/ComfyUI /home/admin/.venv ${HF_HUB}/models--Kijai--WanVideo_comfy ${HF_HUB}/models--BowenXue--Stand-In
+comfyui|8188|yes|/home/admin/video_generator/ComfyUI|/home/admin/.venv/bin/python main.py --cache-classic --listen 0.0.0.0|HF_HUB_OFFLINE=1|rw:/home/admin/video_generator/ComfyUI /home/admin/.venv ${HF_HUB}/models--Kijai--WanVideo_comfy ${HF_HUB}/models--BowenXue--Stand-In
 t2i|8501|yes|/home/admin/DaolVision/inference_server|/home/admin/huyuan-env/bin/python flux_server.py|HYV_HOST=0.0.0.0 HYV_PORT=8501 FLUX_KEEP_RESIDENT=1 HF_HOME=/home/admin/.cache/huggingface HF_HUB_OFFLINE=1|/home/admin/DaolVision/inference_server rw:/home/admin/DaolVision/inference_server/outputs /home/admin/huyuan-env ${HF_HUB}/models--black-forest-labs--FLUX.1-schnell
-kokoro|8503|no|/home/admin/DaolVision|/home/admin/DaolVision/.venv-kokoro/bin/python tts/kokoro/server.py|KOKORO_HOST=0.0.0.0 KOKORO_PORT=8503|/home/admin/DaolVision/tts/kokoro /home/admin/DaolVision/.venv-kokoro ${HF_HUB}/models--onnx-community--Kokoro-82M-v1.0-ONNX-timestamped
-chatterbox|8504|yes|/home/admin/DaolVision|/home/admin/DaolVision/.venv-chatterbox/bin/python tts/chatterbox/server.py|CHATTERBOX_HOST=0.0.0.0 CHATTERBOX_PORT=8504 NUMBA_CACHE_DIR=/tmp|/home/admin/DaolVision/tts/chatterbox /home/admin/DaolVision/.venv-chatterbox /home/admin/.local/share/uv/python ${HF_HUB}/models--ResembleAI--chatterbox
+kokoro|8503|no|/home/admin/DaolVision|/home/admin/DaolVision/.venv-kokoro/bin/python tts/kokoro/server.py|KOKORO_HOST=0.0.0.0 KOKORO_PORT=8503 HF_HUB_OFFLINE=1|/home/admin/DaolVision/tts/kokoro /home/admin/DaolVision/.venv-kokoro ${HF_HUB}/models--onnx-community--Kokoro-82M-v1.0-ONNX-timestamped
+chatterbox|8504|yes|/home/admin/DaolVision|/home/admin/DaolVision/.venv-chatterbox/bin/python tts/chatterbox/server.py|CHATTERBOX_HOST=0.0.0.0 CHATTERBOX_PORT=8504 NUMBA_CACHE_DIR=/tmp HF_HUB_OFFLINE=1|/home/admin/DaolVision/tts/chatterbox /home/admin/DaolVision/.venv-chatterbox /home/admin/.local/share/uv/python ${HF_HUB}/models--ResembleAI--chatterbox
 ollama|11434|yes|/home/admin|/usr/local/bin/ollama serve|HOME=/home/admin OLLAMA_HOST=0.0.0.0:11434 OLLAMA_MAX_LOADED_MODELS=2 OLLAMA_MODELS=/usr/share/ollama/.ollama/models|/usr/local/bin/ollama /usr/local/lib/ollama rw:/home/admin/.ollama /usr/share/ollama/.ollama/models
 EOF
 

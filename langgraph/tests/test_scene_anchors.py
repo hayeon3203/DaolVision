@@ -39,7 +39,22 @@ def _run():
         "앵커 필드는 더 이상 생성되면 안 됨"
     )
     assert all(scene["face_id_ref"] == "astronaut.png" for scene in classified)
-    assert all(scene["mode"] == "LTX_FACEID" for scene in classified)
+    # 2026-08-14: 22B Face-ID 씬은 FACEID_MAX_SCENES(기본 1)로 자른다 — 2개부터
+    # GGUF 재양자화로 10~40분 정체(docs/spikes/2026-08-13-scene5-e2e-handoff.md §2).
+    # 넘치는 씬은 조립 경로(PERSON_ASSEMBLY)로 내려가되 face_id_ref는 유지한다.
+    assert [s["mode"] for s in classified] == (
+        ["LTX_FACEID"] * nodes.FACEID_MAX_SCENES
+        + ["PERSON_ASSEMBLY"] * (4 - nodes.FACEID_MAX_SCENES))
+
+    # 정원을 올리면 원래 계약(전 씬 Face-ID) 그대로다 — 상한은 하드웨어 제약일 뿐이다.
+    original_cap = nodes.FACEID_MAX_SCENES
+    nodes.FACEID_MAX_SCENES = 4
+    try:
+        uncapped = nodes.node_classify_faceid_scenes({
+            "job_id": "s1-astronaut", "scenes": scenes})["scenes"]
+        assert all(scene["mode"] == "LTX_FACEID" for scene in uncapped)
+    finally:
+        nodes.FACEID_MAX_SCENES = original_cap
 
     nonhuman = {
         **scenes[0],

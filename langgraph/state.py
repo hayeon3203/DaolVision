@@ -25,7 +25,16 @@ class Scene(TypedDict, total=False):
                                     # 씬별로 특정 방향(예: "wine bottle")을 밀어내야 할 때만 채움
                                     # (2026-08-12 음료 광고 스파이크, 씬3a 와인병 드리프트 대응).
     face_id_ref: Optional[str]     # LTX Face-ID에 별도 첨부할 사람 identity 참조 파일명
-    mode: Literal["I2V", "T2V", "STANDIN", "SUBJECT_REF", "LTX_FACEID"]
+    mode: Literal["I2V", "T2V", "STANDIN", "SUBJECT_REF", "LTX_FACEID",
+                  "PRODUCT_ASSEMBLY", "PERSON_ASSEMBLY"]
+    # PRODUCT_ASSEMBLY: 제품 참조(character_ref)와 인물 참조(face_id_ref)가 함께 붙은 씬.
+    # 배경 생성 → 제품 픽셀 Pillow 합성 → Kontext 재통합 → LTX I2V로 이어지는 A노선
+    # (tools.generate_product_scene_clip). subject_ref(Wan)는 참조에 없는 새 요소를
+    # 못 그려서 이 조합에 못 쓴다(2026-08-12 스파이크 결론).
+    # PERSON_ASSEMBLY: 제품이 화면에 없는 인물 씬인데 Face-ID 정원(FACEID_MAX_SCENES)을
+    # 넘겨 22B에서 내려온 씬. 같은 A노선을 제품 합성 없이 탄다(배경 T2I → LTX I2V).
+    person_appearance: Optional[str]  # 조립 경로 배경 프롬프트에 박을 인물 외형(캡션+의상 lock)
+    product_hand_held: Optional[bool]  # 인물이 제품을 손에 쥐는 씬인지(배경·배치가 달라짐)
     clip_path: Optional[str]       # Phase 3 생성 결과
     steps: int                     # 이 클립이 돌린 denoising step 수 (영상당 합산에 사용)
     quality_score: Optional[float]
@@ -46,8 +55,17 @@ class GraphState(TypedDict, total=False):
     image_request: str             # 사용자의 자연어 이미지 요청 (형식 강제 없음)
     image_query: str               # 하위호환: image_queries[0]
     image_queries: list[str]       # rewrite된 이미지 생성용 영어 프롬프트 (1개 고정, 리스트로 유지 — 하위호환)
+    generated_ref_is_product: bool  # 생성 참조가 제품인가. _image_query_system이 제품 규칙을
+                                   # 고른 시점에 확정한다 — 나중에 비전 캡션의 human/nonhuman
+                                   # 판정으로 다시 묻지 않기 위해서다. 그 판정은 같은 시나리오를
+                                   # 실행마다 다르게 갈랐다(2026-08-23: job dd16ef56은 nonhuman,
+                                   # job c87912d8은 human으로 분류돼 노선이 통째로 바뀌었다).
     gen_image_path: str            # 하위호환: gen_image_paths[0]
     gen_image_paths: list[str]     # 생성된 이미지 png 경로들 (승인 게이트 대상)
+    gen_image_history: list[str]   # 재생성 시도별 누적 경로. 사용자가 "1차/2차를 비교하고
+                                   # 2번째로 결정"할 수 있어야 하는데, 예전엔 매 시도가
+                                   # gen_img_0.png를 덮어써서 이전 결과가 물리적으로
+                                   # 사라졌다(2026-08-13).
 
     # Phase 1~2 산출물
     scenes: list[Scene]

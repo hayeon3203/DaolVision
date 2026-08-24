@@ -64,6 +64,13 @@ async def startup():
     # 제출/생성 중 프로세스가 종료된 작업은 기존 prompt_id로 이어서 회수한다.
     # 사람 승인 interrupt에 멈춘 작업은 자동으로 resume하지 않는다.
     for job_id in tools.recoverable_comfy_jobs():
+        # 취소된 job은 되살리지 않는다. recoverable_comfy_jobs()는 comfy_prompts에
+        # queued/running/completed 행이 남은 job을 전부 돌려주므로 오래전에 취소한
+        # job도 섞인다 — 그걸 그대로 _launch 하면 서버를 재기동할 때마다 옛 job이
+        # 살아나 _gen_semaphore(동시 1)를 물고 새 job을 굶긴다(2026-08-23 실측:
+        # 무드등 E2E가 씬분할에서 멈춰 있는 동안 872beeee 씬1이 재생성됐다).
+        if (tools.job_dir(job_id) / ".cancelled").exists():
+            continue
         config = {"configurable": {"thread_id": job_id}}
         snapshot = await graph.aget_state(config)
         interrupts = [i for task in snapshot.tasks
@@ -193,6 +200,9 @@ async def cancel_job(job_id: str):
         task.cancel()
     (tools.job_dir(job_id) / ".cancelled").write_text("user_cancelled\n")
     ERRORS.pop(job_id, None)
+    # 취소만 표시하면 ComfyUI가 모델을 계속 물고 있어 다음 job의 FLUX 콜드로드가
+    # GPU OOM으로 죽는다(2026-08-23 실측, tools.release_comfyui_gpu 주석 참고).
+    await tools.release_comfyui_gpu()
     metrics.video_finished(scenes=0, duration=None, status="cancelled")
     return {"job_id": job_id, "status": "cancelled"}
 
@@ -455,6 +465,10 @@ def _checkpoint_for_client(checkpoint: dict) -> dict:
             "gen_image_urls": gen_image_urls,
             "gen_image_url": gen_image_urls[0] if gen_image_urls else None,
         }
+    history = checkpoint.get("gen_image_history")
+    if history:
+        # 재생성 시도별 이미지 — 프론트가 1차/2차를 비교해 보여준다.
+        result = {**result, "gen_image_history_urls": [_to_url(p) for p in history]}
     return result
 
 

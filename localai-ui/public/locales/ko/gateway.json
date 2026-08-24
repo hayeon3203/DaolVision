@@ -41,12 +41,7 @@
     "feedbackLabel": "수정 요청",
     "feedbackPlaceholder": "예: 배경을 더 밝게, 인물을 더 젊게",
     "regenerate": "재생성 요청",
-    "cancel": "취소",
-    "previousAttempts": "이전 시도 {{count}}장",
-    "attemptLabel": "{{n}}차",
-    "attemptCurrent": "{{n}}차 (현재)",
-    "attemptAlt": "{{n}}번째 생성 이미지",
-    "approveAppliesToCurrent": "승인은 현재(마지막) 이미지에 적용됩니다. 이전 시도를 고르려면 그 방향으로 수정 요청해 다시 생성하세요."
+    "cancel": "취소"
   },
   "clipPreview": {
     "hint": "클립 {{count}}개 생성됨 — 확인 후 승인하거나, low_quality 씬을 골라 재생성하세요.",
@@ -57,18 +52,9 @@
   "t2v": {
     "description": "한 줄의 아이디어를 움직이는 장면으로",
     "facts": {
-      "prompt": {
-        "title": "텍스트 프롬프트",
-        "description": "만들고 싶은 장면과 움직임을 자연어로 설명합니다."
-      },
-      "seed": {
-        "title": "재현 가능한 시드",
-        "description": "시드를 고정해 같은 조건의 결과를 다시 생성합니다."
-      },
-      "clip": {
-        "title": "단일 영상 클립",
-        "description": "Cosmos3-Nano가 바로 재생 가능한 영상을 완성합니다."
-      }
+      "prompt": { "title": "텍스트 프롬프트", "description": "만들고 싶은 장면과 움직임을 자연어로 설명합니다." },
+      "seed": { "title": "재현 가능한 시드", "description": "시드를 고정해 같은 조건의 결과를 다시 생성합니다." },
+      "clip": { "title": "단일 영상 클립", "description": "Cosmos3-Nano가 바로 재생 가능한 영상을 완성합니다." }
     },
     "inputDescription": "장면 설명과 생성 조건을 입력하세요.",
     "outputDescription": "완성된 영상 클립을 확인하세요.",
@@ -82,18 +68,9 @@
   "t2i": {
     "description": "상상한 장면을 선명한 이미지 한 장으로",
     "facts": {
-      "prompt": {
-        "title": "자유로운 프롬프트",
-        "description": "원하는 피사체, 분위기, 조명을 자연어로 묘사합니다."
-      },
-      "resolution": {
-        "title": "맞춤 해상도",
-        "description": "가로와 세로 크기를 콘텐츠 용도에 맞게 설정합니다."
-      },
-      "speed": {
-        "title": "빠른 이미지 생성",
-        "description": "Flux.1-schnell이 아이디어를 빠르게 시각화합니다."
-      }
+      "prompt": { "title": "자유로운 프롬프트", "description": "원하는 피사체, 분위기, 조명을 자연어로 묘사합니다." },
+      "resolution": { "title": "맞춤 해상도", "description": "가로와 세로 크기를 콘텐츠 용도에 맞게 설정합니다." },
+      "speed": { "title": "빠른 이미지 생성", "description": "Flux.1-schnell이 아이디어를 빠르게 시각화합니다." }
     },
     "inputDescription": "이미지 설명과 크기를 입력하세요.",
     "outputDescription": "완성된 이미지를 확인하세요.",
@@ -114,18 +91,9 @@
     },
     "description": "한 장의 얼굴 사진을 새로운 스타일의 캐릭터로",
     "facts": {
-      "photo": {
-        "title": "사진 또는 웹캠",
-        "description": "이미지를 업로드하거나 카메라로 바로 촬영합니다."
-      },
-      "styles": {
-        "title": "6가지 스타일",
-        "description": "시네마틱부터 수채화까지 원하는 화풍을 선택합니다."
-      },
-      "character": {
-        "title": "캐릭터 연결",
-        "description": "완성 이미지를 Agent 영상의 일관된 캐릭터로 사용합니다."
-      }
+      "photo": { "title": "사진 또는 웹캠", "description": "이미지를 업로드하거나 카메라로 바로 촬영합니다." },
+      "styles": { "title": "6가지 스타일", "description": "시네마틱부터 수채화까지 원하는 화풍을 선택합니다." },
+      "character": { "title": "캐릭터 연결", "description": "완성 이미지를 Agent 영상의 일관된 캐릭터로 사용합니다." }
     },
     "inputDescription": "원본 사진과 변환 스타일을 선택하세요.",
     "outputDescription": "새롭게 스타일링된 캐릭터를 확인하세요.",
@@ -140,18 +108,9 @@
   "tts": {
     "description": "내 목소리의 특징을 담은 자연스러운 음성 생성",
     "facts": {
-      "record": {
-        "title": "녹음 또는 업로드",
-        "description": "직접 녹음하거나 사용 권한이 있는 참조 음성을 올립니다."
-      },
-      "text": {
-        "title": "한국어 텍스트",
-        "description": "읽게 할 문장을 입력해 음성 콘텐츠를 구성합니다."
-      },
-      "clone": {
-        "title": "음성 클론",
-        "description": "Chatterbox V3가 참조 화자의 특징을 음성에 반영합니다."
-      }
+      "record": { "title": "녹음 또는 업로드", "description": "직접 녹음하거나 사용 권한이 있는 참조 음성을 올립니다." },
+      "text": { "title": "한국어 텍스트", "description": "읽게 할 문장을 입력해 음성 콘텐츠를 구성합니다." },
+      "clone": { "title": "음성 클론", "description": "Chatterbox V3가 참조 화자의 특징을 음성에 반영합니다." }
     },
     "inputDescription": "참조 음성과 읽을 문장을 준비하세요.",
     "outputDescription": "생성된 음성을 듣고 내려받으세요.",
@@ -163,48 +122,29 @@
   },
   "agent": {
     "nodes": {
-      "planning": {
-        "title": "스토리 분석",
-        "description": "이야기의 흐름과 핵심 장면을 정리합니다."
-      },
-      "prompting": {
-        "title": "씬 분할",
-        "description": "스토리를 영상에 맞는 씬 단위로 나눕니다."
-      },
-      "anchoring": {
-        "title": "캐릭터 앵커",
-        "description": "인물의 외형과 화풍을 장면마다 고정합니다."
-      },
-      "generating": {
-        "title": "영상 생성",
-        "description": "각 씬을 움직이는 영상 클립으로 만듭니다."
-      },
-      "done": {
-        "title": "최종 합성",
-        "description": "클립과 나레이션을 하나의 영상으로 완성합니다."
-      }
+      "planning": { "title": "스토리 분석", "description": "이야기의 흐름과 핵심 장면을 정리합니다." },
+      "prompting": { "title": "씬 분할", "description": "스토리를 영상에 맞는 씬 단위로 나눕니다." },
+      "anchoring": { "title": "캐릭터 앵커", "description": "인물의 외형과 화풍을 장면마다 고정합니다." },
+      "generating": { "title": "영상 생성", "description": "각 씬을 움직이는 영상 클립으로 만듭니다." },
+      "done": { "title": "최종 합성", "description": "클립과 나레이션을 하나의 영상으로 완성합니다." }
     },
     "nodesAriaLabel": "Agent 작업 노드",
-    "nodeStatus": {
-      "done": "완료",
-      "active": "진행 중",
-      "waiting": "대기"
-    },
+    "nodeStatus": { "done": "완료", "active": "진행 중", "waiting": "대기" },
     "taglineStory": "스토리",
     "taglineSplit": "씬 분할",
     "taglineVideo": "캐릭터 일관 영상",
-    "processHeading": "생성할 인물과 광고할 제품을 입력하세요.",
+    "processHeading": "스토리와 캐릭터 정보를 입력하세요.",
     "resultHeading": "생성 중인 장면과 완성 영상을 확인하세요.",
-    "modeDescribe": "인물 생성 + 제품 첨부",
+    "modeUpload": "사진 첨부",
+    "modeDescribe": "이미지 설명으로 생성",
     "modeNoref": "시나리오만",
     "storyLabel": "스토리",
     "storyPlaceholder": "한 우주비행사가 노을 지는 발사대에서 로켓을 타고 이륙한다...",
+    "refImagesLabel": "캐릭터 참조 이미지 (I2I 카테고리에서 만든 우주비행사 등)",
     "refImagesAttached": "{{count}}장 첨부됨",
-    "personLabel": "생성할 인물",
-    "personPlaceholder": "20대 한국인 남자, 짧은 검은 머리, 흰 반팔 티셔츠, 정면 얼굴, 사실적인 사진",
-    "personHint": "설명대로 인물 사진을 생성합니다(T2I, FLUX.1-schnell). 외모·의상·나이를 적을수록 장면마다 같은 사람이 유지됩니다. 승인 후 시나리오를 입력합니다.",
-    "productLabel": "제품 사진 (배경 없는 PNG)",
-    "productHint": "광고에 넣을 제품을 첨부하세요. 배경이 지워진 투명 PNG여야 합니다 — 흰 배경 사진은 배경째 합성됩니다.",
+    "imageDescriptionLabel": "이미지 설명",
+    "imageDescriptionPlaceholder": "우주복을 입은 우주비행사가 노을 지는 발사대 앞에 서있는 모습, 시네마틱...",
+    "imageDescriptionHint": "참조 사진 없이 설명만으로 캐릭터 이미지를 생성합니다(T2I, FLUX.1-schnell). 승인하면 그 이미지로 시나리오를 이어서 입력합니다.",
     "norefHint": "참조 이미지 없이 시나리오만으로 영상을 만듭니다. 인물이 등장하면 장면마다 같은 외형이 유지되도록 자동으로 설정합니다.",
     "starting": "시작 중...",
     "start": "시작",

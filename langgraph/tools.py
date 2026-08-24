@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import sqlite3
 import subprocess
 import tempfile
@@ -22,7 +23,7 @@ from pathlib import Path
 from io import BytesIO
 
 import httpx
-from PIL import Image, ImageOps
+from PIL import Image, ImageDraw, ImageFilter, ImageOps
 
 import oom_orchestrator as oom
 import style_presets
@@ -128,6 +129,9 @@ LTX_FACEID_STEPS = int(os.environ.get("AGENT_LTX_FACEID_STEPS", "8"))
 # node 129(LTXIdentityOverlapConditioning)의 identity 강도 노브. 기본값 1.0은 워크플로
 # JSON 원본값 그대로 — 얼굴 일관성이 아쉬우면 1.2~1.5로 올려본다(배경/포즈 자유도와 trade-off).
 LTX_FACEID_GUIDANCE = float(os.environ.get("AGENT_LTX_FACEID_GUIDANCE", "1.0"))
+# 워크플로 내장 Gemma 캡션 재작성(node 79 TextGenerate)의 토큰 상한. 원본 JSON은 1024.
+LTX_FACEID_CAPTION_MAX_TOKENS = int(
+    os.environ.get("AGENT_LTX_FACEID_CAPTION_MAX_TOKENS", "192"))
 # 호환 alias (구 이름) — 기본 경로는 i2v.
 STANDIN_WORKFLOW = I2V_WORKFLOW
 # API 그래프 주입 노드 ID (comfyui_workflows/README.md 표 참조). 두 워크플로는 dims 노드만
@@ -504,6 +508,14 @@ def clean_llm_prompt(text: str) -> str:
     text = _PROMPT_PREAMBLE.sub("", text).strip()
     # 4) 후기성 마지막 문장 제거 ("This prompt/description ...")
     text = re.sub(r"\s*This (prompt|description)\b.*$", "", text, flags=re.I | re.S).strip()
+    # 5) 한글 잔재 제거. 이 함수를 통과한 문자열은 전부 FLUX T5 / LTX로 가는데 둘 다
+    #    영어만 읽는다 — 한글 토큰은 순수 노이즈고, 의상 lock에 섞이면 전 씬 프롬프트로
+    #    복제된다(2026-08-13 job 3ded2f29: 오역 방지용 대응표 "Korean 반팔 means
+    #    short-sleeve"를 4B가 출력에 옮겨 적어 wardrobe lock이 `a white 반팔
+    #    (short-sleeve) t-shirt`가 됐다). 괄호 안 영문 주석이 붙어 있으면 그걸 살린다.
+    text = re.sub(r"[가-힣]+\s*\(([^)]*)\)", r"\1", text)
+    text = re.sub(r"[가-힣]+", " ", text)
+    text = re.sub(r"\s+([,.;:!?])", r"\1", re.sub(r"\s{2,}", " ", text)).strip()
     return text
 
 
@@ -532,7 +544,7 @@ async def generate_t2i_image(job_id: str, prompt: str, seed: int | None = None, 
     body = {"prompt": prompt, "width": T2I_WIDTH, "height": T2I_HEIGHT}
     if seed is not None:
         body["seed"] = seed
-    timeout = httpx.Timeout(connect=10.0, read=600.0, write=60.0, pool=None)
+    timeout = httpx.Timeout(connect=10.0, read=900.0, write=60.0, pool=None)
     async with oom.phase("t2i"), httpx.AsyncClient(timeout=timeout) as client:
         resp = await client.post(f"{T2I_URL}/generate", json=body)
         resp.raise_for_status()
@@ -582,7 +594,7 @@ async def generate_t2i_anchor(
         body["height"] = height
     if seed is not None:
         body["seed"] = seed
-    timeout = httpx.Timeout(connect=10.0, read=600.0, write=60.0, pool=None)
+    timeout = httpx.Timeout(connect=10.0, read=900.0, write=60.0, pool=None)
     async with oom.phase("t2i"), httpx.AsyncClient(timeout=timeout) as client:
         resp = await client.post(f"{T2I_URL}/generate", json=body)
         resp.raise_for_status()
@@ -1064,7 +1076,13 @@ STYLE_KONTEXT_GUIDANCE: dict[str, float] = {"cinematic": 4.0}
 # 잔가지 구조까지 고정 안 하게 하면서도 KSampler가 완전 무근거로 배경색을 굴리지
 # 않게 한다.
 FLUX_BG_REMOVAL_MODEL = os.environ.get("AGENT_FLUX_BG_REMOVAL_MODEL", "birefnet.safetensors")
-FLUX_BG_BLUR_RADIUS = 31  # ComfyUI ImageBlur 최댓값
+FLUX_BG_BLUR_RADIUS = 31   # ComfyUI ImageBlur 최댓값 — 얼굴 클로즈업(I2I 스타일 변환) 기본값
+FLUX_BG_BLUR_SIGMA = 10.0
+# 제품 합성 프레임 재통합용 약한 블러. 31/10.0을 그대로 쓰면 배경(농구골대·코트 마크)이
+# 다 뭉개지고(2026-08-12 씬2 v8), 반대로 블러를 아예 빼면 심도 단서가 사라져 합성한
+# 제품이 다시 "스티커"처럼 뜬다(v9/v10) — 약화가 정답이었다(v12, 사용자 승인).
+FLUX_PRODUCT_BLUR_RADIUS = int(os.environ.get("AGENT_FLUX_PRODUCT_BLUR_RADIUS", "10"))
+FLUX_PRODUCT_BLUR_SIGMA = float(os.environ.get("AGENT_FLUX_PRODUCT_BLUR_SIGMA", "4"))
 
 # ComfyUI comfy_extras/nodes_flux.py의 FluxKontextImageScale이 내부적으로 고르는
 # 해상도 버킷과 동일 목록 — EmptySD3LatentImage에 같은 width/height를 넣어야 latent
@@ -1087,9 +1105,233 @@ def _flux_kontext_dims(img_width: int, img_height: int) -> tuple[int, int]:
     return width, height
 
 
+# ── 제품 픽셀 합성 (A노선) ─────────────────────────────────────────────
+# 2026-08-12~13 음료 광고 스파이크에서 확정된 조립 방식. 제품 참조 이미지를 diffusion에
+# 통과시키지 않고 Pillow로 씬 배경에 직접 얹는다 — subject_ref(i2v_14b)가 "참조에 없는
+# 새 요소"를 못 그리는 약점을 우회하고, 제품 identity 붕괴를 구조적으로 차단한다.
+PRODUCT_WARM_TINT = (255, 220, 165)   # 골든아워 씬 톤 매칭(30% 곱연산)
+# 0으로 두면 tint를 끈다. 이 값은 골든아워 전용으로 튜닝된 것이라 씬 조명이 차갑거나
+# 실내면 제품만 주황빛이 돼 오히려 합성 티가 난다(2026-08-13 job e9059c29 씬3: 회색
+# 스튜디오 배경에 주황 제품). 조명을 SCENE_LIGHTING_LOCK으로 골든아워에 고정하는 한
+# 켜두는 게 맞고, 조명 상수를 바꾸면 이 값도 같이 조정해야 한다.
+PRODUCT_TINT_STRENGTH = float(os.environ.get("AGENT_PRODUCT_TINT_STRENGTH", "0.30"))
+
+
+def _apply_warm_tint(product: Image.Image, tint: tuple = PRODUCT_WARM_TINT,
+                     strength: float | None = None) -> Image.Image:
+    if strength is None:
+        strength = PRODUCT_TINT_STRENGTH
+    if strength <= 0:
+        return product
+    """제품 픽셀을 씬 조명 톤에 맞춘다. 스튜디오 흰조명 제품샷을 골든아워 배경에
+    그대로 얹으면 색온도가 튀어 합성 티가 난다."""
+    from PIL import ImageChops
+    rgb = product.convert("RGB")
+    multiplied = ImageChops.multiply(rgb, Image.new("RGB", rgb.size, tint))
+    out = Image.blend(rgb, multiplied, strength).convert("RGBA")
+    out.putalpha(product.split()[-1])
+    return out
+
+
+def _skin_mask(img: Image.Image, box: tuple[int, int, int, int]):
+    """box 안의 살색 픽셀 마스크. 제품을 쥔 손 씬에서 손가락을 제품 위로 되돌려
+    occlusion을 복원하는 데 쓴다 — 손가락이 제품 뒤에 있으면 첫 프레임이 물리적으로
+    틀린 상태가 되고, LTX가 그걸 맞추려 수렴하는 1초가 그대로 화면에 보인다."""
+    import numpy as np
+    arr = np.array(img.convert("RGB")).astype(np.int16)
+    r, g, b = arr[:, :, 0], arr[:, :, 1], arr[:, :, 2]
+    skin = (r > g) & (g > b) & ((r - b) > 25) & (r > 110)
+    mask = np.zeros(skin.shape, dtype=bool)
+    x0, y0, x1, y1 = box
+    mask[y0:y1, x0:x1] = skin[y0:y1, x0:x1]
+    return mask
+
+
+def compose_product_frame(
+    bg_path: str | Path, product_path: str | Path, out_path: str | Path, *,
+    width_ratio: float, center_x_ratio: float, bottom_y_ratio: float,
+    warm_tint: bool = True, occlusion_box: tuple[int, int, int, int] | None = None,
+) -> str:
+    """씬 배경에 제품 픽셀을 얹어 I2V 첫 프레임을 만든다(diffusion 없음).
+
+    비율은 배경 크기에 대한 상대값이다. occlusion_box를 주면 그 영역의 살색 픽셀을
+    합성 뒤에 다시 얹어 손가락이 제품 앞을 가로지르게 한다(제품을 쥔 씬 전용).
+    """
+    import numpy as np
+    bg = Image.open(bg_path).convert("RGBA")
+    product = Image.open(product_path).convert("RGBA")
+    if warm_tint:
+        product = _apply_warm_tint(product)
+    bw, bh = bg.size
+    pw = max(1, int(bw * width_ratio))
+    ph = max(1, int(product.height * (pw / product.width)))
+    product = product.resize((pw, ph), Image.LANCZOS)
+    px = int(bw * center_x_ratio - pw / 2)
+    py = int(bh * bottom_y_ratio - ph)
+
+    composed = bg.copy()
+    composed.alpha_composite(product, (px, py))
+    if occlusion_box:
+        mask = _skin_mask(bg, occlusion_box)
+        arr, bg_arr = np.array(composed), np.array(bg)
+        arr[mask] = bg_arr[mask]
+        composed = Image.fromarray(arr, "RGBA")
+
+    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+    composed.convert("RGB").save(out_path, "PNG")
+    return str(out_path)
+async def release_comfyui_gpu(*, interrupt: bool = True) -> None:
+    """ComfyUI가 물고 있는 GPU를 놓게 한다 — job 취소 경로에서 부른다.
+
+    job을 취소해도 ComfyUI는 (1) 실행 중인 프롬프트를 끝까지 계산하고 (2) 로드한
+    체크포인트를 그대로 들고 있는다. 2026-08-23 실측: 취소한 job의 모델이 21.4GB를
+    잡고 있어서 다음 job의 FLUX 콜드로드가 `NVRM: Out of memory [NV_ERR_NO_MEMORY]`로
+    죽었고(flux.service restart counter 1), 그 job이 `ConnectError: All connection
+    attempts failed`로 통째로 실패했다. E2E 한 번을 그렇게 날렸다.
+
+    AGENT_MAX_CONCURRENT_CLIPS=1이라 실행 중 프롬프트는 취소된 그 job의 것이다.
+    실패는 조용히 삼킨다 — 취소 자체가 실패하면 안 된다.
+    """
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        for path, payload in (
+            ("/interrupt", {}) if interrupt else (None, None),
+            ("/free", {"unload_models": True, "free_memory": True}),
+        ):
+            if path is None:
+                continue
+            try:
+                await client.post(f"{COMFYUI_URL}{path}", json=payload)
+            except Exception as exc:                  # ComfyUI가 내려 있어도 취소는 성공해야 한다
+                print(f"[cancel] ComfyUI {path} 실패({type(exc).__name__}: {exc}) — 무시")
+
+
+# ── 제품 오버레이 (T2V 클립 위에 얹기, 조립+I2V 대체) ─────────────────
+# 조립 첫 프레임을 I2V에 넣는 경로는 제품을 못 지킨다: LTX는 조건 이미지를 **첫 latent
+# 하나(=8프레임)** 에만 쓰고 나머지는 denoise=1.0으로 새로 그린다(job dd16ef56 실측 —
+# clip1 루마가 f0~f6 30.4로 고정이다가 f7 52, f8 107, f10 157로 붕괴). negative로 막을
+# 수도 없다: KSampler cfg=1.0이면 ComfyUI가 uncond를 통째로 건너뛴다(comfy/samplers.py
+# `if math.isclose(cond_scale, 1.0) ... uncond_ = None`).
+#
+# 그래서 순서를 뒤집는다. T2V로 사람 장면을 **먼저 끝내고** 제품을 그 위에 얹으면
+# 제품을 지울 주체가 없다. 드리프트가 고쳐지는 게 아니라 발생할 자리가 사라진다.
+# 전제 두 가지 — 카메라 고정, 제품 자체가 안 움직임(놓인 무드등 등). 둘 중 하나라도
+# 깨지면 정적 오버레이는 물리적으로 틀리므로 이 경로를 쓰면 안 된다.
+#
+# 비율 의미는 compose_product_frame과 같다(폭/가로중심/바닥). 기본값은 "전경 오른쪽
+# 아래" — 인물 동선 밖이라 사람이 제품 앞을 가로지를 확률이 가장 낮은 자리다.
+# 크기는 **높이 기준**으로 잡는다. 세워둔 물건의 화면 존재감은 폭이 아니라 높이가
+# 결정하는데, 폭 고정비를 쓰면 제품 종횡비에 따라 결과가 제멋대로다 — 2026-08-23 실측,
+# 같은 width=0.16이 종횡비 0.62 램프에는 화면높이 47%, 0.57에는 51%, 0.40에는 **72%**가
+# 됐다(job 8402186d에서 제품이 화면 오른쪽을 통째로 지배한 원인).
+# WIDTH_RATIO는 이제 **상한**이다 — 넓적한 제품이 화면을 가로지르지 않게 막는 용도.
+PRODUCT_OVERLAY_HEIGHT_RATIO = float(os.environ.get("AGENT_PRODUCT_OVERLAY_HEIGHT", "0.34"))
+PRODUCT_OVERLAY_WIDTH_RATIO = float(os.environ.get("AGENT_PRODUCT_OVERLAY_WIDTH", "0.16"))
+PRODUCT_OVERLAY_CENTER_X = float(os.environ.get("AGENT_PRODUCT_OVERLAY_CENTER_X", "0.80"))
+# 2026-08-23 job 239b1d15: 램프 바닥을 화면 맨 아래(0.94)에 두니 받치는 면이 프레임
+# 밖으로 잘려 램프가 "떠 있는" 느낌이었다(사용자 지적). 위로 올려(0.84) 램프 앞·아래로
+# 전경 상판이 보이게 하면 그 위에 놓인 걸로 읽힌다 — 씬5 히어로컷이 이래서 얹혀 보였다.
+PRODUCT_OVERLAY_BOTTOM_Y = float(os.environ.get("AGENT_PRODUCT_OVERLAY_BOTTOM_Y", "0.84"))
+# 접지 그림자 세기. 0이면 끈다 — 유리/발광체는 옅게, 무거운 제품은 진하게.
+PRODUCT_OVERLAY_SHADOW_ALPHA = int(os.environ.get("AGENT_PRODUCT_OVERLAY_SHADOW_ALPHA", "150"))
+
+
+def _probe_dims(path: str) -> tuple[int, int]:
+    r = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0",
+         "-show_entries", "stream=width,height", "-of", "csv=p=0:s=x", str(path)],
+        check=True, capture_output=True, text=True,
+    )
+    w, h = r.stdout.strip().split("x")[:2]
+    return int(w), int(h)
+
+
+def bake_product_layer(
+    product_path: str | Path, out_path: str | Path, *, width: int, height: int,
+    width_ratio: float = PRODUCT_OVERLAY_WIDTH_RATIO,
+    height_ratio: float | None = PRODUCT_OVERLAY_HEIGHT_RATIO,
+    center_x_ratio: float = PRODUCT_OVERLAY_CENTER_X,
+    bottom_y_ratio: float = PRODUCT_OVERLAY_BOTTOM_Y,
+    warm_tint: bool = True, shadow_alpha: int = PRODUCT_OVERLAY_SHADOW_ALPHA,
+) -> str:
+    """제품 컷아웃을 영상과 같은 크기의 **투명 PNG 한 장**으로 굽는다.
+
+    프레임마다 다시 합성하지 않고 이 한 장을 ffmpeg overlay로 전 프레임에 얹는다 —
+    카메라가 고정이므로 좌표가 변할 이유가 없고, 정지 레이어라 프레임 간 떨림도 없다.
+    제품 밑에는 눌린 타원 그림자를 같이 굽는다. 없으면 제품이 바닥에서 붕 떠 보인다.
+    """
+    product = Image.open(product_path).convert("RGBA")
+    if product.getchannel("A").getextrema()[0] == 255:
+        raise ValueError(
+            f"{Path(product_path).name}에 투명 배경이 없다 — _ensure_product_cutout을 먼저 태워라")
+    if warm_tint:
+        product = _apply_warm_tint(product)
+    if height_ratio:
+        # 높이로 잡고, 폭이 상한을 넘으면 폭에 맞춰 다시 줄인다(넓적한 제품 방어).
+        ph = max(1, int(height * height_ratio))
+        pw = max(1, int(product.width * (ph / product.height)))
+        cap = max(1, int(width * width_ratio))
+        if pw > cap:
+            pw, ph = cap, max(1, int(product.height * (cap / product.width)))
+    else:                                   # height_ratio=None → 옛 폭 고정비(프로브 호환)
+        pw = max(1, int(width * width_ratio))
+        ph = max(1, int(product.height * (pw / product.width)))
+    product = product.resize((pw, ph), Image.LANCZOS)
+    px = int(width * center_x_ratio - pw / 2)
+    py = int(height * bottom_y_ratio - ph)
+
+    layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    if shadow_alpha > 0:
+        shadow = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        rx, ry = pw * 0.62, max(3.0, ph * 0.055)
+        cx, cy = px + pw / 2, py + ph
+        ImageDraw.Draw(shadow).ellipse(
+            [cx - rx, cy - ry, cx + rx, cy + ry], fill=(0, 0, 0, shadow_alpha))
+        layer = Image.alpha_composite(
+            layer, shadow.filter(ImageFilter.GaussianBlur(max(2.0, ry))))
+    layer.alpha_composite(product, (px, py))
+    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+    layer.save(out_path)
+    return str(out_path)
+
+
+def overlay_product_on_clip(
+    clip_path: str | Path, product_path: str | Path, out_path: str | Path, *,
+    width_ratio: float = PRODUCT_OVERLAY_WIDTH_RATIO,
+    height_ratio: float | None = PRODUCT_OVERLAY_HEIGHT_RATIO,
+    center_x_ratio: float = PRODUCT_OVERLAY_CENTER_X,
+    bottom_y_ratio: float = PRODUCT_OVERLAY_BOTTOM_Y,
+    warm_tint: bool = True, shadow_alpha: int = PRODUCT_OVERLAY_SHADOW_ALPHA,
+    layer_path: str | Path | None = None,
+) -> str:
+    """T2V 클립 전 프레임에 제품을 같은 좌표로 얹는다(diffusion 없음, 제품 픽셀 무손실).
+
+    레이어 크기는 클립에서 직접 읽는다 — 호출부가 WIDTH/HEIGHT를 잘못 넘겨 어긋나는
+    사고를 막는다(I2V 경로는 1392x752 조립 프레임을 1280x704로 넣고 있었다).
+    layer_path를 주면 구운 레이어를 남긴다(디버깅용).
+    """
+    width, height = _probe_dims(clip_path)
+    with tempfile.TemporaryDirectory() as td:
+        layer = Path(layer_path) if layer_path else Path(td) / "product_layer.png"
+        bake_product_layer(
+            product_path, layer, width=width, height=height,
+            width_ratio=width_ratio, height_ratio=height_ratio,
+            center_x_ratio=center_x_ratio,
+            bottom_y_ratio=bottom_y_ratio, warm_tint=warm_tint, shadow_alpha=shadow_alpha)
+        Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", str(clip_path), "-i", str(layer),
+             "-filter_complex", "[0:v][1:v]overlay=0:0:format=auto[v]",
+             "-map", "[v]", "-map", "0:a?", "-c:a", "copy",
+             "-pix_fmt", "yuv420p", str(out_path)],
+            check=True, capture_output=True)
+    return str(out_path)
+
+
+
 def _build_flux_kontext_graph(
     *, prompt: str, image_name: str, width: int, height: int, seed: int,
     lock_bg_color: bool, guidance: float, controlnet_strength: float,
+    blur_radius: int = FLUX_BG_BLUR_RADIUS, blur_sigma: float = FLUX_BG_BLUR_SIGMA,
 ) -> dict:
     """docs.comfy.org/tutorials/flux/flux-1-kontext-dev 공식 워크플로와 동일한
     API-format 그래프(LoadImage→FluxKontextImageScale→VAEEncode→ReferenceLatent로
@@ -1120,7 +1362,7 @@ def _build_flux_kontext_graph(
         "20": {"class_type": "RemoveBackground",
                "inputs": {"bg_removal_model": ["19", 0], "image": ["7", 0]}},
         "21": {"class_type": "ImageBlur", "inputs": {
-            "image": ["7", 0], "blur_radius": FLUX_BG_BLUR_RADIUS, "sigma": 10.0,
+            "image": ["7", 0], "blur_radius": blur_radius, "sigma": blur_sigma,
         }},
         "22": {"class_type": "ImageCompositeMasked", "inputs": {
             "destination": ["21", 0], "source": ["7", 0], "x": 0, "y": 0,
@@ -1175,6 +1417,66 @@ def _build_flux_kontext_graph(
     graph["14"] = {"class_type": "SaveImage",
                    "inputs": {"images": final_image, "filename_prefix": "i2i_style"}}
     return graph
+
+
+async def _submit_and_fetch_image(client: httpx.AsyncClient, graph: dict, what: str) -> bytes:
+    """ComfyUI에 그래프를 제출하고 첫 출력 이미지 바이트를 받아온다."""
+    resp = await client.post(f"{COMFYUI_URL}/prompt", json={"prompt": graph})
+    resp.raise_for_status()
+    prompt_id = resp.json()["prompt_id"]
+    started_at = time.time()
+    history_item = None
+    while history_item is None:
+        if time.time() - started_at > STANDIN_QUEUE_TIMEOUT:
+            raise TimeoutError(f"{what}이(가) 제한 시간 내 완료되지 않음")
+        history = (await client.get(f"{COMFYUI_URL}/history/{prompt_id}")).json()
+        if prompt_id in history:
+            history_item = history[prompt_id]
+        else:
+            await asyncio.sleep(2.0)
+    if history_item.get("status", {}).get("status_str") == "error":
+        raise RuntimeError(f"{what} 실행 오류 {history_item.get('status', {}).get('messages')}")
+    media = None
+    for node_out in history_item.get("outputs", {}).values():
+        media = node_out.get("images")
+        if media:
+            break
+    if not media:
+        raise RuntimeError(f"{what} 출력 이미지 없음")
+    output = media[0]
+    png = await client.get(f"{COMFYUI_URL}/view", params={
+        "filename": output["filename"], "subfolder": output.get("subfolder", ""),
+        "type": output.get("type", "output"),
+    })
+    png.raise_for_status()
+    return png.content
+
+
+async def run_flux_kontext(
+    image_bytes: bytes, *, prompt: str, seed: int, upload_name: str, what: str,
+    guidance: float = FLUX_KONTEXT_GUIDANCE,
+    controlnet_strength: float = FLUX_CONTROLNET_STRENGTH,
+    blur_radius: int = FLUX_BG_BLUR_RADIUS, blur_sigma: float = FLUX_BG_BLUR_SIGMA,
+) -> bytes:
+    """Flux Kontext 단발 실행(입력 이미지 → 재렌더된 이미지 바이트)."""
+    normalized, img_width, img_height = _normalize_i2v_input(image_bytes)
+    width, height = _flux_kontext_dims(img_width, img_height)
+    timeout = httpx.Timeout(connect=10.0, read=300.0, write=60.0, pool=None)
+    async with oom.phase("i2i"), httpx.AsyncClient(timeout=timeout) as client:
+        up = await client.post(
+            f"{COMFYUI_URL}/upload/image",
+            files={"image": (upload_name, normalized, "image/png")},
+            data={"overwrite": "true"},
+        )
+        up.raise_for_status()
+        uj = up.json()
+        image_name = f"{uj['subfolder']}/{uj['name']}" if uj.get("subfolder") else uj["name"]
+        graph = _build_flux_kontext_graph(
+            prompt=prompt, image_name=image_name, width=width, height=height, seed=seed,
+            lock_bg_color=False, guidance=guidance,
+            controlnet_strength=controlnet_strength,
+            blur_radius=blur_radius, blur_sigma=blur_sigma)
+        return await _submit_and_fetch_image(client, graph, what)
 
 
 async def generate_i2i_style(image_bytes: bytes, style: str, seed: int | None = None) -> dict:
@@ -1248,6 +1550,804 @@ async def generate_i2i_style(image_bytes: bytes, style: str, seed: int | None = 
         "width": width,
         "height": height,
     }
+
+
+# ── 제품 씬 조립 경로 (A노선, 6.23) ──────────────────────────────────
+# 2026-08-12~13 음료 광고 스파이크에서 확정된 파이프라인을 그대로 옮긴 것.
+# subject_ref(Wan i2v_14b)는 참조에 **있는** 대상 identity 유지는 강하지만 참조에
+# **없는** 새 요소(사람·손·스토리)를 못 그린다. 그래서 제품 픽셀은 diffusion을 거치지
+# 않고 Pillow로 첫 프레임에 직접 얹고, I2V에는 "움직임만" 시킨다.
+#
+# 비율·시드·프롬프트는 스파이크 best-case를 기본값으로 고정한다(Plans 6.23 결정).
+# 배경이 바뀌면 비율이 깨지는 게 실측돼 있으나(씬2에서 의상 단어 하나 바꾸자 벤치
+# 구조가 통째로 변함, 씬3a는 center_x 6% 이동만으로 붕괴) 이 시나리오 재현이 목적이라
+# 조정 UI는 붙이지 않는다.
+
+# 제품이 놓여 있는 씬(씬2형): 벤치·바닥 등 전경에 큼직하게.
+# 2026-08-14 라이브 재검증에서 옛값 (0.075, 0.30, 0.80)이 병을 벤치가 아닌 **코트 허공**에
+# 폭 95px(0.074)로 붙였다. 그 값은 스파이크 배경 한 장에서 손으로 맞춘 절대 좌표였고,
+# 프로덕션은 배경을 매번 새로 그린다. PRODUCT_PLACED_BG_PROMPT가 지시하는 구도에서 배경이
+# 실제로 놓을 면을 그리는 위치(x 0.32~0.68, y 0.86~1.0)의 중앙·하단으로 옮긴다.
+PRODUCT_PLACED_RATIOS = (0.15, 0.50, 0.97)
+# 인물이 손에 쥔 씬(씬3a형): 그립 위치. 폭은 이제 얼굴 기준으로 계산하므로(아래
+# PRODUCT_FACE_RATIO) 이 0.10은 얼굴 검출이 실패했을 때의 폴백값이다.
+PRODUCT_HELD_RATIOS = (0.10, 0.62, 0.87)
+# 쥔 제품의 폭 = 얼굴 폭 × 이 비율. 스파이크 실측(병폭 139px / 얼굴폭 276px = 0.504).
+# 프레임 폭 고정비로 두면 배경마다 인물 크기가 달라 어긋나고, 작게 시작하면 LTX가 재생
+# 중에 "저 얼굴 옆에 있을 크기"로 키우는 과정이 화면에 보인다(clip19/21, 2026-08-14 씬3 재현).
+PRODUCT_FACE_RATIO = float(os.environ.get("AGENT_PRODUCT_FACE_RATIO", "0.50"))
+# 손가락을 제품 위로 되돌릴 영역. 배경(그립 손)의 좌표에 종속된 값이다.
+PRODUCT_HELD_OCCLUSION_BOX = (790, 430, 905, 655)
+PRODUCT_RECOMPOSE_CONTROLNET = float(os.environ.get("AGENT_PRODUCT_RECOMPOSE_CN", "0.45"))
+PRODUCT_BG_CONTROLNET = 0.35   # cinematic 프리셋값 — 0.6은 조명/재질이 거의 안 바뀜
+PRODUCT_BG_GUIDANCE = 4.0
+
+# 인물이 제품을 쥐는 씬의 배경. **빈 그립 손을 미리 그려두는 게 핵심** — 첫 프레임에
+# 그립이 없으면 LTX가 손과 제품을 같이 발명하면서 라벨·캡이 통째로 날아간다(clip13/16).
+PRODUCT_HELD_BG_PROMPT = (
+    "Keep this exact same person — same face, same facial features, same hairstyle, "
+    "same age — do not change their identity. Re-render them as a cinematic "
+    "medium-close commercial shot: their face and upper chest fill the frame, their "
+    "expression is calm and relaxed with a smooth untroubled brow and a faint "
+    "satisfied smile, eyes open and looking down toward their own hand. Their right "
+    "hand is raised in front of their chest at collarbone height, forearm angled up "
+    "across the body, fingers curled into a firm cylindrical grip as if holding a "
+    "drink bottle, but the hand is empty with an open gap between the curled fingers "
+    "and the thumb. Shallow depth of field with the background softly out of focus, "
+    "photorealistic."
+)
+PRODUCT_HELD_EMPTY_HAND = (
+    "The hand is empty at this moment — nothing is in it yet, no bottle, no cup, no "
+    "can. They have not started drinking."
+)
+# 인물 정본이 없는 job("시나리오만" 모드)의 쥔 씬 배경. Kontext 재렌더가 아니라 T2I로
+# 처음부터 그리므로 위 두 상수를 그대로 못 쓴다 — 둘 다 제품 명사를 **부정문으로** 쓰는데
+# (`as if holding a drink bottle, but the hand is empty`, `no bottle, no cup, no can`)
+# Kontext는 원본 픽셀이 있어 버티지만 T2I는 부정을 못 읽고 그 병을 그린다(_strip_product_
+# phrases 주석의 실측과 같은 함정). 그래서 제품 명사를 아예 쓰지 않고 손 모양만 서술한다.
+PRODUCT_HELD_T2I_FRAMING = (
+    "a cinematic medium-close commercial shot: their face and upper chest fill the "
+    "frame, their expression is calm and relaxed with a faint satisfied smile, eyes "
+    "open and looking down toward their own hand. Their right hand is raised in front "
+    "of their chest at collarbone height, forearm angled up across the body, fingers "
+    "curled into a firm cylindrical grip closed around empty air, an open gap between "
+    "the curled fingers and the thumb, the grip clearly empty. They wear a plain "
+    "high crew-neck top that fully covers the chest and shoulders, no V-neck, no "
+    "exposed chest or collarbone skin. Shallow depth of field with the background "
+    "softly out of focus, photorealistic"
+)
+# 크루넥 지시는 미관이 아니라 locate_grip 때문이다. 그립 검출은 인물 마스크 안의 살색을
+# 연결요소로 쪼개 "얼굴과 분리된 덩어리 = 팔·손"으로 본다. V넥으로 가슴 살이 보이면
+# 얼굴-목-가슴이 한 덩어리로 이어지면서 팔 요소 판정이 무너져 병이 뺨에 붙는다
+# (2026-08-14 job 8820932b 씬1 실측: center_x 0.741, 손은 0.45 근처였다). 베이스라인이
+# 멀쩡했던 건 인물 정본이 흰 크루넥 티였기 때문이다.
+# 합성한 제품을 씬 조명에 녹인다. "재설계하지 마라"를 반복 명시하지 않으면 Kontext가
+# 라벨을 새로 그려버린다.
+PRODUCT_RECOMPOSE_PROMPT_HELD = (
+    "The exact same product from the reference image, unchanged shape, unchanged "
+    "label, unchanged colors, unchanged cap — do not redesign it. Re-light and "
+    "re-render only the product so it looks physically held in this person's hand in "
+    "this exact scene: the curled fingers wrap around the product body with matching "
+    "rim light and natural contact shadows where the fingers meet it, natural "
+    "photographic grain, shallow depth of field."
+)
+# 마무리 히어로컷(제품 단독 클로즈업). 인물 씬 프레이밍을 그대로 쓰면 "인물이 카메라로
+# 다가온다"가 박혀 있어 제품만 나와야 할 컷에 사람이 생긴다. 무인(無人)을 명시한다.
+PRODUCT_SURFACE_FRAMING = (
+    "shot from a low angle close to a bare empty surface in the foreground, that "
+    "surface large and sharply in focus filling the lower half of the frame, the "
+    "background far behind and softly out of focus, cinematic product commercial "
+    "lighting"
+)
+PRODUCT_HERO_FRAMING = (
+    "no people, nobody in frame, empty scene with no person visible, "
+    "the image bleeding all the way to every edge of the frame with no border, "
+    f"{PRODUCT_SURFACE_FRAMING}"
+)
+# 히어로컷은 제품이 주인공이라 크게 놓는다(놓인 씬의 0.075는 소품 크기다).
+PRODUCT_HERO_RATIOS = (0.30, 0.50, 0.88)
+
+# 제품 없는 인물 씬(씬4형)의 배경 = I2V 첫 프레임. 씬 문장을 그대로 주면 T2I가 문장의
+# **마지막 동작**을 그린다 — 2026-08-14 job 1559ee49 씬4 실측: "코트 안쪽으로 달려
+# 들어가 골대를 향해 슛을 쏜다"에서 이미 슛을 쏘는 정지 자세가 나왔고, 그 자세에서
+# 시작하니 클립 내내 팔만 올라갔다(달리기 없음, 움직임 느림). 첫 프레임은 동작 **직전·
+# 도중**이어야 한다 — hand_held 배경이 "빈 그립 손"을 요구하는 것과 같은 처방이다.
+# 인물 정본을 Kontext로 재렌더할 때 항상 앞에 붙는 identity lock. 이 문구가 없으면
+# Kontext가 얼굴을 새로 그린다.
+PERSON_BG_IDENTITY = (
+    "Keep this exact same person — same face, same facial features, same hairstyle, "
+    "same age, no added facial hair, no added beard or moustache — do not change their "
+    "identity. "
+)
+# 놓인 제품 씬(씬2형) 배경. 스파이크 씬2 배경이 그랬듯 **놓일 면을 비워둔 채** 만든다 —
+# 제품 픽셀은 다음 단계에서 얹으므로 여기서 병을 그리면 결과에 병이 둘이 된다.
+# 인물은 카메라 쪽으로 다가오되, 카메라에 달려들어 상체가 화면을 채우면 안 된다
+# (2026-08-14 job 1559ee49 씬2: 저각+접근 지시가 겹쳐 허리를 세우고 렌즈로 돌진).
+# 인물 동작과 "놓일 면"은 시나리오마다 다르다 — 농구는 벤치로 달려오지만 실내 무드등
+# 광고는 협탁 앞에 서 있다. 기본값은 베이스라인 job 3ded2f29 재현값이라 그대로 둔다.
+PLACED_BG_PERSON_ACTION = os.environ.get(
+    "AGENT_PLACED_BG_ACTION",
+    "running toward the camera with a natural upright running form")
+PLACED_BG_SURFACE = os.environ.get("AGENT_PLACED_BG_SURFACE", "a bench top")
+PRODUCT_PLACED_BG_PROMPT = (
+    f"{PERSON_BG_IDENTITY}Re-render them as a cinematic wide commercial shot: the "
+    f"person is several steps away in the mid-ground, small in the frame, "
+    f"{PLACED_BG_PERSON_ACTION}, their whole body visible. "
+    f"In front of them, close to the camera, a bare empty flat surface — "
+    f"{PLACED_BG_SURFACE} — fills the lower foreground across the bottom third of the "
+    "frame, completely empty with nothing resting on it, large and sharply in focus. "
+    "Photorealistic."
+)
+# 제품이 화면에 없는 인물 씬(씬4형) 배경. 여기서는 씬 동작을 주입해야 그림이 된다.
+PERSON_SCENE_ACTION_BG_PROMPT = (
+    f"{PERSON_BG_IDENTITY}Re-render them full-body in the scene described below, "
+    "keeping the whole person visible in a cinematic wide shot. Photorealistic."
+)
+PERSON_SCENE_FIRST_FRAME = (
+    "this is the very first frame of a moving shot: the person is at the START of the "
+    "described action and has not finished it yet, caught mid-motion with their weight "
+    "already shifting and a natural motion blur on the moving limbs, never a posed "
+    "static end-of-action pose"
+)
+
+# 배경 프롬프트에서 제품을 가리키는 구절을 지운다. 제품 픽셀은 다음 단계에서 얹으므로
+# 배경에 제품이 그려지면 결과에 제품이 둘이 된다(2026-08-13 히어로컷 실측: T2I가 콜라색
+# 대형 병을 그리고 그 앞에 우리 제품이 작게 합성됐고, Kontext 재통합이 둘을 하나로 합침).
+#
+# "no bottle, no can" 같은 **부정문으로는 못 막는다** — FLUX는 부정을 못 읽고 오히려 그
+# 개념을 그린다(같은 날 씬1에서 "no logos and no text"가 로고를 2개 만든 실측). 그래서
+# 금지 대신 해당 명사구를 문장에서 제거한다.
+# 명사구만 지우고 뒤따르는 배경 서술("on the wooden bench at the edge of the court")은
+# 남긴다 — 그건 배경 생성에 그대로 필요한 정보다.
+# 수식어를 열거하면 반드시 샌다 — 2026-08-13 UI E2E job 3ded2f29 씬2가 그렇게 뚫렸다
+# (`reaching towards a water bottle`, `focused on the approaching bottle` 둘 다 안 걸려
+# T2I가 무라벨 병을 그렸고 결과에 병이 둘). 한정사 뒤 형용사는 개수·종류를 모르므로
+# 열거 대신 최대 3개까지 임의 단어를 허용하고, 소유격 한정사도 받는다.
+_PRODUCT_PHRASE_RE = re.compile(
+    r"\b(?:the|a|an|his|her|their|its|this|that)\s+(?:\w+\s+){0,3}"
+    r"(?:bottle|bottles|can|cans|cup|cups|beverage|beverages|"
+    # 조명 제품 광고. 히어로컷 배경은 씬 문장을 그대로 쓰므로 여기 없으면 T2I가
+    # 자기 나름의 램프를 그리고 그 앞에 우리 제품이 또 합성된다(램프 2개).
+    r"lamp|lamps|lantern|lanterns|product|products)\b", re.I)
+# 제품이 문장의 주어일 때 남는 조각("stands alone on the bench" 같은 서술어)은 그대로
+# 둔다 — 문법이 어색해도 배경 정보는 보존된다.
+
+
+def _strip_product_phrases(text: str) -> str:
+    cleaned = _PRODUCT_PHRASE_RE.sub("", text or "")
+    cleaned = re.sub(r"\s{2,}", " ", cleaned)
+    cleaned = re.sub(r"(,\s*){2,}", ", ", cleaned).strip(" ,")
+    return cleaned
+
+# 놓인 제품 씬의 카메라 고정. 2026-08-14 라이브에서 clip2는 **벤치와 병이 같이 흔들렸다** —
+# 배치 문제가 아니다. 씬 프롬프트에 "the camera slowly tracks his movement horizontally"가
+# 들어 있고, 놓인 씬 배경은 놓일 면을 카메라 코앞 전경에 두므로
+# 시차가 최대가 된다. 합성 제품은 배경 픽셀에 박혀 있어 그 면과 함께 통째로 움직인다.
+# 배치 비율(A-1)로는 안 없어진다 — 카메라 지시 자체를 빼야 한다.
+_CAMERA_CLAUSE_RE = re.compile(r"\bcamera\b", re.I)
+# 카메라 절을 지우면 뒤따르는 분사구("following his arc through the space...")가 주어를
+# 잃고 인물 동작으로 읽힌다. 이어지는 절도 같이 뗀다.
+_CAMERA_CONT_RE = re.compile(
+    r"^\s*(?:following|tracking|panning|moving|drifting|circling|sweeping|gliding)\b", re.I)
+STATIC_CAMERA_CLAUSE = ("the camera is locked off on a tripod, completely static framing "
+                        "with no pan, no tilt, no dolly and no zoom")
+PRODUCT_PLACED_NEGATIVE_EXTRA = (
+    "camera pan, camera tracking shot, camera shake, moving foreground, "
+    "sliding bench, sliding product, product drifting, wobbling objects")
+
+
+def _lock_camera(prompt: str) -> str:
+    """씬 프롬프트에서 카메라 이동 지시를 빼고 고정 카메라를 못박는다(놓인 제품 씬 전용)."""
+    kept, drop_next = [], False
+    for clause in re.split(r"(?<=[;,])\s*", prompt or ""):
+        if _CAMERA_CLAUSE_RE.search(clause):
+            drop_next = True
+            continue
+        if drop_next and _CAMERA_CONT_RE.match(clause):
+            continue
+        drop_next = False
+        kept.append(clause)
+    cleaned = re.sub(r"[;,\s]+$", "", " ".join(kept).strip())
+    return f"{cleaned}; {STATIC_CAMERA_CLAUSE}"
+
+
+PRODUCT_RECOMPOSE_PROMPT_PLACED = (
+    "The exact same product from the reference image, unchanged shape, unchanged "
+    "label, unchanged colors, unchanged cap — do not redesign it. Re-light and "
+    "re-render only the product so it looks physically photographed standing in this "
+    "exact scene: matching key light direction, matching soft contact shadow on the "
+    "surface it rests on, natural photographic grain, shallow depth of field with the "
+    "background softly out of focus but still recognizable, not abstract blur."
+)
+
+
+def _pad_to_wide(img: Image.Image, target_aspect: float) -> Image.Image:
+    """세로 인물 정본을 와이드 캔버스로 확장. 여백은 배경 코너색으로 채워 이음매를
+    만들지 않는다 — 하드 엣지가 남으면 Kontext의 canny가 그 액자선까지 구도로 잠근다."""
+    rgb = img.convert("RGB")
+    w, h = rgb.size
+    new_w = int(round(h * target_aspect))
+    if new_w <= w:
+        return rgb
+    corners = [rgb.getpixel(p) for p in ((0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1))]
+    fill = tuple(sum(c[i] for c in corners) // len(corners) for i in range(3))
+    canvas = Image.new("RGB", (new_w, h), fill)
+    canvas.paste(rgb, ((new_w - w) // 2, 0))
+    return canvas
+
+
+async def person_mask(image_bytes: bytes, upload_name: str = "person_mask_input.png"):
+    """birefnet(ComfyUI 내장 RemoveBackground)으로 인물 실루엣 마스크를 뽑는다.
+
+    색만으로는 피부를 못 가른다 — 골든아워 코트 바닥이 피부와 색공간에서 겹친다
+    (실측: 손등 rgb(195,101,32) vs 코트 rgb(213,134,80)). 배경을 먼저 지워야
+    피부 검출이 의미를 갖는다. Kontext 그래프가 이미 쓰는 노드라 신규 모델 없음.
+    """
+    import numpy as np
+    graph = {
+        "1": {"class_type": "LoadImage", "inputs": {"image": upload_name}},
+        "2": {"class_type": "LoadBackgroundRemovalModel",
+              "inputs": {"bg_removal_name": FLUX_BG_REMOVAL_MODEL}},
+        "3": {"class_type": "RemoveBackground",
+              "inputs": {"bg_removal_model": ["2", 0], "image": ["1", 0]}},
+        "4": {"class_type": "MaskToImage", "inputs": {"mask": ["3", 0]}},
+        "5": {"class_type": "SaveImage",
+              "inputs": {"images": ["4", 0], "filename_prefix": "person_mask"}},
+    }
+    timeout = httpx.Timeout(connect=10.0, read=300.0, write=60.0, pool=None)
+    async with oom.phase("i2i"), httpx.AsyncClient(timeout=timeout) as client:
+        up = await client.post(
+            f"{COMFYUI_URL}/upload/image",
+            files={"image": (upload_name, image_bytes, "image/png")},
+            data={"overwrite": "true"},
+        )
+        up.raise_for_status()
+        uj = up.json()
+        graph["1"]["inputs"]["image"] = (
+            f"{uj['subfolder']}/{uj['name']}" if uj.get("subfolder") else uj["name"])
+        png = await _submit_and_fetch_image(client, graph, "인물 마스크")
+    gray = np.array(Image.open(BytesIO(png)).convert("L"))
+    return gray > 128
+
+
+GRIP_LABEL_SCALE = 4   # 연결요소 라벨링 축소 배율. bbox만 필요하므로 1/4로 충분하고,
+                       # 원본 해상도(1392x752≈105만 px)를 순수 파이썬 BFS로 도는 것보다
+                       # 16배 빠르다(scipy.ndimage.label을 쓰려고 의존성을 늘리지 않는다).
+
+
+def locate_grip(bg_bytes: bytes, mask) -> dict | None:
+    """배경에서 '들어올린 손' 영역을 찾아 제품 배치 좌표를 산출한다.
+
+    인물 마스크 안에서 무채색(흰 티셔츠, r≈g≈b)을 뺀 나머지가 피부(얼굴·목·팔·손)다.
+    팔을 들고 있으면 팔·손이 얼굴과 분리된 연결요소로 잡히고, 그 요소의 **위쪽 끝**이
+    손가락이다(팔은 아래에서 올라오고 손이 가장 높다).
+
+    반환: {"occlusion_box", "center_x_ratio", "bottom_y_ratio", "hand_box"}
+    손을 못 찾으면 None — 호출부가 고정 기본값으로 폴백한다.
+    """
+    import numpy as np
+    from collections import deque
+
+    arr = np.array(Image.open(BytesIO(bg_bytes)).convert("RGB")).astype(np.int16)
+    full_h, full_w = arr.shape[:2]
+    r, g, b = arr[:, :, 0], arr[:, :, 1], arr[:, :, 2]
+    # 피부 판정. r > g > b 순서를 **반드시** 함께 본다 — `(r-b)>40` 만으로는 따뜻한 색
+    # 옷이 전부 피부로 걸린다(2026-08-14 job probe_person_ref 씬1 실측: 핑크 상의
+    # rgb(247,122,172)가 r-b=75로 통과해 얼굴·팔·배·상의가 한 덩어리가 됐고, 살색이
+    # 프레임의 22%를 덮으면서 연결요소 분리가 무너져 face_box가 8x0px 파편으로 잡혔다.
+    # 그 결과 제품 폭이 얼굴폭×0.5 = 4px로 계산돼 병이 사실상 사라졌다).
+    # 핑크는 g < b라 이 조건에서 걸러진다. 같은 파일의 _skin_mask가 쓰는 판정식과 맞춘 것 —
+    # 두 곳이 다른 기준을 쓸 이유가 없었다.
+    skin_full = mask & (r > g) & (g > b) & ((r - b) > 40) & (r > 90)
+    if skin_full.sum() < 500:
+        return None
+
+    s = GRIP_LABEL_SCALE
+    skin = skin_full[::s, ::s]
+    h, w = skin.shape
+    labels = np.zeros(skin.shape, np.int32)
+    comps = []          # (픽셀수, x0, y0, x1, y1, label)
+    current = 0
+    for y in range(h):
+        for x in range(w):
+            if skin[y, x] and labels[y, x] == 0:
+                current += 1
+                queue = deque([(y, x)])
+                labels[y, x] = current
+                count = 0
+                x0 = x1 = x
+                y0 = y1 = y
+                while queue:
+                    cy, cx = queue.popleft()
+                    count += 1
+                    x0, x1 = min(x0, cx), max(x1, cx)
+                    y0, y1 = min(y0, cy), max(y1, cy)
+                    for dy, dx in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                        ny, nx = cy + dy, cx + dx
+                        if 0 <= ny < h and 0 <= nx < w and skin[ny, nx] and labels[ny, nx] == 0:
+                            labels[ny, nx] = current
+                            queue.append((ny, nx))
+                comps.append((count, x0, y0, x1, y1, current))
+    if not comps:
+        return None                       # 피사체 자체가 없다 — 호출부가 폴백
+    comps.sort(reverse=True)
+    # 상위 3개를 그냥 쓰면 안 된다 — 성분 수가 적으면 **파편이 후보에 낀다**. 그 파편이
+    # 프레임 맨 위에 있으면 "가장 위에서 시작하는 것 = 얼굴" 규칙이 그걸 얼굴로 고른다
+    # (2026-08-14 probe_person_ref 씬1 실측: 얼굴 2662px·손 1709px 사이에 정수리 파편
+    # 65px이 끼어 face_w가 0.046으로 잡혔고, 제품 폭이 얼굴폭×0.5 = 32px이 됐다).
+    # 최대 덩어리의 1/4 미만은 사람의 부위가 아니라 노이즈로 본다.
+    floor = comps[0][0] * 0.25
+    big = [c for c in comps[:3] if c[0] >= floor] or comps[:1]
+    # 얼굴은 가장 위에서 시작하는 큰 덩어리. 팔·손은 그보다 아래에서 올라온다.
+    face = min(big, key=lambda c: c[2])
+    fx0, fy0, fx1, fy1 = face[1] * s, face[2] * s, face[3] * s, face[4] * s
+    face_w = max(1, fx1 - fx0)
+    face_h = max(1, fy1 - fy0)
+
+    # ── 허용 밴드(clamp) ────────────────────────────────────────────────
+    # 검출값을 그대로 믿지 않는다. 그립은 해부학적으로 **턱 아래 가슴 높이**,
+    # **얼굴 폭 기준 좌우 한 뼘 안쪽**에 있다. 검출이 그 밖을 짚으면(마시는 자세
+    # 배경에서 손이 입가로 올라가 귀 옆을 가리킨 실측, 2026-08-13 5컷 라이브)
+    # 기각 대신 밴드 경계로 끌어당긴다 — 기각하면 스파이크 배경 좌표계에서 뽑은
+    # 고정 픽셀값으로 떨어져 새 배경에서는 병이 가슴 한복판이나 허공에 붙는다.
+    y_lo, y_hi = fy1 + 0.15 * face_h, fy1 + 1.40 * face_h
+    # 좌우 대칭으로 잡는다. 예전 값(-0.60/+1.20)은 손이 화면 오른쪽에 오는 배경 한 장에
+    # 맞춘 비대칭이었는데, Kontext는 같은 프롬프트로도 손을 화면 **왼쪽**에 그린다
+    # (2026-08-14 probe_person_ref 씬1). 한쪽만 좁혀둘 근거가 없다.
+    x_lo, x_hi = fx0 - 1.20 * face_w, fx1 + 1.20 * face_w
+
+    def _clamp(v, lo, hi):
+        return max(lo, min(hi, v))
+
+    arms = [c for c in big if c[5] != face[5]]
+    # 팔 후보가 둘이면(민소매·반팔이라 양팔이 다 드러난 경우) **크기로는 못 가른다** —
+    # 2026-08-14 probe_person_ref 씬1에서 쥔 팔 2606px, 늘어뜨린 팔 2607px로 1픽셀 차이가
+    # 났고 max()가 늘어뜨린 쪽을 골라 병이 반대편 어깨에 붙었다.
+    # 구분 신호는 배경 프롬프트에 이미 있다 — "forearm angled up across the body".
+    # 쥔 팔은 몸을 가로질러 오므로 얼굴 x범위와 겹치고, 늘어뜨린 팔은 몸 바깥에 있다.
+    # 겹치는 후보가 없으면(정면 단독 팔) 기존대로 최대 크기로 폴백한다.
+    across = [c for c in arms if c[1] * s <= fx1 and c[3] * s >= fx0]
+    arms = across or arms
+    hand_box = None
+    if arms:
+        arm = max(arms, key=lambda c: c[0])
+        _, _, ay0, _, ay1, arm_label = arm
+        # 팔 요소의 상단 40% = 손. 그 아래는 팔뚝이라 제품이 놓일 자리가 아니다.
+        hand_y1 = ay0 + max(1, int((ay1 - ay0) * 0.40))
+        band = labels[ay0:hand_y1 + 1, :] == arm_label
+        ys, xs = np.where(band)
+        if len(xs):
+            hx0, hx1 = int(xs.min()) * s, int(xs.max()) * s
+            hand_box = (hx0, ay0 * s, hx1, hand_y1 * s)
+
+    if hand_box:
+        hx0, hy0, hx1, hy1 = hand_box
+        hand_w = max(1, hx1 - hx0)
+        # 그립 입구는 손가락 끝 쪽(바깥 모서리)이다. 스파이크 수동 튜닝값(center_x
+        # 0.62 = 863px)이 손 bbox 우측 끝과 거의 같았다 — 병이 손 안쪽이 아니라
+        # 손가락이 감싸는 바깥 모서리에 걸친다.
+        center_x = _clamp(hx1, x_lo, x_hi)
+        center_y = _clamp((hy0 + hy1) / 2, y_lo, y_hi)
+        # occlusion은 손 bbox 전체가 아니라 **오른쪽 절반(손가락 쪽)**만 쓴다. 전체를
+        # 쓰면 손등까지 제품 앞으로 복원돼 병이 손 뒤로 숨는다(v9 실패 방향).
+        # 단, 손 bbox가 밴드 밖이라 좌표가 실제로 당겨졌으면 이 상자는 더 이상 손을
+        # 가리키지 않으므로 버린다(엉뚱한 살색 픽셀을 제품 위로 복원하게 된다).
+        moved = abs(center_x - hx1) > 0.05 * face_w or abs(center_y - (hy0 + hy1) / 2) > 0.05 * face_h
+        occlusion = None if moved else (hx0 + hand_w // 2, hy0, hx1, hy1)
+        source = "clamped" if moved else "hand"
+    else:
+        # 손을 못 찾았다(팔이 몸통과 붙어 한 덩어리이거나 소매에 가림). 얼굴 기준
+        # 기하 추정 — PRODUCT_HELD_BG_PROMPT가 지시하는 자세("가슴 앞 쇄골 높이,
+        # 팔은 몸을 가로질러 위로")의 좌표다. 고정 픽셀 폴백과 달리 배경이 바뀌어도
+        # 얼굴을 따라간다.
+        center_x = _clamp(fx1 + 0.35 * face_w, x_lo, x_hi)
+        center_y = _clamp(fy1 + 0.70 * face_h, y_lo, y_hi)
+        # 손 위치를 모르는 상태에서 occlusion 상자를 그리면 가슴·목의 살색이 제품
+        # 위로 복원돼 병이 뭉개진다. 손가락 복원을 포기하는 쪽이 손해가 작다.
+        occlusion = None
+        hand_box = (int(center_x - 0.4 * face_w), int(center_y - 0.5 * face_h),
+                    int(center_x + 0.4 * face_w), int(center_y + 0.5 * face_h))
+        source = "estimated"
+
+    return {
+        "hand_box": hand_box,
+        "occlusion_box": occlusion,
+        "source": source,
+        # 제품 크기를 얼굴 기준으로 잡기 위해 호출부에 넘긴다(PRODUCT_FACE_RATIO).
+        "face_box": (fx0, fy0, fx1, fy1),
+        "face_w_ratio": face_w / full_w,
+        "center_x_ratio": center_x / full_w,
+        # compose_product_frame은 제품 '바닥' 기준이라 호출부가 제품 높이를 알아야
+        # 변환할 수 있다. 여기서는 손 중심만 넘긴다.
+        "center_y_ratio": center_y / full_h,
+    }
+# ── 제품 오버레이 씬 경로 (B노선, 2026-08-23) ─────────────────────────
+# A노선(조립+I2V)은 제품을 첫 프레임에 박고 LTX에 넘긴다. LTX는 조건 이미지를 첫 latent
+# 하나(=8프레임)에만 쓰고 나머지는 denoise=1.0으로 새로 그리므로 제품이 지워진다
+# (job dd16ef56 실측: clip1 루마 f0~f6 30.4 고정 → f10 157). negative로도 못 막는다 —
+# KSampler cfg=1.0이면 ComfyUI가 uncond를 통째로 건너뛴다(comfy/samplers.py의
+# `if math.isclose(cond_scale, 1.0) ... uncond_ = None`).
+#
+# B노선은 순서를 뒤집는다. T2V로 사람 장면을 **먼저 끝내고** 제품을 그 위에 얹는다.
+# 제품이 diffusion을 아예 안 거치므로 지워질 자리가 없다. 전제는 두 가지 —
+# 카메라 고정, 제품이 스스로 안 움직임. 손에 쥔 씬은 둘 다 깨지므로 A노선에 남긴다.
+#
+# 부수 효과: 제품 위치·크기 튜닝에 GPU가 필요없다(ffmpeg만). A노선은 비율 하나 바꿀
+# 때마다 클립을 통째로 다시 뽑아야 했다.
+PRODUCT_OVERLAY_ENABLED = os.environ.get("AGENT_PRODUCT_OVERLAY", "1") not in ("0", "false", "")
+
+# 제품이 얹힐 자리. 하단 전폭을 덮게 해야 고정 비율이 표면을 빗나가지 않는다 —
+# "lower-right side table"로 좁게 지시하면 그 협탁이 x 0.72에서 끝나 제품이 러그 위에
+# 떴다(프로브 v3 실측).
+# 2026-08-23 job 8402186d: "하단 전폭"으로 지시했더니 화면 아래 절반을 덮는 거대한
+# 책상 슬래브가 생겨 원룸 씬이 사무실처럼 보였고 노트북까지 딸려 나왔다. 제품이 놓일
+# 자리만 필요하므로 오른쪽 아래 구석으로 좁힌다. 대신 "그 구석을 채운다"고 못박아
+# v3에서처럼 표면이 x 0.72에서 끝나 제품이 허공에 뜨는 것도 막는다.
+# 히어로컷(PRODUCT_SURFACE_FRAMING)이 얹혀 보이는 비결을 인물 씬에도 준다: 나무 상판의
+# **윗면**이 카메라를 향해 보이고 화면 아래쪽으로 깔려야, 그 위에 놓인 램프 앞으로 나무가
+# 보여 "얹힘"으로 읽힌다. "협탁 구석" 서술만으로는 상판 윗면이 안 보였다(job 239b1d15).
+PRODUCT_OVERLAY_SURFACE = (
+    "a polished wooden tabletop fills the lower-right foreground, its flat top surface "
+    "clearly visible and angled slightly toward the camera so we look down onto it, the "
+    "near edge of the tabletop crossing the lower part of the frame, its surface bare and "
+    "empty with nothing on it, ready for an object to stand on it")
+# 인물은 제품 반대쪽(왼쪽 중경)에 둔다 — 사람이 제품 앞을 가로지르면 정적 오버레이가
+# 사람 위에 뜬다. 동선을 미리 갈라놓는 게 유일한 대책이다(오클루전 계산은 안 한다).
+# 의상 지시가 없으면 "기지개를 켠다" 같은 동작에서 상반신 탈의가 나온다(job 8402186d
+# 씬2 실측). full-bleed 지시는 액자 테두리 아티팩트 방어다 — 같은 job 씬4에서 둥근
+# 모서리 흰 테두리가 화면 안에 생겼다. 둘 다 positive로만 쓴다(cfg=1.0에서 부정문은
+# 소환문이 된다).
+PRODUCT_OVERLAY_PERSON_FRAMING = (
+    "a cinematic commercial shot with the people in the mid-ground on the left half of "
+    "the frame, relaxed and naturally in motion, everyone fully dressed in ordinary "
+    "everyday indoor clothing that covers the torso and shoulders, the image bleeding "
+    "all the way to every edge of the frame with no border and no inset panel")
+# 조명 — B방식. 광원의 **이유를 창밖에 준다**. 프로브 3라운드 실측:
+#   v1 "warm light spills from the lower-right foreground" → LTX가 그 광원을 실제로
+#      그렸다(씬마다 조명기구 2개 생성).
+#   v2 "with no lamps and no light fixtures anywhere" → 여전히 그렸다. cfg=1.0이라
+#      부정어가 죽고 "lamp"라는 명사만 조건에 남는다. 부정문이 소환문이 된다.
+#   v3 광원을 아예 언급 안 함 → 2개에서 1개로 줄었지만 남았다. 이유를 안 주면 발명한다.
+# 창은 조명기구가 아니므로 램프를 부르지 않으면서 따뜻한 톤의 근거가 된다.
+# 화풍 — B노선은 job별 style_bible을 **안 쓴다**. bible은 LLM이 제품 이미지에서 뽑는
+# "디자인 사양서" 문체라 영상 화풍으로는 정반대로 작용한다. 2026-08-23 job 032e1827
+# 실측 bible: "Rendering Technique: Photorealism, Flat Lighting, Studio Shot. Line/Edge
+# Treatment: Sharp, Precise, Clean. Shape Language: Geometric, Minimalist. Texture
+# Density: Low, Uniform. Environmental Detail Level: None, Seamless Background." —
+# 맨 앞 Photorealism 하나를 나머지가 전부 눌러 결과가 3D 만화로 나왔다.
+# 부정문은 쓰지 않는다(cfg=1.0에서 부정문은 소환문이 된다 — 프롬프트 v2 실패 참고).
+# 원하는 것만 적극적으로 서술한다.
+PRODUCT_OVERLAY_STYLE = os.environ.get(
+    "AGENT_PRODUCT_OVERLAY_STYLE",
+    "photorealistic live-action footage filmed on a full-frame cinema camera with a 35mm "
+    "lens, real human skin with visible pores and fine facial detail, real fabric weave "
+    "and worn surface texture, natural light falloff and soft contact shadows, fine film "
+    "grain, shallow depth of field, documentary realism")
+PRODUCT_OVERLAY_LIGHT = os.environ.get(
+    "AGENT_PRODUCT_OVERLAY_LIGHT",
+    "soft moonlight and distant city glow fall into the room through a large window, "
+    "washing the walls and furniture in a gentle warm amber evening tone with deep soft "
+    "shadows in the corners, faces still clearly visible")
+
+# 히어로컷(사람 없는 제품 단독 컷)은 제품을 크게 놓는다.
+PRODUCT_OVERLAY_HERO_HEIGHT_RATIO = float(
+    os.environ.get("AGENT_PRODUCT_OVERLAY_HERO_HEIGHT", "0.62"))
+PRODUCT_OVERLAY_HERO_RATIOS = (
+    float(os.environ.get("AGENT_PRODUCT_OVERLAY_HERO_WIDTH", "0.34")),
+    float(os.environ.get("AGENT_PRODUCT_OVERLAY_HERO_CENTER_X", "0.52")),
+    float(os.environ.get("AGENT_PRODUCT_OVERLAY_HERO_BOTTOM_Y", "0.92")),
+)
+
+# 조명 큐는 node_prompt_scenes가 프롬프트 **끝에** 한 문장으로 붙인다. B노선은 그 문장을
+# 통째로 갈아끼운다 — 서버 전역 AGENT_SCENE_LIGHTING에 "soft amber lamp glow"가 들어
+# 있으면(무드등 시나리오 기본값이 그렇다) 그 단어가 T2V에 램프를 소환한다.
+_SCENE_LIGHTING_TAIL_RE = re.compile(r"\s*Scene lighting and atmosphere:.*$", re.I | re.S)
+# 이 경로의 T2V는 제품을 **알 필요가 아예 없다** — 제품은 영상이 끝난 뒤 픽셀로 얹힌다.
+# 그래서 _strip_product_phrases(한정사 필요)보다 세게, 맨몸 명사까지 지운다. 다른
+# 경로에 쓰면 문장이 망가지지만 여기서는 지우는 게 정확하다.
+# 재작성 LLM이 해부학적 노출 표현을 쓰면 그게 의상 지시를 이긴다. 2026-08-23 job
+# 1fd34d0a 씬2: 프레이밍에 "everyone fully dressed ... covers the torso"를 넣었는데도
+# 재작성문이 "a relaxed gesture **opening his chest**", "lingering slightly on his
+# **open chest**"라고 두 번 써서 상반신 탈의 남자가 나왔다. 더 구체적이고 반복된 쪽이
+# 이긴다. cfg=1.0이라 negative로 못 막으므로 프롬프트에서 뺀다.
+_BODY_EXPOSURE_RE = re.compile(
+    r"\b(?:(?:his|her|their|the)\s+)?(?:open|bare|exposed|naked|toned|muscular)\s+"
+    r"(?:chest|torso|upper body|abs|shoulders)\b"
+    r"|\bshirtless\b|\bopening (?:his|her|their) chest\b|\btopless\b", re.I)
+_BARE_PRODUCT_NOUN_RE = re.compile(
+    r"\b(?:lamp|lamps|lantern|lanterns|lighting fixture|lighting fixtures|light fixture|"
+    r"light fixtures|bottle|bottles|can|cans|cup|cups|beverage|beverages)\b", re.I)
+
+
+def _overlay_t2v_prompt(prompt: str, *, hero: bool, scene_context: str = "") -> str:
+    """B노선 T2V 프롬프트 — 사람 장면만 서술하고 제품은 한 글자도 넣지 않는다.
+
+    scene_context(씬의 장소)를 앞쪽에 직접 박는다. LLM 재작성문 하나에만 장소를
+    맡기면 환각이 그대로 영상이 된다(job 8402186d 씬2: 서재 시나리오가 체육관으로).
+    """
+    body = _SCENE_LIGHTING_TAIL_RE.sub("", prompt or "")
+    body = _BARE_PRODUCT_NOUN_RE.sub("", _strip_product_phrases(body))
+    body = _BODY_EXPOSURE_RE.sub("", body)
+    body = re.sub(r"\s{2,}", " ", body)
+    body = re.sub(r"(,\s*){2,}", ", ", body).strip(" ,.")
+    body = _lock_camera(body)
+    framing = PRODUCT_HERO_FRAMING if hero else PRODUCT_OVERLAY_PERSON_FRAMING
+    # 우리 지시를 **앞**에 둔다. 씬 프롬프트 꼬리에는 style_bible이 통째로 붙어 있는데
+    # ("Rendering Technique: ... Flat Lighting, Studio Shot", "Environmental Detail
+    # Level: None, Seamless Background") 그게 우리가 요구한 "창밖 달빛 드는 방"과
+    # 정면으로 싸운다. 게다가 T5 토큰 한도에 걸리면 잘리는 건 뒤쪽이라, 뒤에 두면
+    # 빈 표면·광원·카메라 고정이 가장 먼저 희생된다(2026-08-23 job 032e1827 실측:
+    # 프롬프트가 style_bible 덤프 포함 1900자를 넘었고 결과가 3D 만화로 나왔다).
+    parts = [PRODUCT_OVERLAY_STYLE, framing]
+    if scene_context and scene_context.strip():
+        parts.append(f"the location is {scene_context.strip()}")
+    if not hero:                       # 히어로컷 프레이밍은 빈 표면 서술을 이미 갖고 있다
+        parts.append(PRODUCT_OVERLAY_SURFACE)
+    parts += [PRODUCT_OVERLAY_LIGHT, STATIC_CAMERA_CLAUSE, body]
+    return ". ".join(p.strip(" ,.") for p in parts if p and p.strip()) + "."
+
+
+async def generate_product_overlay_clip(
+    job_id: str, scene_id: int, *, prompt: str, product_ref: str | None,
+    hero: bool = False, duration: float = 3.0, seed: int | None = None,
+    force_new: bool = False, scene_context: str = "",
+) -> str:
+    """B노선 — T2V로 사람 장면을 만들고 제품 컷아웃을 전 프레임에 정적 오버레이한다.
+
+    산출물: clip<N>_t2v.mp4(제품 없는 원본), layer<N>.png(구운 제품 레이어),
+    clip<N>.mp4(최종). 원본과 레이어를 남기는 이유는 비율만 바꿔 다시 얹을 때
+    T2V를 재생성하지 않기 위해서다.
+    """
+    job = job_dir(job_id)
+    t2v_prompt = _overlay_t2v_prompt(prompt, hero=hero, scene_context=scene_context)
+    print(f"[overlay] 씬{scene_id} T2V 프롬프트: {t2v_prompt}")
+    generated = await generate_t2v_clip(
+        job_id, scene_id, t2v_prompt, duration=duration, seed=seed, force_new=force_new)
+    base = job / f"clip{scene_id}_t2v.mp4"
+    shutil.copyfile(generated, base)          # generate_t2v_clip은 clip<N>.mp4에 쓴다
+    if not product_ref:
+        # 제품이 화면에 없는 인물 씬 — 얹을 게 없으니 T2V 결과가 곧 최종이다.
+        return str(generated)
+    nonce = f"{int(time.time() * 1000)}"
+    product = await _ensure_product_cutout(refs_dir(job_id) / product_ref, nonce)
+    ratios = PRODUCT_OVERLAY_HERO_RATIOS if hero else (
+        PRODUCT_OVERLAY_WIDTH_RATIO, PRODUCT_OVERLAY_CENTER_X, PRODUCT_OVERLAY_BOTTOM_Y)
+    h_ratio = PRODUCT_OVERLAY_HERO_HEIGHT_RATIO if hero else PRODUCT_OVERLAY_HEIGHT_RATIO
+    out = job / f"clip{scene_id}.mp4"
+    overlay_product_on_clip(
+        base, product, out, width_ratio=ratios[0], height_ratio=h_ratio,
+        center_x_ratio=ratios[1], bottom_y_ratio=ratios[2],
+        layer_path=job / f"layer{scene_id}.png")
+    print(f"[overlay] 씬{scene_id} 제품 오버레이: {out} "
+          f"(높이 {h_ratio}, 폭상한 {ratios[0]}, x {ratios[1]}, y {ratios[2]})")
+    return str(out)
+
+
+
+async def generate_product_scene_clip(
+    job_id: str, scene_id: int, *, prompt: str, product_ref: str | None,
+    face_ref: str | None = None, hero: bool | None = None, hand_held: bool = False,
+    duration: float = 3.0, seed: int | None = None, negative_prompt: str | None = None,
+    scene_context: str = "", person_appearance: str = "", force_new: bool = False,
+) -> str:
+    """제품이 등장하는 씬을 A노선(첫 프레임 조립)으로 생성한다.
+
+    1) 배경 — 손에 쥔 씬이면 인물 참조를 Kontext로 재렌더해 **빈 그립 손**까지 그린다.
+       놓인 씬이면 씬 프롬프트로 T2I 배경을 뽑는다.
+    2) 제품 픽셀을 Pillow로 합성(diffusion 없음).
+    3) Kontext로 약한 블러(10/4)와 함께 재통합 — 제품만 씬 조명에 녹인다. 블러를
+       빼면 심도 단서가 사라져 제품이 스티커처럼 뜨고, 기본값 31을 쓰면 배경이 다
+       뭉개진다.
+    4) LTX I2V로 움직임만 입힌다(negative로 제품 드리프트 억제).
+
+    `hero=True`면 사람이 안 나오는 제품 단독 컷이다. 배경을 T2I로 새로 그리고 제품을
+    크게 놓는다. `face_ref`도 `hero`도 없는 씬 = **인물 정본이 없는 인물 씬**(제품만
+    첨부하는 "시나리오만" 모드)이라 배경을 T2I로 그린다 — 씬마다 다른 사람이 나오는 게
+    그 모드의 의도다. `hero=None`은 옛 추론(`face_ref is None`)으로 폴백한다(프로브 호환).
+
+    `product_ref=None`이면 **제품이 화면에 없는 인물 씬**(씬4형)이다. 2·3단계를 건너뛰고
+    배경 T2I → I2V만 탄다. 이 씬들은 원래 LTX 2.3 22B Face-ID로 갔는데, Face-ID 씬이 2개가
+    되는 순간 GGUF 축출로 10~40분 정체가 난다(docs/spikes/2026-08-13-scene5-e2e-handoff.md).
+    얼굴 identity는 씬2·3과 같은 수준(캡션·의상 lock 텍스트)으로만 유지된다 —
+    사용자 결정(2026-08-14).
+
+    중간 산출물은 jobs/<job_id>/assembly/에 남긴다 — 노드별 결과를 눈으로 검증해야
+    하기 때문이다.
+    """
+    resolved_seed = seed if seed is not None else int(time.time())
+    if hero is None:
+        hero = face_ref is None
+    work = job_dir(job_id) / "assembly"
+    work.mkdir(parents=True, exist_ok=True)
+    product_path = refs_dir(job_id) / product_ref if product_ref else None
+    # ComfyUI는 동일 그래프+동일 입력 파일명을 캐시 히트로 처리하는데, 그때 history의
+    # outputs가 비어 돌아와 "출력 이미지 없음"으로 죽는다(재생성 시 재현). 업로드
+    # 파일명에 nonce를 넣어 매 호출을 새 그래프로 만든다.
+    nonce = f"{int(time.time() * 1000)}"
+
+    # 1) 배경
+    grip = None
+    if face_ref:
+        # 인물이 나오는 씬은 **전부** 인물 정본을 Kontext로 재렌더해 배경을 만든다.
+        # T2I로 새로 그리면 얼굴 identity를 잡아둔 게 아무것도 없어 매번 다른 사람이
+        # 나온다(2026-08-14 job 1559ee49 씬2: 정본은 수염 없는 20대 초반인데 배경 인물은
+        # 수염 + 나이 위). 캡션 텍스트는 사람을 특정하지 못한다. 사용자 결정 2026-08-14.
+        padded = _pad_to_wide(Image.open(refs_dir(job_id) / face_ref), WIDTH / HEIGHT)
+        buf = BytesIO()
+        padded.save(buf, "PNG")
+        setting = ", ".join(v for v in (scene_context, person_appearance) if v and v.strip())
+        if hand_held:
+            # 쥔 씬의 배경에는 **장소·의상·조명만** 주입한다. 씬 프롬프트(동작 서술)를
+            # 통째로 넣으면 Kontext가 그 동작을 그려버린다 — 2026-08-13 라이브 검증에서
+            # "he lifts the bottle and drinks"를 주입했더니 이미 유리병을 들고 마시는
+            # 자세가 나왔고, 손이 입가로 가버려 그립 검출이 귀 옆을 짚었다. 첫 프레임은
+            # 동작 **직전** 상태여야 한다.
+            body = f"{PRODUCT_HELD_BG_PROMPT} {PRODUCT_HELD_EMPTY_HAND}"
+            what = f"씬{scene_id} 제품 조립 배경(그립 손)"
+        elif product_path is not None:
+            # 놓인 제품 씬: 씬 문장을 넣지 않는다. 명사구를 지워도 문장의 의미가 제품을
+            # 요구하면 diffusion은 자기 나름의 병을 그린다(같은 job 씬2: 정규식 확장
+            # 뒤에도 배경에 무라벨 생수병). 자리는 비워두고 제품은 다음 단계에서 얹는다.
+            body = PRODUCT_PLACED_BG_PROMPT
+            what = f"씬{scene_id} 제품 조립 배경(놓임)"
+        else:
+            # 제품 없는 인물 씬: 여기서는 씬 동작이 곧 그림이라 주입한다. 대신 완료
+            # 자세로 굳지 않게 "동작 도중"을 못박는다.
+            body = (f"{PERSON_SCENE_ACTION_BG_PROMPT} The action in this shot: "
+                    f"{_strip_product_phrases(prompt)}. {PERSON_SCENE_FIRST_FRAME}.")
+            what = f"씬{scene_id} 인물 씬 배경"
+        bg_prompt = body + (f" Setting, wardrobe and lighting: {setting}." if setting else "")
+        bg_bytes = await run_flux_kontext(
+            buf.getvalue(), prompt=bg_prompt, seed=resolved_seed,
+            upload_name=f"assembly_bg_{job_id}_{scene_id}_{nonce}.png", what=what,
+            guidance=PRODUCT_BG_GUIDANCE, controlnet_strength=PRODUCT_BG_CONTROLNET)
+        bg_path = work / f"scene{scene_id}_bg.png"
+        bg_path.write_bytes(bg_bytes)
+    else:
+        # 인물 정본이 없는 씬 → T2I로 배경을 새로 그린다("시나리오만" 모드 또는 히어로컷).
+        if hero:
+            # 히어로컷: 사람을 지우고 씬 문장을 그대로 쓴다(제품 명사만 제거). 프롬프트가
+            # 제품을 주인공으로 서술하면 T2I가 자기 나름의 병을 그려 결과에 병이 둘이
+            # 된다(2026-08-13 5컷 라이브: 콜라색 대형 병 뒤에 우리 제품이 작게 합성됨).
+            bg_prompt = f"{_strip_product_phrases(prompt)}, {PRODUCT_HERO_FRAMING}"
+        else:
+            # 인물 씬: 씬 문장(동작 서술)을 **넣지 않는다**. Kontext 경로가 같은 이유로
+            # 장소·의상·조명만 주입하는 것과 같다 — 동작을 넣으면 T2I가 그 동작을 그려
+            # 첫 프레임이 동작 '직후'가 되고, 마시는 씬에서는 비어 있어야 할 그립 손에
+            # 제 나름의 음료를 그려 넣는다(2026-08-14 job 8820932b 씬1 실측: 빈 손 대신
+            # 우유잔, 그 위에 우리 병이 겹쳐 합성됨). 제품 명사구를 지워도 문장의 의미가
+            # 음료를 요구하면 diffusion은 음료를 그린다.
+            framing = (PRODUCT_HELD_T2I_FRAMING if hand_held else
+                       f"a cinematic commercial shot with one person in the mid-ground, "
+                       f"{PRODUCT_SURFACE_FRAMING}")
+            who = ", ".join(v for v in (person_appearance, scene_context) if v and v.strip())
+            bg_prompt = framing + (f". Person, setting and lighting: {who}." if who else "")
+        bg_path = Path(await generate_t2i_image(job_id, bg_prompt, seed=resolved_seed,
+                                                index=1000 + scene_id))
+        shutil.copyfile(bg_path, work / f"scene{scene_id}_bg.png")
+        bg_path = work / f"scene{scene_id}_bg.png"
+        bg_bytes = bg_path.read_bytes()
+
+    # 그립 좌표는 배경마다 다르다 — 하드코딩하면 새로 뽑은 배경에서 병이 가슴 한복판에
+    # 붙는다(라이브 검증에서 실제로 발생). 인물 마스크로 손을 찾아 산출하고, 못 찾으면
+    # 스파이크 기본값으로 폴백한다.
+    if hand_held and not hero:
+        try:
+            grip = locate_grip(bg_bytes, await person_mask(
+                bg_bytes, upload_name=f"assembly_mask_{job_id}_{scene_id}_{nonce}.png"))
+        except Exception as exc:                      # 검출 실패가 생성 전체를 막지 않게
+            print(f"[assembly] 씬{scene_id} 그립 검출 실패({exc}) — 기본값 사용")
+
+    if product_path is None:
+        # 2)·3) 없음 — 얹을 제품이 없으니 배경이 곧 첫 프레임이다.
+        recomposed = bg_path
+    else:
+        recomposed = await _compose_and_recompose_product(
+            job_id, scene_id, work, bg_path, product_path, grip,
+            hand_held=hand_held, hero=hero, seed=resolved_seed, nonce=nonce)
+
+    # 4) I2V — 조립된 첫 프레임에 움직임만
+    ref_name = f"assembled_scene{scene_id}.png"
+    shutil.copyfile(recomposed, refs_dir(job_id) / ref_name)
+    # 놓인 제품 씬은 카메라를 고정한다 — 합성 제품이 배경 픽셀에 박혀 있어 카메라가
+    # 움직이면 놓인 면과 함께 통째로 흔들린다(2026-08-14 clip2 실측).
+    placed = not hand_held and not hero and product_path is not None
+    if placed:
+        prompt = _lock_camera(prompt)
+        negative_prompt = (f"{negative_prompt or LTX13B_DEFAULT_NEGATIVE}, "
+                           f"{PRODUCT_PLACED_NEGATIVE_EXTRA}")
+    return await generate_i2v_fallback_clip(
+        job_id=job_id, scene_id=scene_id, prompt=prompt, matched_image=ref_name,
+        duration=duration, seed=resolved_seed, force_new=force_new,
+        negative_prompt=negative_prompt)
+
+
+async def _ensure_product_cutout(product_path: Path, nonce: str) -> Path:
+    """제품 참조에 투명 배경이 없으면 배경을 지우고 알파 bbox로 잘라 캐시한다.
+
+    이게 없으면 `compose_product_frame`의 alpha_composite가 **배경 사각형째** 붙인다
+    (불투명 이미지는 알파가 전부 255다). 컷아웃이 필요한 입력은 두 가지다:
+      - 프론트 describe 모드가 M2로 생성한 제품 이미지 — FLUX는 RGB만 출력한다
+        (실측: 1280x720 RGB, 알파 extrema (255,255)).
+      - 사용자가 올린 일반 제품 사진.
+    제품 이미지 프롬프트(_IMG_QUERY_PRODUCT_SYSTEM)는 원래부터 "cut out 해서 합성한다"를
+    전제로 흰 배경 스튜디오컷을 요구하고 있었는데, 그 컷아웃 단계만 없었다.
+
+    `person_mask`(이름과 달리 ComfyUI 내장 birefnet RemoveBackground 그래프다)를 그대로
+    쓴다 — 신규 모델·의존성 없음. 결과는 job의 refs 옆에 캐시해 씬마다 다시 안 돌린다.
+    실패하면 원본을 그대로 돌려준다 — 배경이 붙는 게 제품이 통째로 사라지는 것보다 낫다.
+    """
+    cached = product_path.with_name(product_path.stem + ".cutout.png")
+    if cached.exists():
+        return cached
+    img = Image.open(product_path)
+    if img.mode in ("RGBA", "LA") and img.convert("RGBA").getchannel("A").getextrema()[0] < 255:
+        return product_path                       # 이미 투명 배경 컷아웃
+    try:
+        mask = await person_mask(product_path.read_bytes(),
+                                 upload_name=f"product_cutout_{nonce}.png")
+        rgba = img.convert("RGBA")
+        if mask.shape != (rgba.height, rgba.width):
+            raise ValueError(f"마스크 크기 불일치 {mask.shape} vs {(rgba.height, rgba.width)}")
+        rgba.putalpha(Image.fromarray((mask * 255).astype("uint8"), mode="L"))
+        box = rgba.split()[-1].getbbox()
+        if box is None:
+            raise ValueError("배경 제거가 피사체를 통째로 지웠다")
+        rgba.crop(box).save(cached)
+    except Exception as exc:                      # 컷아웃 실패가 생성 전체를 막지 않게
+        print(f"[assembly] 제품 컷아웃 실패({exc}) — 원본 사용")
+        return product_path
+    print(f"[assembly] 제품 컷아웃: {product_path.name} → {cached.name} {Image.open(cached).size}")
+    return cached
+
+
+async def _compose_and_recompose_product(
+    job_id: str, scene_id: int, work: Path, bg_path: Path, product_path: Path,
+    grip: dict | None, *, hand_held: bool, hero: bool, seed: int, nonce: str,
+) -> Path:
+    """조립 2)·3)단계 — 제품 픽셀을 첫 프레임에 얹고 Kontext로 씬 조명에 녹인다."""
+    product_path = await _ensure_product_cutout(product_path, nonce)
+    # 2) 제품 픽셀 합성
+    if hand_held:
+        width_ratio, center_x, bottom_y = PRODUCT_HELD_RATIOS
+    elif hero:                                  # 히어로컷 — 제품이 화면의 주인공
+        width_ratio, center_x, bottom_y = PRODUCT_HERO_RATIOS
+    else:
+        width_ratio, center_x, bottom_y = PRODUCT_PLACED_RATIOS
+    occlusion_box = PRODUCT_HELD_OCCLUSION_BOX if hand_held else None
+    if grip:
+        bg_w, bg_h = Image.open(bg_path).size
+        # 제품 폭은 프레임이 아니라 **얼굴**을 기준으로 잡는다 — 배경이 매번 새로
+        # 생성돼 인물 크기가 달라지므로 고정비는 맞을 이유가 없다(2026-08-14 씬3:
+        # 병이 작게 시작해 재생 중에 커짐).
+        width_ratio = PRODUCT_FACE_RATIO * grip["face_w_ratio"]
+        product_h_ratio = width_ratio * (bg_w / bg_h) * (
+            Image.open(product_path).height / Image.open(product_path).width)
+        # 손 중심에 제품 세로 중심을 맞춘다 → 바닥 기준 비율로 변환.
+        center_x = grip["center_x_ratio"]
+        bottom_y = min(0.99, grip["center_y_ratio"] + product_h_ratio / 2)
+        occlusion_box = grip["occlusion_box"]
+        print(f"[assembly] 씬{scene_id} 그립({grip['source']}): hand={grip['hand_box']} "
+              f"face_w={grip['face_w_ratio']:.3f} width={width_ratio:.3f} "
+              f"center_x={center_x:.3f} bottom_y={bottom_y:.3f} occl={occlusion_box}")
+    flat = compose_product_frame(
+        bg_path, product_path, work / f"scene{scene_id}_flat.png",
+        width_ratio=width_ratio, center_x_ratio=center_x, bottom_y_ratio=bottom_y,
+        warm_tint=True, occlusion_box=occlusion_box)
+
+    # 3) Kontext 재통합
+    recomposed_bytes = await run_flux_kontext(
+        Path(flat).read_bytes(),
+        prompt=(PRODUCT_RECOMPOSE_PROMPT_HELD if hand_held
+                else PRODUCT_RECOMPOSE_PROMPT_PLACED),
+        seed=seed,
+        upload_name=f"assembly_recompose_{job_id}_{scene_id}_{nonce}.png",
+        what=f"씬{scene_id} 제품 재통합",
+        controlnet_strength=PRODUCT_RECOMPOSE_CONTROLNET,
+        blur_radius=FLUX_PRODUCT_BLUR_RADIUS, blur_sigma=FLUX_PRODUCT_BLUR_SIGMA)
+    recomposed = work / f"scene{scene_id}_recomposed.png"
+    recomposed.write_bytes(recomposed_bytes)
+    return recomposed
 
 
 ## ── TTS 온디맨드 기동 ─────────────────────────────────────────
@@ -1420,6 +2520,12 @@ def _build_ltx_faceid_graph(
         prompt if prompt.lstrip().startswith("ref_t2v:") else f"ref_t2v: {prompt}"
     )
     graph["104"]["inputs"]["image"] = face_image
+    # 워크플로 내장 Gemma 캡션 재작성(node 79)의 토큰 상한. 원본 1024는 과하다 —
+    # 결과는 한 문장짜리 ref_t2v 캡션인데 4.0 tok/s로 생성되므로 상한만큼 돌면 씬당
+    # 4분 넘게 먹고, 그 사이 LTX 22B가 언로드됐다 다시 로드되는 스왑까지 유발한다
+    # (2026-08-13 job 865ee53a 로그 실측: "Generating tokens 294/1024 [01:13]",
+    # "Unloaded partially: 14785 MB freed"). 캡션 한 문장엔 192면 충분하다.
+    graph["79"]["inputs"]["max_length"] = LTX_FACEID_CAPTION_MAX_TOKENS
     graph["101"]["inputs"]["filename_prefix"] = prefix
     graph["129"]["inputs"]["reference_guidance_scale"] = LTX_FACEID_GUIDANCE
     graph["129"]["inputs"]["ref_resize_mode"] = LTX_FACEID_REF_RESIZE_MODE
@@ -1477,9 +2583,25 @@ def _build_ltx_faceid_batch_graph(
 
 
 async def generate_ltx_faceid_batch(job_id: str, scenes: list[dict]) -> dict[int, str]:
-    """단일 ComfyUI prompt에서 로더를 공유해 LTX/Gemma/LoRA를 정확히 한 번 로드한다."""
+    """Face-ID 씬들을 생성한다. 씬마다 **별도 prompt로 제출**한다.
+
+    원래는 로더를 공유하는 단일 prompt로 묶어 "LTX/Gemma/LoRA를 정확히 한 번 로드"하려
+    했는데, 실측 결과 그 이득이 없다(2026-08-13 job 865ee53a 로그): 씬마다 워크플로
+    내장 Gemma가 캡션을 다시 쓰고 그 사이 LTX 22B(17GB)가 언로드됐다 재로드된다
+    ("Unloaded partially: 14785 MB freed"). 로더를 공유해도 실제 가중치는 왕복하므로
+    묶을수록 스왑만 늘었다 — 1씬 6분(스파이크 clip11→clip14 실측)이 2씬 배치에서
+    40분+로 늘어난 주원인.
+
+    씬별 제출은 총 시간이 비슷하거나 짧고, 부분 실패가 그 씬에만 갇히며, 진행 상황이
+    씬 단위로 드러난다(부분 완성 클립 노출, SC1).
+    """
     if not scenes:
         return {}
+    if len(scenes) > 1:
+        results: dict[int, str] = {}
+        for scene in scenes:
+            results.update(await generate_ltx_faceid_batch(job_id, [scene]))
+        return results
     timeout = httpx.Timeout(connect=10.0, read=60.0, write=60.0, pool=None)
     async with oom.phase("i2v"), httpx.AsyncClient(timeout=timeout) as client:
         # 22B는 상주 FLUX와 공존 못 한다(_release_t2i 도크스트링의 실측). 업로드보다
@@ -1847,6 +2969,11 @@ if __name__ == "__main__":  # clean_llm_prompt 자체점검: python tools.py
     assert b.startswith("A bright light emanating") and "English Prompt" not in b, b
     c = clean_llm_prompt("A clean prompt with no preamble at all, anime scene.")
     assert c.startswith("A clean prompt"), c
+    # job 3ded2f29: 오역 방지 대응표가 출력에 섞여 wardrobe lock에 한글이 박혔다.
+    d = clean_llm_prompt("A man wearing a white 반팔 (short-sleeve) t-shirt runs.")
+    assert d == "A man wearing a white short-sleeve t-shirt runs.", d
+    e = clean_llm_prompt("a white 반팔 t-shirt, golden hour")
+    assert e == "a white t-shirt, golden hour", e
     print("clean_llm_prompt self-check ok")
 
     # revise_scenes 자체점검 (LLM 응답을 가짜로 주입 — 파싱/재구조화만 검증)
@@ -1893,3 +3020,64 @@ if __name__ == "__main__":  # clean_llm_prompt 자체점검: python tools.py
         got = _probe_duration(out_mix)
         assert abs(got - 4.0) < 0.15, f"fps 혼합 concat 길이 {got} != ~4.0"
     print("ffmpeg_concat self-check ok")
+
+    # overlay_product_on_clip 자체점검: 비율 좌표가 맞는 자리에 제품을 얹는지
+    # (합성 클립 + 단색 PNG, GPU 불필요). 회귀 대상 — 비율 수학이 틀어지면 제품이
+    # 화면 밖이나 인물 한복판에 붙는다.
+    with tempfile.TemporaryDirectory() as td:
+        vw, vh = 320, 240
+        clip = f"{td}/blue.mp4"
+        subprocess.run(
+            ["ffmpeg", "-y", "-f", "lavfi", "-i", f"color=c=blue:s={vw}x{vh}:r=24:d=1",
+             "-pix_fmt", "yuv420p", clip], check=True, capture_output=True)
+        prod = Image.new("RGBA", (100, 200), (255, 0, 0, 255))
+        prod.putalpha(Image.new("L", (100, 200), 255))
+        prod.putpixel((0, 0), (255, 0, 0, 0))     # 투명 픽셀 1개 = 컷아웃으로 인정
+        prod_path = f"{td}/prod.png"
+        prod.save(prod_path)
+        out = overlay_product_on_clip(
+            clip, prod_path, f"{td}/out.mp4",
+            width_ratio=0.2, height_ratio=None, center_x_ratio=0.8, bottom_y_ratio=0.9,
+            warm_tint=False, shadow_alpha=0)
+        assert _probe_dims(out) == (vw, vh), _probe_dims(out)
+        frame = f"{td}/f.png"
+        subprocess.run(["ffmpeg", "-y", "-i", out, "-vframes", "1", frame],
+                       check=True, capture_output=True)
+        got = Image.open(frame).convert("RGB")
+        # pw=64, ph=128 → x 224..288, y 88..216. 그 한복판은 빨강이어야 한다.
+        r, g, b = got.getpixel((256, 150))
+        assert r > 180 and g < 80 and b < 80, f"제품 자리가 빨강이 아님: {(r, g, b)}"
+        r, g, b = got.getpixel((10, 10))
+        assert b > 180 and r < 80, f"제품 밖이 배경(파랑)이 아님: {(r, g, b)}"
+        # 높이 기준 산정: 종횡비가 달라도 화면 높이 점유가 같아야 한다. 폭 고정비를
+        # 쓰면 세로로 긴 제품이 화면을 세로로 지배한다(job 8402186d: 화면높이 72%).
+        for pw0, ph0 in ((100, 200), (60, 400)):        # 종횡비 0.50 / 0.15
+            tall = Image.new("RGBA", (pw0, ph0), (255, 0, 0, 255))
+            tall.putpixel((0, 0), (255, 0, 0, 0))
+            tp = f"{td}/tall_{pw0}.png"
+            tall.save(tp)
+            lp = f"{td}/tall_{pw0}_layer.png"
+            bake_product_layer(tp, lp, width=vw, height=vh, height_ratio=0.30,
+                               width_ratio=1.0, warm_tint=False, shadow_alpha=0)
+            box = Image.open(lp).getchannel("A").getbbox()
+            got_h = (box[3] - box[1]) / vh
+            assert abs(got_h - 0.30) < 0.02, f"종횡비 {pw0}x{ph0}에서 높이 {got_h:.3f} != 0.30"
+        # 넓적한 제품은 폭 상한에 걸려 더 작아져야 한다(화면을 가로지르면 안 됨)
+        wide = Image.new("RGBA", (800, 100), (255, 0, 0, 255))
+        wide.putpixel((0, 0), (255, 0, 0, 0))
+        wp, wl = f"{td}/wide.png", f"{td}/wide_layer.png"
+        wide.save(wp)
+        bake_product_layer(wp, wl, width=vw, height=vh, height_ratio=0.30,
+                           width_ratio=0.25, warm_tint=False, shadow_alpha=0)
+        box = Image.open(wl).getchannel("A").getbbox()
+        assert (box[2] - box[0]) <= int(vw * 0.25) + 1, f"폭 상한이 안 걸림: {box}"
+
+        # 불투명 입력은 컷아웃 없이 사각형째 붙으므로 거부해야 한다
+        opaque = f"{td}/opaque.png"
+        Image.new("RGB", (50, 50), (0, 255, 0)).save(opaque)
+        try:
+            bake_product_layer(opaque, f"{td}/l.png", width=vw, height=vh)
+            raise AssertionError("불투명 제품 입력을 거부하지 않았다")
+        except ValueError:
+            pass
+    print("overlay_product_on_clip self-check ok")

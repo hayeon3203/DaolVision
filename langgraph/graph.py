@@ -15,8 +15,15 @@ _open_conns: list = []
 
 
 def _entry_router(state: GraphState) -> str:
-    """참조 이미지 미첨부 + 이미지 생성 요청이면 M2 이미지 분기, 아니면 기존 경로."""
-    if state.get("image_request") and not state.get("ref_images"):
+    """이미지 생성 요청이 있으면 M2 이미지 분기, 아니면 기존 경로.
+
+    2026-08-13(6.22): 원래는 `and not state.get("ref_images")` 조건이 붙어 있어
+    참조를 한 장이라도 첨부하면 M2 분기가 통째로 스킵됐다. "얼굴은 생성하고
+    제품 사진은 첨부한다"는 조합이 아예 불가능했다 — 첨부하는 순간 생성 요청이
+    조용히 무시되고 첨부분만 쓰는 job이 됐다. 두 입력은 배타가 아니므로 생성
+    요청 유무만 본다(승인 게이트가 생성분을 기존 ref_images에 병합한다).
+    """
+    if state.get("image_request"):
         return "node_rewrite_image_query"
     return "node_parse_input"
 

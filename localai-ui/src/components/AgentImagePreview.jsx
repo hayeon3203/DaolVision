@@ -7,37 +7,15 @@ import { useTranslation } from 'react-i18next'
 // {feedback:"..."}면 원 요청에 피드백을 누적해 M2-1(rewrite)부터 전체 재생성한다.
 // 실제 이미지는 오른쪽 결과물 패널(GatewayAgent.jsx의 media-result)에 크게 표시된다 —
 // 여기서는 승인/재생성 컨트롤만 다룬다(64x64 썸네일 중복 표시하지 않음).
-export default function AgentImagePreview({ imageUrls, imageQueries, historyUrls = [], onApprove, onRegenerate }) {
+export default function AgentImagePreview({ imageUrls, imageQueries, onApprove, onRegenerate }) {
   const { t } = useTranslation('gateway')
   const [revising, setRevising] = useState(false)
   const [feedback, setFeedback] = useState('')
-  // 재생성 시도가 2회 이상일 때만 비교 스트립을 보여준다. 마지막 항목은 지금 오른쪽
-  // 패널에 크게 떠 있는 현재 후보라 여기서는 이전 시도들만 나열한다.
-  const previous = historyUrls.slice(0, -1)
 
   return (
     <div className="scene-preview">
       <p className="form-field__hint">{t('imagePreview.hint', { count: imageUrls.length })}</p>
       {imageQueries[0] && <p className="scene-preview__text">{imageQueries[0]}</p>}
-
-      {previous.length > 0 && (
-        <div className="form-group">
-          <label className="form-label">{t('imagePreview.previousAttempts', { count: previous.length })}</label>
-          <div className="agent-attempt-strip">
-            {previous.map((url, i) => (
-              <figure key={url} className="agent-attempt">
-                <img src={url} alt={t('imagePreview.attemptAlt', { n: i + 1 })} />
-                <figcaption>{t('imagePreview.attemptLabel', { n: i + 1 })}</figcaption>
-              </figure>
-            ))}
-            <figure className="agent-attempt is-current">
-              <img src={imageUrls[0]} alt={t('imagePreview.attemptAlt', { n: previous.length + 1 })} />
-              <figcaption>{t('imagePreview.attemptCurrent', { n: previous.length + 1 })}</figcaption>
-            </figure>
-          </div>
-          <span className="form-field__hint">{t('imagePreview.approveAppliesToCurrent')}</span>
-        </div>
-      )}
 
       {!revising ? (
         <div className="scene-preview__actions">

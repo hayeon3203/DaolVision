@@ -54,6 +54,17 @@ def health():
 def generate(
     text: str = Form(...),
     reference: UploadFile | None = File(None),
+    # Sampling knobs. Defaults match ChatterboxMultilingualTTS.generate(), so
+    # callers that send nothing keep the exact previous behaviour. They exist
+    # because the default temperature rambles: the same Korean sentence came out
+    # 3-4x too long (2 chars/s against the reference speaker's own 6.2 chars/s)
+    # on roughly half of all takes. Lower temperature + higher repetition
+    # penalty is the knob that stops it.
+    language: str = Form("ko"),
+    exaggeration: float = Form(0.5),
+    cfg_weight: float = Form(0.5),
+    temperature: float = Form(0.8),
+    repetition_penalty: float = Form(1.2),
 ):
     text = text.strip()
     if not text:
@@ -82,8 +93,12 @@ def generate(
             model = get_model()
             wav = model.generate(
                 text,
-                language_id="ko",
+                language_id=language,
                 audio_prompt_path=str(temp_path),
+                exaggeration=exaggeration,
+                cfg_weight=cfg_weight,
+                temperature=temperature,
+                repetition_penalty=repetition_penalty,
             ).squeeze().detach().cpu()
             if model.sr != TARGET_SAMPLE_RATE:
                 wav = audio_functional.resample(wav, model.sr, TARGET_SAMPLE_RATE)

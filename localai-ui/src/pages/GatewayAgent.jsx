@@ -5,7 +5,6 @@ import AgentPhaseStepper from '../components/AgentPhaseStepper'
 import AgentScenePreview from '../components/AgentScenePreview'
 import AgentClipPreview from '../components/AgentClipPreview'
 import AgentImagePreview from '../components/AgentImagePreview'
-import RefImageThumbs from '../components/RefImageThumbs'
 import GatewayHeroPills from '../components/GatewayHeroPills'
 import { gatewayApi, GATEWAY_BASE, fileToBase64 } from '../utils/api'
 
@@ -31,13 +30,10 @@ export default function GatewayAgent() {
     title: t(`agent.nodes.${n.key}.title`),
     description: t(`agent.nodes.${n.key}.description`),
   }))
-  // 'describe' = 인물은 프롬프트로 생성 + 제품 사진 첨부(6.22 조합) / 'noref' = 시나리오만.
-  //
-  // 2026-08-13: 'upload'(시나리오 + 인물사진 첨부) 모드를 제거했다. 제품 광고 흐름에서
-  // 첨부는 캐릭터 참조가 아니라 **제품**이고, 인물은 프롬프트로 생성하는 게 표준이 됐다.
-  // upload는 첨부 이미지를 인물 참조로 쓰는 옛 경로라 제품 사진을 넣으면 얼굴 자리에
-  // 병 사진이 들어간다 — 남겨두면 잘못 고르기 쉬운 선택지다.
-  const [inputMode, setInputMode] = useState('describe')
+  // 'upload'=시나리오+인물사진 / 'describe'=이미지 설명으로 생성 후 시나리오 /
+  // 'noref'=참조 없이 시나리오만. noref는 upload에 파일 0장과 페이로드가 같지만,
+  // 결과가 다른 경로(캐릭터 시트로 인물 고정)라 사용자가 명시적으로 고르게 한다.
+  const [inputMode, setInputMode] = useState('upload')
   const [scriptText, setScriptText] = useState('')
   const [refFiles, setRefFiles] = useState([])
   const [imageRequest, setImageRequest] = useState('')
@@ -86,16 +82,11 @@ export default function GatewayAgent() {
       let requestRefImages = []
       let requestImageDescription = ''
 
-      const toDataUris = (files) =>
-        Promise.all(files.map(async (f) => `data:${f.type};base64,${await fileToBase64(f)}`))
-
-      if (inputMode === 'describe') {
-        // 6.22: 생성과 첨부는 배타가 아니다 — "인물은 생성하고 제품 사진은 첨부"가
-        // 이 조합이다. 첨부분은 게이트웨이가 그대로 ref_images로 받고, 생성분은
-        // 이미지 승인 게이트에서 gen_N으로 병합된다(nodes.node_checkpoint_image_approval).
-        // 시나리오는 여기서 안 보낸다 — 이미지 승인 뒤 2-4 게이트에서 입력한다.
+      if (inputMode === 'upload') {
+        requestScript = scriptText.trim()
+        requestRefImages = await Promise.all(refFiles.map(async (f) => `data:${f.type};base64,${await fileToBase64(f)}`))
+      } else if (inputMode === 'describe') {
         requestImageDescription = imageRequest.trim()
-        requestRefImages = await toDataUris(refFiles)
       } else if (inputMode === 'noref') {
         requestScript = scriptText.trim()
       }
@@ -150,6 +141,7 @@ export default function GatewayAgent() {
           <p>{t('agent.taglineStory')} <i className="fas fa-arrow-right" /> {t('agent.taglineSplit')} <i className="fas fa-arrow-right" /> {t('agent.taglineVideo')}</p>
           <GatewayHeroPills
             models={[
+              { label: 'Nemotron 3 Nano · NVIDIA', company: 'NVIDIA' },
               { label: 'Gemma 4 · Google', company: 'Google' },
               { label: 'FLUX.1 Schnell · Black Forest Labs', company: 'Black Forest Labs' },
               { label: 'LTX-Video · Lightricks', company: 'Lightricks' },
@@ -186,6 +178,9 @@ export default function GatewayAgent() {
         {!jobId ? (
           <form onSubmit={handleStart}>
             <div className="segmented">
+              <button type="button" className={`segmented__item${inputMode === 'upload' ? ' is-active' : ''}`} onClick={() => setInputMode('upload')}>
+                <i className="fas fa-paperclip" /> {t('agent.modeUpload')}
+              </button>
               <button type="button" className={`segmented__item${inputMode === 'describe' ? ' is-active' : ''}`} onClick={() => setInputMode('describe')}>
                 <i className="fas fa-wand-magic-sparkles" /> {t('agent.modeDescribe')}
               </button>
@@ -193,23 +188,24 @@ export default function GatewayAgent() {
                 <i className="fas fa-pen-nib" /> {t('agent.modeNoref')}
               </button>
             </div>
-            {inputMode === 'describe' ? (
+            {inputMode === 'upload' ? (
               <>
                 <div className="form-group">
-                  <label className="form-label">{t('agent.personLabel')}</label>
-                  <textarea className="textarea" value={imageRequest} onChange={(e) => setImageRequest(e.target.value)} rows={5} placeholder={t('agent.personPlaceholder')} />
-                  <span className="form-field__hint">{t('agent.personHint')}</span>
+                  <label className="form-label">{t('agent.storyLabel')}</label>
+                  <textarea className="textarea" value={scriptText} onChange={(e) => setScriptText(e.target.value)} rows={5} placeholder={t('agent.storyPlaceholder')} />
                 </div>
-                {/* 6.22: 생성과 첨부 동시 입력. 인물은 위에서 프롬프트로 생성하고,
-                    광고할 제품은 여기 첨부한다. */}
                 <div className="form-group">
-                  <label className="form-label">{t('agent.productLabel')}</label>
+                  <label className="form-label">{t('agent.refImagesLabel')}</label>
                   <input className="input" type="file" accept="image/*" multiple onChange={(e) => setRefFiles(Array.from(e.target.files || []))} />
-                  <RefImageThumbs files={refFiles} />
-                  <span className="form-field__hint">{t('agent.productHint')}</span>
                   {refFiles.length > 0 && <span className="form-field__hint">{t('agent.refImagesAttached', { count: refFiles.length })}</span>}
                 </div>
               </>
+            ) : inputMode === 'describe' ? (
+              <div className="form-group">
+                <label className="form-label">{t('agent.imageDescriptionLabel')}</label>
+                <textarea className="textarea" value={imageRequest} onChange={(e) => setImageRequest(e.target.value)} rows={5} placeholder={t('agent.imageDescriptionPlaceholder')} />
+                <span className="form-field__hint">{t('agent.imageDescriptionHint')}</span>
+              </div>
             ) : (
               <div className="form-group">
                 <label className="form-label">{t('agent.storyLabel')}</label>
@@ -246,7 +242,6 @@ export default function GatewayAgent() {
               <AgentImagePreview
                 imageUrls={checkpoint.gen_image_urls || []}
                 imageQueries={checkpoint.image_queries || []}
-                historyUrls={checkpoint.gen_image_history_urls || []}
                 onApprove={handleApprove}
                 onRegenerate={(feedback) => handleApprove({ feedback })}
               />
