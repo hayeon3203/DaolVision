@@ -157,6 +157,7 @@ Cosmos3-Nano는 아직 이 스크립트의 서비스 테이블에 없다 — 샌
 - `langgraph/` — :8700 게이트웨이(S1 파이프 오케스트레이션, Task 4.1에서 복제 — 원본 유지)
 - `tts/chatterbox/` — Chatterbox Multilingual V3 서버(:8504), 영상 나레이션(CC0 고정 화자)·독립 음성 복제 겸용
 - `t2v/cosmos3nano/` — Cosmos3-Nano T2V 서버(:8505), 프롬프트 단발샷 영상 생성 (Task 7.6)
+- `openwebui/` — Open WebUI Function 3종 + 배포 스크립트(video_generator에서 이관). 채팅에서 쓰던 경로 보존 — `:8700` 에이전트 함수만 현재 가동, `:8500`·`:8600`용 둘은 서버가 없어 참고용
 
 ## 제약
 

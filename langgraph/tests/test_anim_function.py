@@ -15,7 +15,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import tools
 
-FUNC = Path("/home/admin/video_generator/openwebui/openwebui_anim_function.py")
+FUNC = (Path(__file__).resolve().parents[2]
+        / "openwebui" / "openwebui_anim_function.py")
 spec = importlib.util.spec_from_file_location("anim_fn", FUNC)
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)

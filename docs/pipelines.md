@@ -109,8 +109,12 @@ cd langgraph && AGENT_FACE_BACKEND=standin ./run_agent.sh
 | `hunyuanvideo-pipeline` | 그 이전 |
 
 `video_generator`에만 있고 여기 없는 것: Wan2.2-TI2V-5B diffusers 서버(:8500, Task 6.5에서
-DaolVision에선 삭제), Wan2.2-Animate-14B(:8600), Open WebUI Function 3종,
+DaolVision에선 삭제), Wan2.2-Animate-14B(:8600),
 `ComfyUI/batch_scenes.py`(에이전트 없이 Stand-In만 배치로 돌리는 스크립트판 2a).
+
+Open WebUI Function 3종은 `openwebui/`로 **이관 완료** — 소유자는 이 저장소다.
+`:8500`·`:8600`을 쓰는 두 함수는 서버가 없어 지금 안 돌지만, 히스토리 보존을 위해
+지우지 않고 둔다. 상세: [openwebui/README.md](../openwebui/README.md)
 
 ## 검증
 
