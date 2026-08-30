@@ -7,12 +7,12 @@
 
 | 레이어 | 선택 | 근거 |
 |--------|------|------|
-| UI 프론트 | LocalAI 포크 (Go 템플릿 + Alpine.js) | 룩앤필·카테고리 기본 제공, 껍데기만 재활용 |
-| 게이트웨이 | :8700 FastAPI (기존 LangGraph API 확장) | 라우팅·OOM 오케·대시보드 집계 단일 총괄자 |
+| UI 프론트 | LocalAI 포크 (Go 템플릿 + Alpine.js) | 룩앤필과 카테고리를 기본 제공하므로 UI 외형만 재사용 |
+| 게이트웨이 | :8700 FastAPI (기존 LangGraph API 확장) | 라우팅과 OOM 오케스트레이션, 대시보드 집계를 한곳에서 총괄 |
 | 에이전트 | LangGraph + SQLite 체크포인터 | 승인 3게이트(interrupt), thread_id=job_id 재개 |
 | LLM 서빙 | Ollama (:11434) | Nemotron-4B는 기동 시 워밍업 후 상주, 비전 모델은 배치 언로드 |
 | 이미지 | Flux.1/SDXL(:8501) · Flux Kontext(ComfyUI :8188) | T2I 앵커 / I2I 얼굴변환 |
-| 영상 | ComfyUI(:8188): LTX distilled+Face-ID / Cosmos벤치 (Wan 제거, Task 6.5) | 캐릭터+화풍 일관 I2V, T2V |
+| 영상 | ComfyUI(:8188): LTX distilled+Face-ID / Cosmos 벤치마크 (Wan 제거, Task 6.5) | 캐릭터와 화풍이 일관된 I2V, T2V |
 | 영상 나레이션 TTS | Chatterbox Multilingual V3 | S1 전용 고정 CC0 한국어 화자 |
 | 사용자 음성 TTS | Chatterbox Multilingual V3 | 독립 TTS 전용, 한국어 zero-shot clone, GPU 약 3.0GiB 실측 |
 | 저장 | SQLite(체크포인트) · 파일시스템(mp4/이미지) | 단일 사용자, 로컬 전용 |
@@ -35,9 +35,9 @@ flowchart LR
 | 컴포넌트 | 책임 (한 줄) | 의존 대상 |
 |----------|-------------|----------|
 | LocalAI 포크 프론트 | 카테고리·스타일 셀렉터·노드 스텝퍼·대시보드 렌더, :8700만 호출 | :8700 |
-| :8700 게이트웨이 | 요청 라우팅 + OOM 배치 오케 + 대시보드 메타 집계 + 승인 게이트 중계 | 전 백엔드 |
+| :8700 게이트웨이 | 요청 라우팅, OOM 배치 오케스트레이션, 대시보드 메타 집계, 승인 게이트 중계 | 전 백엔드 |
 | LangGraph 에이전트 | S1 파이프 상태머신, 승인 3게이트, 재개 | Ollama·:8501·:8188·Chatterbox·SQLite |
-| Ollama | 씬분할(텍스트)·캡션(비전) | 모델 GGUF |
+| Ollama | 씬분할(텍스트)과 캡션(비전) 담당 | 모델 GGUF |
 | T2I(:8501) | 앵커/단발 이미지 | Flux/SDXL 가중치 |
 | ComfyUI(:8188) | I2V(캐릭터 일관 + T2V/폴백) + I2I(Flux Kontext) | LTX+Face-ID LoRA·BFS노드 |
 | Chatterbox TTS | S1 고정 CC0 화자 나레이션(`/tts/narration`) 및 사용자 음성(`/tts/clone`) | Chatterbox V3·`private/tts/voices/` |
@@ -101,9 +101,9 @@ sequenceDiagram
 
 ## 비기능 요구
 
-- **오프라인 자립**: 모든 백엔드 127.0.0.1, External outbound = 0 (ss 실측). 외부 API·CDN 의존 0
-- **OOM**: GB10 119GB 통합메모리. 전 모델 상주(~55-60GB) 실측 게이트 → 실패시 배치 언로드. 데모중 OOM 0건
-- **국적**: 전 모델 비중국/NVIDIA(Task 6.5로 Wan 예외 해소, 예외 없음). 신규 도입시 국적·라이센스 확인
-- **재개성**: SQLite 체크포인트(thread_id=job_id) — 승인 지연/세션 종료 후 재개
-- **격리**: systemd user units, 서비스별 독립 기동/로그
-- **폴백 생존**: 각 레이어 폴백 사다리(PRD) + 시나리오 사전 녹화본
+- **오프라인 자립**: 모든 백엔드가 127.0.0.1에서 동작하며, External outbound는 0이다(ss로 실측). 외부 API와 CDN에 의존하지 않는다
+- **OOM**: GB10의 119GB 통합메모리를 사용한다. 전 모델 상주(약 55~60GB)를 실측으로 확인하고, 실패하면 배치 언로드로 전환한다. 데모 중 OOM은 0건이었다
+- **국적**: 모든 모델이 비중국 또는 NVIDIA 계열이다(Task 6.5에서 Wan 예외를 해소해 현재 예외는 없다). 새로 도입할 때에는 국적과 라이선스를 확인한다
+- **재개성**: SQLite 체크포인트(thread_id=job_id)를 사용하므로, 승인이 지연되거나 세션이 종료된 뒤에도 재개할 수 있다
+- **격리**: systemd user unit을 사용하며, 서비스마다 독립적으로 기동하고 로그를 남긴다
+- **폴백 생존**: 각 레이어마다 단계적 폴백 경로(PRD 참고)를 두고, 시나리오별 사전 녹화본을 함께 준비한다
