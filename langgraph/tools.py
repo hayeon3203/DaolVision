@@ -61,9 +61,24 @@ LLM_KEEP_RESIDENT = os.environ.get("AGENT_LLM_KEEP_RESIDENT", "1") == "1"
 
 # ── ComfyUI Stand-In (참조-이미지 씬의 얼굴 일관성 경로) ──────────
 COMFYUI_URL = os.environ.get("AGENT_COMFYUI_URL", "http://127.0.0.1:8188")
+# 인물 씬 얼굴 일관성 **백엔드 선택**. 두 구현이 나란히 살아 있고 이 env로만 갈린다.
+#   ltx_faceid — LTX 13B + Face-ID LoRA (1280x704, ltx_faceid_api.json). 기본.
+#   standin    — Wan2.1-T2V-14B fp8 + Stand-In LoRA (832x480/16fps, standin_t2v.json).
+# node_generate_prompts는 참조 인물 씬에 mode="STANDIN"을 찍는데,
+# node_classify_faceid_scenes가 그걸 LTX_FACEID로 덮어써 왔다 — 그래서 이 값이
+# 들어오기 전까지 Stand-In 경로는 어떤 env 조합으로도 도달 불가였다.
+# "standin"일 때만 그 덮어쓰기(와 FACEID_MAX_SCENES 정원)를 건너뛴다.
+# 경로별 상세: docs/pipelines.md
+FACE_BACKEND = os.environ.get("AGENT_FACE_BACKEND", "ltx_faceid").strip().lower()
+if FACE_BACKEND not in ("ltx_faceid", "standin"):
+    raise ValueError(
+        f"AGENT_FACE_BACKEND는 ltx_faceid 또는 standin이어야 한다 (받은 값: {FACE_BACKEND!r})")
+
 # 참조 이미지가 있는 씬을 Stand-In(ComfyUI)으로 보낼지 스위치. off면 전부
 # generate_t2v_clip/generate_i2v_fallback_clip(둘 다 ComfyUI :8188)로.
-USE_STANDIN = os.environ.get("AGENT_USE_STANDIN", "1").lower() not in ("0", "false", "no", "")
+# FACE_BACKEND=standin은 이 스위치를 전제로 하므로 강제로 켠다(모순 조합 제거).
+USE_STANDIN = FACE_BACKEND == "standin" or os.environ.get(
+    "AGENT_USE_STANDIN", "1").lower() not in ("0", "false", "no", "")
 # 0이면 참조 이미지 캡션(gemma vision) 생략 → 이미지↔씬은 사람이 지정. gemma 미로드로 GPU 압박↓.
 CAPTION_REFS = os.environ.get("AGENT_CAPTION_REFS", "1").lower() not in ("0", "false", "no", "")
 STANDIN_STEPS = int(os.environ.get("AGENT_STANDIN_STEPS", "4"))     # lightx2v distill: 4~8

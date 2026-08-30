@@ -2,7 +2,56 @@
 
 **오픈셸 자립형 생성 스튜디오** — 완전 오프라인·오픈소스 전용 환경에서 도는 생성 AI 스튜디오.
 
-기존 anim 영상 에이전트(LangGraph T2I→I2V)를 LocalAI 포크 UI 위에 얹고, **전 모델을 비중국/NVIDIA 오픈소스**로 구성한다. 국적·오프라인·GB10 메모리를 대시보드로 시각 증명하는 것이 핵심 차별점.
+anim 영상 에이전트(LangGraph)를 LocalAI 포크 UI 위에 얹은 것. 시나리오 한 편을 넣으면
+씬 분할 → 사람 승인 → 씬별 클립 생성 → 편집까지 한 번에 나온다.
+
+영상 생성 경로는 **하나가 아니다.** 인물 없이 씬을 여러 개 뽑는 경우, 인물 한 명을 씬마다
+일관되게 유지하는 경우, 그리고 그 인물 일관성을 **Wan Stand-In**으로 푸는 구현과 **LTX
+Face-ID**로 푸는 구현이 전부 살아 있다. 어느 쪽이 정답이라서 남긴 게 아니라 트레이드오프가
+달라서다 — 그래서 지우지 않고 **환경변수 하나로 갈아 끼운다.**
+
+## 세 가지 경우와 전환
+
+| 경우 | UI 진입점 | 씬 mode | 모델 |
+|---|---|---|---|
+| 1. 인물 없이 영상 여러 개 | `시나리오만` | `T2V` | LTX-Video 0.9.8 13B distilled, 1280×704/24fps |
+| 2a. 한 인물 일관 — **Wan** | `사진 첨부`·`이미지 설명` | `STANDIN` | Wan2.1-T2V-14B + Stand-In LoRA, 832×480/16fps |
+| 2b. 한 인물 일관 — **LTX** | `사진 첨부`·`이미지 설명` | `LTX_FACEID` | LTX-2.3 22B GGUF + Best-FaceID LoRA, 1280×704/24fps |
+
+경우 1은 UI에서 모드만 고르면 된다. **2a ↔ 2b 전환은 `AGENT_FACE_BACKEND` 하나**로 하고,
+게이트웨이(:8700)가 기동할 때 읽으므로 바꾼 뒤 재시작해야 반영된다.
+
+```bash
+# 2b — LTX Face-ID (기본값, 아무것도 안 해도 이 경로)
+systemctl --user restart anim-agent
+
+# 2a — Wan Stand-In
+systemctl --user set-environment AGENT_FACE_BACKEND=standin
+systemctl --user restart anim-agent
+
+# 기본값으로 되돌리기
+systemctl --user unset-environment AGENT_FACE_BACKEND
+systemctl --user restart anim-agent
+```
+
+수동 기동이면 앞에 붙이기만 하면 된다 — `cd langgraph && AGENT_FACE_BACKEND=standin ./run_agent.sh`
+
+제대로 갈렸는지는 job 하나 돌린 뒤 게이트웨이 로그의 라우팅 한 줄로 확인한다:
+
+```
+[route] 씬 mode: 1=STANDIN, 2=STANDIN, 3=STANDIN     # 2a
+[route] 씬 mode: 1=LTX_FACEID, 2=PERSON_ASSEMBLY     # 2b
+```
+
+오타난 값은 조용히 기본값으로 폴백하지 않고 기동 시점에 죽는다 — 잘못된 백엔드로 몇
+시간짜리 job을 돌리는 것보다 낫다.
+
+**어느 쪽을 고를까**: 인물이 여러 씬에 계속 나오는 스토리면 **2a**. 2b는 22B GGUF 축출
+정체 때문에 Face-ID 씬을 기본 1개로 제한하고(`AGENT_FACEID_MAX_SCENES`) 나머지는 조립
+경로로 강등하므로, 인물 씬이 한두 개이고 화질이 우선일 때 쓴다.
+
+경로별 상세·곁가지 mode(`SUBJECT_REF`/`PRODUCT_OVERLAY`/`PERSON_ASSEMBLY`)·env 전체 목록:
+**[docs/pipelines.md](docs/pipelines.md)**
 
 ## 시나리오
 
@@ -12,7 +61,10 @@
 - **독립 T2V — 프롬프트만으로 영상**: 사진 입력 없이 텍스트 프롬프트 → Cosmos3-Nano 단발샷 영상(identity 불필요 용도)
 - **연결**: S2 우주비행사 캐릭터 → S1 Face-ID 참조로
 
-## 스택 (전부 비중국/NVIDIA 오픈소스)
+## 스택
+
+국적 열은 초기 설계 목표(비중국 스택 구성)의 **기록**이다 — 지금은 선택 기준이 아니라
+어느 모델이 어디서 왔는지 남긴 것이고, Wan 경로(2a)는 의도적으로 살려 두었다.
 
 | 역할 | 모델 | 국적 |
 |---|---|---|
@@ -110,4 +162,4 @@ Cosmos3-Nano는 아직 이 스크립트의 서비스 테이블에 없다 — 샌
 
 - 오픈셸: 완전 오프라인·자립, External calls = 0 (실측 증명)
 - GB10 119GB 통합메모리, OOM 예방 (전 모델 상주 우선 → 실패시 배치 언로드)
-- 비중국 우선 + 품질 예외 허용
+- 모델 국적은 기록용 정보 — 경로 선택 기준이 아니다(2a Wan 경로 유지)

@@ -1619,10 +1619,15 @@ def node_classify_faceid_scenes(state: GraphState) -> dict:
         if face_id_ref is None and preset_face_ref:
             return {**scene, "face_id_ref": preset_face_ref,
                     "mode": scene.get("mode", "T2V")}
+        # AGENT_FACE_BACKEND=standin이면 승격하지 않는다 — node_generate_prompts가 이미
+        # 찍어둔 mode="STANDIN"(Wan2.1-14B + Stand-In LoRA, :8188)을 그대로 살린다.
+        # 정원(FACEID_MAX_SCENES)은 LTX 22B GGUF 축출 정체 때문에 있는 제약이라
+        # Stand-In 경로엔 해당 없음 — 아래 루프가 mode=="LTX_FACEID"만 세므로 자동으로 빠진다.
+        promote = bool(face_id_ref) and tools.FACE_BACKEND == "ltx_faceid"
         return {
             **scene,
             "face_id_ref": face_id_ref,
-            "mode": "LTX_FACEID" if face_id_ref else scene.get("mode", "T2V"),
+            "mode": "LTX_FACEID" if promote else scene.get("mode", "T2V"),
         }
 
     # LTX 2.3 22B(GGUF Q6_K) Face-ID 씬은 **최대 FACEID_MAX_SCENES개**로 자른다.
